@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Totem — Academia</title>
+
+<!-- Bibliotecas client-side hospedadas localmente (public/vendor/) — o totem
+     roda numa rede sem saída para internet, então não pode depender de CDN
+     externo. Rode o script de download (ver README, seção do totem) uma vez
+     num PC com internet para popular essa pasta. -->
+<script src="vendor/qrcode.min.js"></script>
+<script src="vendor/jsQR.js"></script>
+<script src="vendor/face-api/face-api.min.js"></script>
+
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    background: #0f172a; color: #fff;
+    -webkit-user-select: none; user-select: none;
+  }
+  .tela { display: none; height: 100vh; width: 100vw; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; }
+  .tela.ativa { display: flex; }
+  .oculto { display: none !important; }
+
+  .logo { font-size: 22px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 8px; color: #10b981; }
+  .subtitulo { color: #94a3b8; font-size: 16px; margin-bottom: 40px; }
+
+  .botoes-menu { display: flex; flex-direction: column; gap: 18px; width: 100%; max-width: 420px; }
+  .botao-grande {
+    padding: 22px; font-size: 20px; border-radius: 16px; border: none; cursor: pointer; font-weight: 600;
+  }
+  .botao-grande.primario { background: #10b981; color: #06281e; }
+  .botao-grande.secundario { background: #1e293b; color: #fff; border: 1px solid #334155; }
+  .botao-grande:active { transform: scale(0.98); }
+
+  .botao-pequeno {
+    padding: 10px 16px; font-size: 13px; border-radius: 999px; border: 1px solid #334155;
+    background: #1e293b; color: #94a3b8; cursor: pointer;
+  }
+  .linha-botoes-pequenos { display: flex; gap: 12px; margin-top: 20px; flex-wrap: wrap; justify-content: center; }
+
+  .abas { display: flex; gap: 8px; margin-bottom: 24px; }
+  .aba { padding: 10px 18px; border-radius: 999px; background: #1e293b; color: #94a3b8; border: none; font-size: 14px; cursor: pointer; }
+  .aba.ativa { background: #10b981; color: #06281e; font-weight: 600; }
+
+  .painel-identificar { width: 100%; max-width: 420px; }
+  .campo-cpf {
+    width: 100%; padding: 16px; font-size: 22px; border-radius: 12px; border: none; text-align: center;
+    margin-bottom: 16px; letter-spacing: 1px;
+  }
+  video, canvas.preview { border-radius: 16px; width: 320px; height: 240px; object-fit: cover; background: #000; }
+  #video-inicio { width: 360px; height: 270px; }
+  /* Efeito espelho só na exibição (UX natural, como uma câmera de selfie) —
+     não afeta a leitura de QR nem o reconhecimento facial, que processam o
+     quadro bruto da câmera via canvas/vídeo, não a versão espelhada na tela. */
+  video { transform: scaleX(-1); }
+  .video-wrap { position: relative; margin-bottom: 16px; }
+  .status-scan { color: #94a3b8; font-size: 14px; margin-top: 8px; min-height: 20px; }
+
+  .resultado-icone { font-size: 72px; margin-bottom: 12px; }
+  .resultado-titulo { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
+  .resultado-msg { font-size: 16px; color: #cbd5e1; max-width: 400px; }
+  .tela.liberado .resultado-icone { color: #10b981; }
+  .tela.negado .resultado-icone { color: #f87171; }
+
+  .link-voltar { margin-top: 32px; background: none; border: none; color: #64748b; font-size: 14px; cursor: pointer; text-decoration: underline; }
+
+  #qrcode-vincular { margin: 20px 0; }
+  .aviso-caixa { background: #1e293b; border-radius: 10px; padding: 14px; font-size: 14px; color: #cbd5e1; max-width: 380px; }
+</style>
+</head>
+<body>
+
+  <!-- TELA INICIAL — câmera sempre ativa: reconhece rosto e QR automaticamente -->
+  <div class="tela ativa" id="tela-inicio">
+    <div class="logo">ACADEMIA GESTÃO</div>
+    <div class="subtitulo" id="status-inicio">Aproxime-se para reconhecimento facial, ou mostre o QR do seu celular...</div>
+
+    <div class="video-wrap">
+      <video id="video-inicio" autoplay muted playsinline></video>
+    </div>
+
+    <div class="painel-identificar">
+      <input class="campo-cpf" id="input-cpf" placeholder="Ou digite seu CPF" inputmode="numeric" maxlength="14" />
+      <button class="botao-grande primario" id="btn-confirmar-cpf" style="width:100%">Liberar com CPF</button>
+    </div>
+
+    <div class="linha-botoes-pequenos">
+      <button class="botao-pequeno" id="btn-ir-vincular">Primeira vez no totem</button>
+      <button class="botao-pequeno" id="btn-ir-cadastro">Quero me cadastrar</button>
+    </div>
+  </div>
+
+  <!-- VINCULAR ACESSO (aluno já cadastrado, primeira vez no totem) -->
+  <div class="tela" id="tela-vincular">
+    <div class="logo">VINCULAR MEU ACESSO</div>
+    <div class="subtitulo">Digite seu CPF para gerar seu QR pessoal e/ou cadastrar reconhecimento facial.</div>
+
+    <div class="painel-identificar" id="painel-vincular-cpf">
+      <input class="campo-cpf" id="input-cpf-vincular" placeholder="Digite seu CPF" inputmode="numeric" maxlength="14" />
+      <button class="botao-grande primario" id="btn-buscar-vincular" style="width:100%">Continuar</button>
+    </div>
+
+    <div class="painel-identificar oculto" id="painel-vincular-opcoes">
+      <div class="subtitulo" id="vincular-saudacao" style="margin-bottom:8px"></div>
+      <div id="qrcode-vincular"></div>
+      <div class="aviso-caixa">Salve este QR (print ou favoritos) — é o seu acesso pessoal para as próximas visitas.</div>
+      <button class="botao-grande secundario" id="btn-cadastrar-facial-vincular" style="width:100%;margin-top:16px">Cadastrar reconhecimento facial agora</button>
+    </div>
+
+    <div class="painel-identificar oculto" id="painel-vincular-facial">
+      <div class="video-wrap">
+        <video id="video-vincular-facial" autoplay muted playsinline></video>
+      </div>
+      <div class="status-scan" id="status-vincular-facial">Posicione seu rosto no centro da câmera...</div>
+    </div>
+
+    <button class="link-voltar" id="btn-voltar-2">&larr; Voltar</button>
+  </div>
+
+  <!-- CADASTRO NOVO ALUNO: dados+plano -> pagamento (QR) -> sucesso -->
+  <div class="tela" id="tela-cadastro">
+    <div class="logo">QUERO ME CADASTRAR</div>
+
+    <!-- Passo 1: dados pessoais + escolha do plano -->
+    <div class="painel-identificar" id="painel-cadastro-form">
+      <input class="campo-cpf" id="cadastro-nome" placeholder="Nome completo" />
+      <input class="campo-cpf" id="cadastro-cpf" placeholder="CPF" inputmode="numeric" maxlength="14" />
+      <input class="campo-cpf" id="cadastro-telefone" placeholder="Telefone (opcional)" inputmode="tel" />
+      <select class="campo-cpf" id="cadastro-plano"><option value="">Carregando planos...</option></select>
+      <div class="status-scan" id="cadastro-form-erro"></div>
+      <button class="botao-grande primario" id="btn-cadastro-continuar" style="width:100%">Continuar para pagamento</button>
+    </div>
+
+    <!-- Passo 2: pagamento via QR (aluno escaneia com o próprio celular) -->
+    <div class="painel-identificar oculto" id="painel-cadastro-pagamento">
+      <div class="subtitulo" id="cadastro-pagamento-valor" style="margin-bottom:12px"></div>
+      <div id="qrcode-cadastro-pagamento" style="display:flex;justify-content:center;margin-bottom:12px"></div>
+      <div class="aviso-caixa">Escaneie com a câmera do seu celular para pagar. A tela avança sozinha assim que o pagamento for confirmado.</div>
+      <div class="status-scan" id="cadastro-status-pagamento">Aguardando pagamento...</div>
+    </div>
+
+    <!-- Passo 3: sucesso — QR pessoal + oferta de cadastro facial -->
+    <div class="painel-identificar oculto" id="painel-cadastro-sucesso">
+      <div class="resultado-icone" style="color:#10b981">✅</div>
+      <div class="subtitulo" id="cadastro-sucesso-saudacao" style="margin-bottom:8px"></div>
+      <div id="qrcode-cadastro-sucesso"></div>
+      <div class="aviso-caixa">Salve este QR (print ou favoritos) — é o seu acesso pessoal para as próximas visitas.</div>
+      <button class="botao-grande secundario" id="btn-cadastro-facial" style="width:100%;margin-top:16px">Cadastrar reconhecimento facial agora</button>
+      <button class="botao-grande primario" id="btn-cadastro-concluir" style="width:100%;margin-top:12px">Concluir</button>
+    </div>
+
+    <!-- Cadastro facial (reaproveita a mesma lógica do fluxo "vincular") -->
+    <div class="painel-identificar oculto" id="painel-cadastro-facial">
+      <div class="video-wrap">
+        <video id="video-cadastro-facial" autoplay muted playsinline></video>
+      </div>
+      <div class="status-scan" id="status-cadastro-facial">Posicione seu rosto no centro da câmera...</div>
+    </div>
+
+    <button class="link-voltar" id="btn-voltar-3">&larr; Voltar</button>
+  </div>
+
+  <!-- RESULTADO -->
+  <div class="tela" id="tela-resultado">
+    <div class="resultado-icone" id="resultado-icone">⏳</div>
+    <div class="resultado-titulo" id="resultado-titulo">Verificando...</div>
+    <div class="resultado-msg" id="resultado-msg"></div>
+  </div>
+
+<script src="terminal.js"></script>
+</body>
+</html>

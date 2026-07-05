@@ -1,0 +1,140 @@
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  background: #f4f5f7;
+  color: #1e2430;
+}
+
+.oculto { display: none !important; }
+
+/* ---------- Login ---------- */
+.tela-login {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #0f172a, #1e293b 60%, #10b981);
+}
+
+.card-login {
+  background: #fff;
+  padding: 40px;
+  border-radius: 12px;
+  width: 340px;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.25);
+}
+
+.card-login h1 { margin: 0 0 4px; font-size: 22px; }
+.card-login .subtitulo { margin: 0 0 20px; color: #667085; font-size: 14px; }
+.card-login label { display: block; font-size: 13px; margin: 12px 0 4px; color: #344054; }
+.card-login input {
+  width: 100%; padding: 10px 12px; border: 1px solid #d0d5dd; border-radius: 8px; font-size: 14px;
+}
+.card-login button {
+  margin-top: 20px; width: 100%; padding: 11px; border: none; border-radius: 8px;
+  background: #10b981; color: #fff; font-weight: 600; font-size: 14px; cursor: pointer;
+}
+.card-login button:hover { background: #0ea472; }
+.erro { color: #d92d20; font-size: 13px; min-height: 18px; margin: 10px 0 0; }
+.dica { color: #98a2b3; font-size: 12px; margin-top: 16px; }
+
+/* ---------- Layout app ---------- */
+.app { display: flex; min-height: 100vh; }
+
+.sidebar {
+  width: 220px;
+  background: #111827;
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 0;
+  flex-shrink: 0;
+}
+
+.sidebar .logo { font-weight: 700; font-size: 16px; padding: 0 20px 20px; }
+
+.sidebar nav { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+
+.nav-btn {
+  background: none; border: none; color: #cbd5e1; text-align: left;
+  padding: 12px 20px; font-size: 14px; cursor: pointer; border-left: 3px solid transparent;
+}
+.nav-btn:hover { background: #1f2937; color: #fff; }
+.nav-btn.ativo { background: #1f2937; color: #fff; border-left-color: #10b981; font-weight: 600; }
+
+.sidebar-rodape {
+  padding: 16px 20px 0; border-top: 1px solid #1f2937; margin-top: 12px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+#usuario-nome { font-size: 13px; color: #9ca3af; }
+#btn-sair {
+  background: #1f2937; color: #fff; border: none; border-radius: 6px; padding: 8px; cursor: pointer; font-size: 13px;
+}
+#btn-sair:hover { background: #374151; }
+
+.conteudo { flex: 1; padding: 32px 40px; max-width: 1100px; }
+
+.secao-topo { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.secao-topo h2 { margin: 0; font-size: 20px; }
+
+/* ---------- Botões ---------- */
+.btn-primario, .btn-secundario {
+  border: none; border-radius: 8px; padding: 9px 16px; font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.btn-primario { background: #10b981; color: #fff; }
+.btn-primario:hover { background: #0ea472; }
+.btn-secundario { background: #e5e7eb; color: #344054; }
+.btn-secundario:hover { background: #d1d5db; }
+.btn-secundario.perigo { background: #fee4e2; color: #d92d20; }
+.btn-secundario.perigo:hover { background: #fecdca; }
+
+.btn-linha {
+  background: none; border: 1px solid #d0d5dd; border-radius: 6px; padding: 5px 10px;
+  font-size: 12px; cursor: pointer; margin-right: 6px; color: #344054;
+}
+.btn-linha:hover { background: #f2f4f7; }
+.btn-linha.perigo { border-color: #fda29b; color: #d92d20; }
+
+/* ---------- Formulários em painel ---------- */
+.form-painel {
+  background: #fff; border: 1px solid #e4e7ec; border-radius: 10px; padding: 20px; margin-bottom: 20px;
+}
+.form-painel h3 { margin-top: 0; }
+.form-painel label { display: block; font-size: 13px; margin: 10px 0 4px; color: #344054; }
+.form-painel input, .form-painel select, .form-painel textarea {
+  width: 100%; padding: 9px 11px; border: 1px solid #d0d5dd; border-radius: 8px; font-size: 14px; font-family: inherit;
+}
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
+.form-acoes { margin-top: 16px; display: flex; gap: 10px; }
+
+/* ---------- Tabela ---------- */
+.tabela { width: 100%; border-collapse: collapse; background: #fff; border-radius: 10px; overflow: hidden; }
+.tabela th, .tabela td {
+  text-align: left; padding: 10px 14px; font-size: 13px; border-bottom: 1px solid #eef0f2;
+}
+.tabela th { background: #f9fafb; color: #667085; font-weight: 600; }
+.tabela tr:last-child td { border-bottom: none; }
+
+.badge {
+  display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
+}
+.badge.ativo, .badge.pago, .badge.realizada, .badge.marcada { background: #d1fadf; color: #067647; }
+.badge.inativo, .badge.cancelada, .badge.cancelado, .badge.falta, .badge.estornado { background: #f2f4f7; color: #667085; }
+.badge.trancado { background: #fef0c7; color: #93700a; }
+.badge.inadimplente, .badge.atrasado { background: #fee4e2; color: #d92d20; }
+.badge.pendente { background: #e0f2fe; color: #026aa2; }
+
+/* ---------- Toast ---------- */
+.toast {
+  position: fixed; bottom: 24px; right: 24px; background: #1e2430; color: #fff;
+  padding: 12px 18px; border-radius: 8px; font-size: 14px; box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+  z-index: 100;
+}
+.toast.erro { background: #d92d20; }
+
+#cobranca-resultado {
+  background: #ecfdf3; border: 1px solid #abefc6; border-radius: 8px; padding: 14px; margin-bottom: 20px; font-size: 14px;
+}
+#cobranca-resultado a { color: #067647; font-weight: 600; }

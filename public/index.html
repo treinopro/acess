@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Academia Gestão</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- TELA DE LOGIN -->
+  <div id="tela-login" class="tela-login">
+    <div class="card-login">
+      <h1>Academia Gestão</h1>
+      <p class="subtitulo">Entre com sua conta de administrador</p>
+      <form id="form-login">
+        <label>E-mail</label>
+        <input type="email" id="login-email" placeholder="admin@academia.com" required />
+        <label>Senha</label>
+        <input type="password" id="login-senha" placeholder="••••••••" required />
+        <button type="submit">Entrar</button>
+      </form>
+      <p class="erro" id="login-erro"></p>
+      <p class="dica">Padrão do seed: admin@academia.com / admin123</p>
+    </div>
+  </div>
+
+  <!-- APP PRINCIPAL -->
+  <div id="tela-app" class="app oculto">
+    <aside class="sidebar">
+      <div class="logo">🏋️ Academia Gestão</div>
+      <nav>
+        <button class="nav-btn ativo" data-secao="alunos">Alunos</button>
+        <button class="nav-btn" data-secao="planos">Planos</button>
+        <button class="nav-btn" data-secao="agenda">Turmas &amp; Agenda</button>
+        <button class="nav-btn" data-secao="pagamentos">Contas a Receber</button>
+        <button class="nav-btn oculto" id="nav-usuarios" data-secao="usuarios">Usuários</button>
+        <button class="nav-btn oculto" id="nav-catraca" data-secao="catraca">Catraca</button>
+      </nav>
+      <div class="sidebar-rodape">
+        <span id="usuario-nome"></span>
+        <button id="btn-sair">Sair</button>
+      </div>
+    </aside>
+
+    <main class="conteudo">
+
+      <!-- ALUNOS -->
+      <section id="secao-alunos" class="secao">
+        <div class="secao-topo">
+          <h2>Alunos</h2>
+          <button class="btn-primario" id="btn-novo-aluno">+ Novo aluno</button>
+        </div>
+
+        <form id="form-aluno" class="form-painel oculto">
+          <h3>Novo aluno</h3>
+          <input type="hidden" id="aluno-id" />
+          <div class="grid-2">
+            <div><label>Nome *</label><input id="aluno-nome" required /></div>
+            <div><label>E-mail</label><input id="aluno-email" type="email" /></div>
+            <div><label>Telefone</label><input id="aluno-telefone" /></div>
+            <div><label>CPF</label><input id="aluno-cpf" /></div>
+            <div><label>Data de nascimento</label><input id="aluno-nascimento" type="date" /></div>
+          </div>
+          <label>Observações</label>
+          <textarea id="aluno-observacoes" rows="2"></textarea>
+
+          <h3 style="margin-top:20px">Plano (opcional)</h3>
+          <p style="margin:0 0 8px;color:#667085;font-size:13px">Selecione um plano para já matricular o aluno ao salvar. A primeira mensalidade é gerada automaticamente em Contas a Receber.</p>
+          <div class="grid-2">
+            <div>
+              <label>Plano</label>
+              <select id="aluno-plano">
+                <option value="">Nenhum (matricular depois)</option>
+              </select>
+            </div>
+            <div><label>Data de início</label><input id="aluno-plano-data" type="date" /></div>
+          </div>
+
+          <div id="bloco-avaliacao-inicial">
+            <h3 style="margin-top:20px">Avaliação física inicial (opcional)</h3>
+            <p style="margin:0 0 8px;color:#667085;font-size:13px">Fica registrada no histórico de avaliações do aluno. Mais medidas e avaliações futuras podem ser adicionadas depois no Perfil.</p>
+            <div class="grid-2">
+              <div><label>Peso (kg)</label><input id="aluno-avaliacao-peso" type="number" step="0.1" /></div>
+              <div><label>Altura (cm)</label><input id="aluno-avaliacao-altura" type="number" step="0.1" /></div>
+              <div><label>% de gordura</label><input id="aluno-avaliacao-gordura" type="number" step="0.1" /></div>
+              <div><label>Objetivo</label><input id="aluno-avaliacao-objetivo" placeholder="ex: hipertrofia, emagrecimento" /></div>
+            </div>
+          </div>
+
+          <div class="form-acoes">
+            <button type="submit" class="btn-primario">Salvar</button>
+            <button type="button" class="btn-secundario" id="btn-cancelar-aluno">Cancelar</button>
+          </div>
+        </form>
+
+        <div style="margin-bottom:12px">
+          <input type="text" id="busca-aluno" placeholder="Buscar por nome ou ID..." style="max-width:340px;padding:9px 12px;border:1px solid #d0d5dd;border-radius:8px;font-size:14px" />
+        </div>
+
+        <table class="tabela">
+          <thead>
+            <tr><th>Nome</th><th>Contato</th><th>Status</th><th>Ações</th></tr>
+          </thead>
+          <tbody id="lista-alunos"></tbody>
+        </table>
+      </section>
+
+      <!-- PERFIL DO ALUNO -->
+      <section id="secao-perfil-aluno" class="secao oculto">
+        <div class="secao-topo">
+          <h2 id="perfil-nome-aluno">Perfil do aluno</h2>
+          <button class="btn-secundario" id="btn-voltar-alunos">&larr; Voltar para Alunos</button>
+        </div>
+
+        <h3>Dados pessoais</h3>
+        <form id="form-perfil-dados" class="form-painel">
+          <input type="hidden" id="perfil-aluno-id" />
+          <div class="grid-2">
+            <div><label>Nome *</label><input id="perfil-nome" required /></div>
+            <div><label>E-mail</label><input id="perfil-email" type="email" /></div>
+            <div><label>Telefone</label><input id="perfil-telefone" /></div>
+            <div><label>CPF</label><input id="perfil-cpf" /></div>
+            <div><label>Data de nascimento</label><input id="perfil-nascimento" type="date" /></div>
+          </div>
+          <label>Observações</label>
+          <textarea id="perfil-observacoes" rows="2"></textarea>
+          <div class="form-acoes">
+            <button type="submit" class="btn-primario">Salvar dados</button>
+            <button type="button" class="btn-secundario perigo" id="btn-excluir-aluno">Excluir aluno</button>
+          </div>
+        </form>
+
+        <h3>Biometria (integração com catraca/leitor externo)</h3>
+        <form id="form-biometria" class="form-painel">
+          <p style="margin-top:0;color:#667085;font-size:13px">
+            Cadastre o template no leitor biométrico/catraca e cole aqui o ID de referência retornado pelo dispositivo.
+          </p>
+          <div class="grid-2">
+            <div><label>ID biométrico</label><input id="perfil-biometria-id" placeholder="ex: BIO-00123" /></div>
+          </div>
+          <div class="form-acoes">
+            <button type="submit" class="btn-primario">Salvar ID biométrico</button>
+            <button type="button" class="btn-secundario" id="btn-remover-biometria">Remover cadastro</button>
+          </div>
+        </form>
+
+        <h3>Acesso pelo totem (QR pessoal / reconhecimento facial)</h3>
+        <div class="form-painel">
+          <p style="margin-top:0;color:#667085;font-size:13px">
+            Gere o link/QR pessoal do aluno para ele usar no totem ao lado da catraca (celular). O reconhecimento
+            facial pode ser cadastrado pelo próprio aluno no totem, ou por aqui mesmo usando a câmera deste
+            computador (útil para cadastrar na hora da matrícula, sem levar o aluno até o totem).
+          </p>
+          <div class="grid-2">
+            <div>
+              <label>Link "meu acesso"</label>
+              <input id="perfil-link-acesso" readonly placeholder="clique em Gerar link" />
+            </div>
+          </div>
+          <div class="form-acoes">
+            <button type="button" class="btn-secundario" id="btn-gerar-link-acesso">Gerar/copiar link</button>
+            <button type="button" class="btn-secundario" id="btn-regenerar-link-acesso">Gerar novo (invalida o antigo)</button>
+            <button type="button" class="btn-secundario perigo" id="btn-remover-face">Remover rosto cadastrado</button>
+          </div>
+
+          <p style="margin-bottom:6px;color:#667085;font-size:13px">
+            Ou cadastre o rosto agora mesmo, usando a câmera deste computador (não precisa levar o aluno até o totem):
+          </p>
+          <div id="captura-facial-perfil">
+            <video id="video-facial-perfil" autoplay muted playsinline style="width:280px;height:210px;border-radius:10px;background:#000;object-fit:cover;display:none"></video>
+            <div id="status-facial-perfil" style="color:#667085;font-size:13px;margin:6px 0"></div>
+            <div class="form-acoes">
+              <button type="button" class="btn-secundario" id="btn-abrir-camera-perfil">Abrir câmera</button>
+              <button type="button" class="btn-primario oculto" id="btn-capturar-facial-perfil">Capturar rosto</button>
+              <button type="button" class="btn-secundario oculto" id="btn-cancelar-camera-perfil">Cancelar</button>
+            </div>
+          </div>
+        </div>
+
+        <h3>Anamnese / saúde</h3>
+        <form id="form-anamnese" class="form-painel">
+          <div class="grid-2">
+            <div><label>Peso (kg)</label><input id="anamnese-peso" type="number" step="0.1" /></div>
+            <div><label>Altura (cm)</label><input id="anamnese-altura" type="number" step="0.1" /></div>
+          </div>
+          <label>Histórico de saúde</label>
+          <textarea id="anamnese-historico" rows="2"></textarea>
+          <label>Restrições</label>
+          <textarea id="anamnese-restricoes" rows="2"></textarea>
+          <label>Observações médicas</label>
+          <textarea id="anamnese-observacoes" rows="2"></textarea>
+          <div class="form-acoes">
+            <button type="submit" class="btn-primario">Salvar anamnese</button>
+          </div>
+        </form>
+
+        <div class="secao-topo" style="margin-top:8px">
+          <h3 style="margin:0">Avaliações físicas (evolução)</h3>
+        </div>
+        <form id="form-avaliacao" class="form-painel">
+          <div class="grid-2">
+            <div><label>Data *</label><input id="avaliacao-data" type="date" required /></div>
+            <div><label>Peso (kg)</label><input id="avaliacao-peso" type="number" step="0.1" /></div>
+            <div><label>Altura (cm)</label><input id="avaliacao-altura" type="number" step="0.1" /></div>
+            <div><label>% de gordura</label><input id="avaliacao-gordura" type="number" step="0.1" /></div>
+            <div><label>Cintura (cm)</label><input id="avaliacao-cintura" type="number" step="0.1" /></div>
+            <div><label>Quadril (cm)</label><input id="avaliacao-quadril" type="number" step="0.1" /></div>
+            <div><label>Peito (cm)</label><input id="avaliacao-peito" type="number" step="0.1" /></div>
+            <div><label>Braço (cm)</label><input id="avaliacao-braco" type="number" step="0.1" /></div>
+            <div><label>Coxa (cm)</label><input id="avaliacao-coxa" type="number" step="0.1" /></div>
+            <div><label>Objetivo</label><input id="avaliacao-objetivo" placeholder="ex: hipertrofia, emagrecimento" /></div>
+          </div>
+          <label>Observações</label>
+          <textarea id="avaliacao-observacoes" rows="2"></textarea>
+          <div class="form-acoes">
+            <button type="submit" class="btn-primario">Adicionar avaliação</button>
+          </div>
+        </form>
+        <table class="tabela">
+          <thead><tr><th>Data</th><th>Peso</th><th>% Gordura</th><th>Objetivo</th><th>Ações</th></tr></thead>
+          <tbody id="lista-avaliacoes"></tbody>
+        </table>
+
+        <h3 style="margin-top:24px">Matrículas</h3>
+        <table class="tabela">
+          <thead><tr><th>Plano</th><th>Início</th><th>Fim</th><th>Status</th></tr></thead>
+          <tbody id="perfil-lista-matriculas"></tbody>
+        </table>
+
+        <h3 style="margin-top:24px">Últimos agendamentos</h3>
+        <table class="tabela">
+          <thead><tr><th>Data</th><th>Turma</th><th>Status</th></tr></thead>
+          <tbody id="perfil-lista-agendamentos"></tbody>
+        </table>
+
+        <h3 style="margin-top:24px">Contas / cobranças</h3>
+        <table class="tabela">
+          <thead><tr><th>Descrição</th><th>Valor</th><th>Vencimento</th><th>Status</th></tr></thead>
+          <tbody id="perfil-lista-cobrancas"></tbody>
+        </table>
+      </section>
+
+      <!-- PLANOS -->
+      <section id="secao-planos" class="secao oculto">
+        <div class="secao-topo">
+          <h2>Planos</h2>
+          <button class="btn-primario" id="btn-novo-plano">+ Novo plano</button>
+        </div>
+
+        <form id="form-plano" class="form-painel oculto">
+          <h3>Novo plano</h3>
+          <input type="hidden" id="plano-id" />
+          <div class="grid-2">
+            <div><label>Nome *</label><input id="plano-nome" required /></div>
+            <div>
+              <label>Tipo *</label>
+              <select id="plano-tipo" required>
+                <option value="mensal">Mensal</option>
+                <option value="trimestral">Trimestral</option>
+                <option value="semestral">Semestral</option>
+                <option value="anual">Anual</option>
+                <option value="avulso">Avulso</option>
+                <option value="pacote_aulas">Pacote de aulas</option>
+              </select>
+            </div>
+            <div><label>Valor (R$) *</label><input id="plano-valor" type="number" step="0.01" required /></div>
+            <div><label>Duração (dias)</label><input id="plano-duracao" type="number" /></div>
+          </div>
+          <div class="form-acoes">
+            <button type="submit" class="btn-primario">Salvar</button>
+            <button type="button" class="btn-secundario" id="btn-cancelar-plano">Cancelar</button>
+          </div>
+        </form>
+
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#667085;margin-bottom:8px">
+          <input type="checkbox" id="chk-planos-todos" style="width:auto" /> Mostrar planos desativados também
+        </label>
+        <table class="tabela">
+          <thead><tr><th>Nome</th><th>Tipo</th><th>Valor</th><th>Duração</th><th>Status</th><th>Ações</th></tr></thead>
+          <tbody id="lista-planos"></tbody>
+        </table>
+
+        <div class="secao-topo" style="margin-top:32px">
+          <h2>Matricular aluno</h2>
+        </div>
+        <form id="form-matricula" class="form-painel">
+          <div class="grid-2">
+            <div>
+              <label>Aluno *</label>
+              <select id="matricula-aluno" required></select>
+            </div>
+            <div>
+              <label>Plano *</label>
+              <select id="matricula-plano" required></select>
+            </div>
+            <div><label>Data de início *</label><input id="matricula-data" type="date" required /></div>
+          </div>
+          <div class="form-acoes">
+            <button type="submit" class="btn-primario">Matricular</button>
+          </div>
+        </form>
+
+        <h3 style="margin-top:24px">Matrículas</h3>
+        <table class="tabela">
+          <thead><tr><th>Aluno</th><th>Plano</th><th>Início</th><th>Fim</th><th>Status</th><th>Ações</th></tr></thead>
+          <tbody id="lista-matriculas"></tbody>
+        </table>
+      </section>
+
+      <!-- AGENDA -->
+      <section id="secao-agenda" class="secao oculto">
+        <div class="secao-topo">
+          <h2>Turmas</h2>
+          <button class="btn-primario" id="btn-nova-turma">+ Nova turma</button>
+        </div>
+
+        <form id="form-turma" class="form-painel oculto">
+          <h3>Nova turma</h3>
+          <div class="grid-2">
+            <div><label>Nome *</label><input id="turma-nome" required /></div>
+            <div><label>Modalidade</label><input id="turma-modalidade" /></div>
+            <div>
+              <label>Dia da semana *</label>
+              <select id="turma-dia" required>
+                <option value="1">Segunda</option>
+                <option value="2">Terça</option>
+                <option value="3">Quarta</option>
+                <option value="4">Quinta</option>
+                <option value="5">Sexta</option>
+                <option value="6">Sábado</option>
+                <option value="0">Domingo</option>
+              </select>
+            </div>
+            <div><label>Capacidade máxima</label><input id="turma-capacidade" type="number" value="20" /></div>
+            <div><label>Horário início *</label><input id="turma-inicio" type="time" required /></div>
+            <div><label>Horário fim *</label><input id="turma-fim" type="time" required /></div>
+          </div>
+          <div class="form-acoes">
+            <button type="submit" class="btn-primario">Salvar</button>
+            <button type="button" class="btn-secundario" id="btn-cancelar-turma">Cancelar</button>
+          </div>
+        </form>
+
+        <table class="tabela">
+          <thead><tr><th>Nome</th><th>Modalidade</th><th>Dia</th><th>Horário</th><th>Capacidade</th></tr></thead>
+          <tbody id="lista-turmas"></tbody>
+        </table>
+
+        <div class="secao-topo" style="margin-top:32px">
+          <h2>Agendar aula</h2>
+        </div>
+        <form id="form-agendamento" class="form-painel">
+          <div class="grid-2">
+            <div>
+              <label>Aluno *</label>
+              <select id="agendamento-aluno" required></select>
+            </div>
+            <div>
+              <label>Turma *</label>
+              <select id="agendamento-turma" required></select>
+            </div>
+            <div><label>Data da aula *</label><input id="agendamento-data" type="date" required /></div>
+          </div>
+          <div class="form-acoes">
+            <button type="submit" class="btn-primario">Agendar</button>
+          </div>
+        </form>
+
+        <h3 style="margin-top:24px">Próximas aulas agendadas</h3>
+        <table class="tabela">
+          <thead><tr><th>Data</th><th>Turma</th><th>Aluno</th><th>Status</th><th>Ações</th></tr></thead>
+          <tbody id="lista-agendamentos"></tbody>
+        </table>
+      </section>
+
+      <!-- CONTAS A RECEBER -->
+      <section id="secao-pagamentos" class="secao oculto">
+        <div class="secao-topo">
+          <h2>Gerar cobrança com link de pagamento</h2>
+        </div>
+        <form id="form-cobranca" class="form-painel">
+          <div class="grid-2">
+            <div>
+              <label>Aluno *</label>
+              <select id="cobranca-aluno" required></select>
+            </div>
+            <div><label>Descrição</label><input id="cobranca-descricao" value="Mensalidade" /></div>
+            <div><label>Valor (R$) *</label><input id="cobranca-valor" type="number" step="0.01" required /></div>
+            <div>
+              <label>Provedor</label>
+              <select id="cobranca-provedor">
+                <option value="mercadopago">Mercado Pago</option>
+                <option value="infinitepay">InfinitePay</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-acoes">
+            <button type="submit" class="btn-primario">Gerar link de pagamento</button>
+          </div>
+        </form>
+        <div id="cobranca-resultado" class="oculto"></div>
+
+        <div class="secao-topo" style="margin-top:32px">
+          <h2>Nova conta a receber (manual)</h2>
+        </div>
+        <form id="form-conta-manual" class="form-painel">
+          <div class="grid-2">
+            <div>
+              <label>Aluno *</label>
+              <select id="conta-aluno" required></select>
+            </div>
+            <div><label>Descrição</label><input id="conta-descricao" value="Mensalidade" /></div>
+            <div><label>Valor (R$) *</label><input id="conta-valor" type="number" step="0.01" required /></div>
+            <div><label>Vencimento</label><input id="conta-vencimento" type="date" /></div>
+            <div>
+              <label>Status</label>
+              <select id="conta-status">
+                <option value="pendente">Pendente</option>
+                <option value="pago">Pago</option>
+                <option value="atrasado">Atrasado</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-acoes">
+            <button type="submit" class="btn-primario">Cadastrar conta</button>
+          </div>
+        </form>
+
+        <div class="secao-topo" style="margin-top:32px">
+          <h2>Contas a receber</h2>
+        </div>
+        <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end">
+          <div style="flex:1">
+            <label>Buscar por aluno</label>
+            <select id="filtro-conta-aluno"><option value="">Todos os alunos</option></select>
+          </div>
+          <div style="flex:1">
+            <label>Status</label>
+            <select id="filtro-conta-status">
+              <option value="">Todos</option>
+              <option value="pendente">Pendente</option>
+              <option value="pago">Pago</option>
+              <option value="atrasado">Atrasado</option>
+              <option value="cancelado">Cancelado</option>
+              <option value="estornado">Estornado</option>
+            </select>
+          </div>
+        </div>
+
+        <form id="form-editar-conta" class="form-painel oculto">
+          <h3>Editar conta</h3>
+          <input type="hidden" id="editar-conta-id" />
+          <div class="grid-2">
+            <div><label>Descrição</label><input id="editar-conta-descricao" /></div>
+            <div><label>Valor (R$)</label><input id="editar-conta-valor" type="number" step="0.01" /></div>
+            <div><label>Vencimento</label><input id="editar-conta-vencimento" type="date" /></div>
+            <div>
+              <label>Status</label>
+              <select id="editar-conta-status">
+                <option value="pendente">Pendente</option>
+                <option value="pago">Pago</option>
+                <option value="atrasado">Atrasado</option>
+                <option value="cancelado">Cancelado</option>
+                <option value="estornado">Estornado</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-acoes">
+            <button type="submit" class="btn-primario">Salvar alterações</button>
+            <button type="button" class="btn-secundario" id="btn-cancelar-editar-conta">Cancelar</button>
+          </div>
+        </form>
+
+        <table class="tabela">
+          <thead><tr><th>Aluno</th><th>Descrição</th><th>Valor</th><th>Vencimento</th><th>Status</th><th>Ações</th></tr></thead>
+          <tbody id="lista-contas"></tbody>
+        </table>
+      </section>
+
+      <!-- USUÁRIOS -->
+      <section id="secao-usuarios" class="secao oculto">
+        <div class="secao-topo">
+          <h2>Usuários do sistema</h2>
+        </div>
+        <form id="form-usuario" class="form-painel">
+          <div class="grid-2">
+            <div><label>Nome *</label><input id="usuario-nome-novo" required /></div>
+            <div><label>E-mail *</label><input id="usuario-email-novo" type="email" required /></div>
+            <div><label>Senha *</label><input id="usuario-senha-novo" type="password" minlength="6" required /></div>
+            <div>
+              <label>Papel</label>
+              <select id="usuario-papel-novo">
+                <option value="admin">Administrador</option>
+                <option value="professor">Professor</option>
+                <option value="recepcao">Recepção</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-acoes">
+            <button type="submit" class="btn-primario">Criar usuário</button>
+          </div>
+        </form>
+
+        <table class="tabela">
+          <thead><tr><th>Nome</th><th>E-mail</th><th>Papel</th><th>Ações</th></tr></thead>
+          <tbody id="lista-usuarios"></tbody>
+        </table>
+      </section>
+
+      <!-- CATRACA -->
+      <section id="secao-catraca" class="secao oculto">
+        <div class="secao-topo">
+          <h2>Integração com a catraca</h2>
+        </div>
+        <div class="form-painel">
+          <p style="margin-top:0;color:#667085;font-size:13px">
+            Deixe IP/porta em branco para usar o que está configurado em HENRY_CATRACA_IP/PORT no servidor,
+            ou informe aqui para testar um endereço diferente pontualmente.
+          </p>
+          <div class="grid-2">
+            <div><label>IP da catraca</label><input id="catraca-ip" placeholder="ex: 192.168.0.79" /></div>
+            <div><label>Porta</label><input id="catraca-porta" placeholder="3000" /></div>
+          </div>
+          <div class="form-acoes">
+            <button type="button" class="btn-secundario" id="btn-testar-catraca">Testar conexão</button>
+            <button type="button" class="btn-primario" id="btn-abrir-catraca">Abrir catraca agora (teste)</button>
+          </div>
+          <p id="catraca-resultado" style="font-size:14px;margin-top:8px"></p>
+        </div>
+
+        <h3 style="margin-top:24px">Últimas tentativas de acesso (totem)</h3>
+        <table class="tabela">
+          <thead><tr><th>Quando</th><th>Aluno</th><th>Método</th><th>Resultado</th><th>Mensagem</th></tr></thead>
+          <tbody id="lista-acessos-catraca"></tbody>
+        </table>
+      </section>
+
+    </main>
+  </div>
+
+  <div id="toast" class="toast oculto"></div>
+
+  <!-- face-api.js hospedado localmente (mesma pasta usada pelo totem) — usado
+       aqui para cadastrar o rosto do aluno direto pela câmera do computador
+       do painel, sem precisar levar o aluno até o totem. -->
+  <script src="vendor/face-api/face-api.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

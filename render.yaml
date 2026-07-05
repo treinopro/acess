@@ -1,0 +1,27 @@
+# Blueprint de deploy automático no Render (Render Blueprints).
+# Basta conectar o repositório GitHub e o Render lê este arquivo.
+# Docs: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: academia-gestao-api
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm install
+    startCommand: npm run migrate && npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false   # cole aqui a URL libsql:// do seu banco Turso
+      - key: DATABASE_AUTH_TOKEN
+        sync: false   # cole aqui o token gerado pelo Turso CLI
+      - key: PAYMENT_PROVIDER
+        value: mercadopago
+      - key: MERCADOPAGO_ACCESS_TOKEN
+        sync: false
+      - key: INFINITEPAY_HANDLE
+        sync: false

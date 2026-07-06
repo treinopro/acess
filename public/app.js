@@ -50,6 +50,38 @@ async function api(caminho, opcoes = {}) {
   return dados;
 }
 
+// Baixa um arquivo autenticado (backup JSON, exportação CSV...) direto pro computador
+// do usuário. Precisa ser separado de api() porque a resposta não é JSON, e um <a href>
+// comum não consegue mandar o header Authorization exigido por essas rotas.
+async function baixarArquivoAutenticado(caminho, nomeArquivoFallback) {
+  const headers = {};
+  if (estado.token) headers.Authorization = `Bearer ${estado.token}`;
+  const resp = await fetch(caminho, { headers });
+
+  if (!resp.ok) {
+    let mensagem = `Erro ${resp.status}`;
+    try {
+      const dados = await resp.json();
+      if (dados?.erro) mensagem = dados.erro;
+    } catch (err) { /* corpo não era JSON, mantém a mensagem genérica */ }
+    throw new Error(mensagem);
+  }
+
+  const blob = await resp.blob();
+  const disposition = resp.headers.get('content-disposition') || '';
+  const match = disposition.match(/filename="?([^"]+)"?/);
+  const nomeArquivo = match ? match[1] : nomeArquivoFallback;
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = nomeArquivo;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 // ---------------- Login / Logout ----------------
 
 function confirmar(mensagem) {
@@ -61,8 +93,31 @@ function mostrarApp() {
   document.getElementById('tela-app').classList.remove('oculto');
   document.getElementById('usuario-nome').textContent = estado.usuario?.nome || '';
   document.getElementById('nav-usuarios').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
+  document.getElementById('nav-config').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
   document.getElementById('nav-catraca').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
+  document.getElementById('btn-acessos-recentes').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
   carregarSecao('alunos');
+}
+
+// ---------------- Identidade do app (nome + "licenciado para") ----------------
+// Roda antes mesmo do login (tela de login também mostra o nome do app), e de novo
+// depois que o admin salva mudanças em Configurações.
+async function carregarConfigApp() {
+  try {
+    const config = await api('/api/config');
+    document.title = config.nome_app || 'Academia Gestão';
+    document.getElementById('login-nome-app').textContent = config.nome_app || 'Academia Gestão';
+    document.getElementById('sidebar-nome-app').textContent = config.nome_app || 'Academia Gestão';
+
+    const licenciadoTexto = config.licenciado_para ? `Licenciado para ${config.licenciado_para}` : '';
+    ['login-licenciado-para', 'sidebar-licenciado-para'].forEach((id) => {
+      const el = document.getElementById(id);
+      el.textContent = licenciadoTexto;
+      el.classList.toggle('oculto', !licenciadoTexto);
+    });
+  } catch (err) {
+    // Falha em buscar config não pode travar o app — segue com os valores padrão do HTML.
+  }
 }
 
 function mostrarLogin() {
@@ -75,18 +130,19 @@ function fazerLogout() {
   estado.usuario = null;
   localStorage.removeItem('token');
   localStorage.removeItem('usuario');
+  fecharPainelAcessos();
   mostrarLogin();
 }
 
 document.getElementById('form-login').addEventListener('submit', async (ev) => {
   ev.preventDefault();
-  const email = document.getElementById('login-email').value.trim();
+  const identificador = document.getElementById('login-email').value.trim();
   const senha = document.getElementById('login-senha').value;
   const erroEl = document.getElementById('login-erro');
   erroEl.textContent = '';
 
   try {
-    const resp = await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, senha }) });
+    const resp = await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ identificador, senha }) });
     estado.token = resp.token;
     estado.usuario = resp.usuario;
     localStorage.setItem('token', resp.token);
@@ -103,6 +159,12 @@ document.getElementById('btn-sair').addEventListener('click', fazerLogout);
 
 document.querySelectorAll('.nav-btn').forEach((btn) => {
   btn.addEventListener('click', () => {
+    // Catraca virou uma janela flutuante (sobreposta), não uma seção de página —
+    // abre por cima do que já está na tela, sem trocar de aba.
+    if (btn.dataset.secao === 'catraca') {
+      abrirJanelaCatraca();
+      return;
+    }
     document.querySelectorAll('.nav-btn').forEach((b) => b.classList.remove('ativo'));
     btn.classList.add('ativo');
     document.querySelectorAll('.secao').forEach((s) => s.classList.add('oculto'));
@@ -117,8 +179,87 @@ function carregarSecao(nome) {
   if (nome === 'agenda') carregarAgenda();
   if (nome === 'pagamentos') carregarPagamentos();
   if (nome === 'usuarios') carregarUsuarios();
-  if (nome === 'catraca') carregarAcessosCatraca();
+  if (nome === 'config') carregarConfiguracoesForm();
+  if (nome === 'relatorios') carregarSecaoRelatorios();
 }
+
+// ---------------- Janela flutuante da catraca (sobreposta, arrastável) ----------------
+
+function abrirJanelaCatraca() {
+  document.getElementById('janela-catraca').classList.remove('oculto');
+  carregarSecaoCatraca();
+}
+function fecharJanelaCatraca() {
+  document.getElementById('janela-catraca').classList.add('oculto');
+}
+document.getElementById('btn-fechar-janela-catraca').addEventListener('click', fecharJanelaCatraca);
+
+// Torna uma janela flutuante arrastável a partir de uma "alça" (ex.: a barra do topo).
+// Reaproveitável para outras janelas flutuantes que venham a existir no futuro.
+function tornarArrastavel(janela, alca) {
+  let arrastando = false;
+  let deslocX = 0;
+  let deslocY = 0;
+
+  alca.addEventListener('mousedown', (ev) => {
+    arrastando = true;
+    const retangulo = janela.getBoundingClientRect();
+    deslocX = ev.clientX - retangulo.left;
+    deslocY = ev.clientY - retangulo.top;
+    // Passa a posicionar por left/top em pixels absolutos (em vez do CSS inicial).
+    janela.style.left = `${retangulo.left}px`;
+    janela.style.top = `${retangulo.top}px`;
+    ev.preventDefault();
+  });
+
+  document.addEventListener('mousemove', (ev) => {
+    if (!arrastando) return;
+    const larguraJanela = janela.offsetWidth;
+    const alturaJanela = janela.offsetHeight;
+    let novoX = ev.clientX - deslocX;
+    let novoY = ev.clientY - deslocY;
+    // Mantém a janela dentro da área visível da tela.
+    novoX = Math.max(0, Math.min(novoX, window.innerWidth - larguraJanela));
+    novoY = Math.max(0, Math.min(novoY, window.innerHeight - alturaJanela));
+    janela.style.left = `${novoX}px`;
+    janela.style.top = `${novoY}px`;
+  });
+
+  document.addEventListener('mouseup', () => { arrastando = false; });
+}
+
+tornarArrastavel(document.getElementById('janela-catraca'), document.getElementById('janela-catraca-alca'));
+
+// ---------------- Configurações (nome do app, licenciado para, backup) ----------------
+
+async function carregarConfiguracoesForm() {
+  try {
+    const config = await api('/api/config');
+    document.getElementById('config-nome-app').value = config.nome_app || '';
+    document.getElementById('config-licenciado-para').value = config.licenciado_para || '';
+  } catch (err) { mostrarToast(err.message, true); }
+}
+
+document.getElementById('form-config-app').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const dados = {
+    nome_app: document.getElementById('config-nome-app').value.trim() || 'Academia Gestão',
+    licenciado_para: document.getElementById('config-licenciado-para').value.trim(),
+  };
+  try {
+    await api('/api/config', { method: 'PUT', body: JSON.stringify(dados) });
+    mostrarToast('Configurações salvas.');
+    carregarConfigApp();
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+document.getElementById('btn-baixar-backup').addEventListener('click', async () => {
+  try {
+    mostrarToast('Gerando backup...');
+    await baixarArquivoAutenticado('/api/config/backup', `backup-academia-${new Date().toISOString().slice(0, 10)}.json`);
+    mostrarToast('Backup baixado.');
+  } catch (err) { mostrarToast(err.message, true); }
+});
 
 // Sai do perfil do aluno e volta para a listagem, reativando o item de navegação.
 function voltarParaAlunos() {
@@ -187,6 +328,34 @@ let buscaAlunoTimeout = null;
 document.getElementById('busca-aluno').addEventListener('input', () => {
   clearTimeout(buscaAlunoTimeout);
   buscaAlunoTimeout = setTimeout(carregarAlunos, 300);
+});
+
+// ---------------- Importar / exportar alunos (CSV) ----------------
+
+document.getElementById('btn-exportar-alunos').addEventListener('click', async () => {
+  try {
+    await baixarArquivoAutenticado('/api/alunos/exportar', `alunos-${new Date().toISOString().slice(0, 10)}.csv`);
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+document.getElementById('btn-importar-alunos').addEventListener('click', () => {
+  document.getElementById('input-importar-alunos').click();
+});
+
+document.getElementById('input-importar-alunos').addEventListener('change', async (ev) => {
+  const arquivo = ev.target.files[0];
+  ev.target.value = ''; // permite selecionar o mesmo arquivo de novo depois
+  if (!arquivo) return;
+  if (!confirmar(`Importar alunos do arquivo "${arquivo.name}"? Alunos com o mesmo CPF ou e-mail já cadastrados serão atualizados; os demais serão criados.`)) return;
+
+  try {
+    const texto = await arquivo.text();
+    const resp = await api('/api/alunos/importar', { method: 'POST', body: JSON.stringify({ csv: texto }) });
+    const resumo = `${resp.criados} criado(s), ${resp.atualizados} atualizado(s)${resp.erros.length ? `, ${resp.erros.length} erro(s)` : ''}.`;
+    mostrarToast(`Importação concluída: ${resumo}`, resp.erros.length > 0);
+    if (resp.erros.length) console.warn('Erros na importação de alunos:', resp.erros);
+    carregarAlunos();
+  } catch (err) { mostrarToast(err.message, true); }
 });
 
 async function popularSelectPlanoDoFormAluno() {
@@ -303,8 +472,20 @@ async function abrirPerfilAluno(alunoId) {
   perfilAtualId = alunoId;
   document.querySelectorAll('.secao').forEach((s) => s.classList.add('oculto'));
   document.getElementById('secao-perfil-aluno').classList.remove('oculto');
+  trocarAbaPerfil('dados'); // sempre volta pra primeira aba ao abrir um aluno diferente
   await carregarPerfilAluno();
 }
+
+// ---------------- Abas do perfil do aluno (Dados / Biometria / Anamnese / Avaliações / Matrículas / Agendamentos / Financeiro) ----------------
+
+function trocarAbaPerfil(nomeAba) {
+  document.querySelectorAll('.perfil-tab-btn').forEach((b) => b.classList.toggle('ativo', b.dataset.tab === nomeAba));
+  document.querySelectorAll('.perfil-tab-painel').forEach((p) => p.classList.toggle('oculto', p.dataset.tabPainel !== nomeAba));
+}
+
+document.querySelectorAll('.perfil-tab-btn').forEach((btn) => {
+  btn.addEventListener('click', () => trocarAbaPerfil(btn.dataset.tab));
+});
 
 async function carregarPerfilAluno() {
   try {
@@ -372,19 +553,85 @@ async function carregarPerfilAluno() {
         </tr>`).join('')
       : '<tr><td colspan="3">Nenhum agendamento.</td></tr>';
 
-    document.getElementById('perfil-lista-cobrancas').innerHTML = cobrancas.length
-      ? cobrancas.map((c) => `
+    // A aba Financeiro usa carregarFinanceiroPerfil() (endpoint com valor pago/ações),
+    // não o array "cobrancas" simplificado que já vem no /perfil — evita ficarem dessincronizados.
+    await carregarFinanceiroPerfil();
+  } catch (err) {
+    mostrarToast(err.message, true);
+  }
+}
+
+// ---------------- Aba Financeiro do perfil (espelha Contas a Receber, filtrado no aluno) ----------------
+
+async function carregarFinanceiroPerfil() {
+  const alunoId = document.getElementById('perfil-aluno-id').value;
+  const tbody = document.getElementById('perfil-lista-cobrancas');
+  if (!alunoId) { tbody.innerHTML = ''; return; }
+  try {
+    const contas = await api(`/api/pagamentos/cobrancas?aluno_id=${alunoId}`);
+    tbody.innerHTML = contas.length ? '' : '<tr><td colspan="7">Nenhuma conta encontrada.</td></tr>';
+    contas.forEach((c) => {
+      const valorPago = Number(c.valor_pago_centavos || 0) || (c.status === 'pago' ? c.valor_centavos : 0);
+      const dataPago = c.data_pago_calc || (c.status === 'pago' ? c.pago_em : null);
+      const tr = el(`
         <tr>
           <td>${c.descricao || '—'}</td>
           <td>${formatarMoeda(c.valor_centavos)}</td>
           <td>${c.vencimento || '—'}</td>
           <td><span class="badge ${c.status}">${c.status}</span></td>
-        </tr>`).join('')
-      : '<tr><td colspan="4">Nenhuma cobrança.</td></tr>';
-  } catch (err) {
-    mostrarToast(err.message, true);
-  }
+          <td>${dataPago ? new Date(dataPago).toLocaleDateString('pt-BR') : '—'}</td>
+          <td>${valorPago > 0 ? formatarMoeda(valorPago) : '—'}</td>
+          <td>
+            <button class="btn-linha" data-acao="editar">Alterar</button>
+            <button class="btn-linha" data-acao="parcelar">Parcelar</button>
+            <button class="btn-linha perigo" data-acao="excluir">Excluir</button>
+          </td>
+        </tr>
+      `);
+      tr.querySelector('[data-acao="editar"]').addEventListener('click', () => abrirModalConta(c));
+      tr.querySelector('[data-acao="parcelar"]').addEventListener('click', () => abrirModalParcelamento({ modo: 'existente', conta: c }));
+      tr.querySelector('[data-acao="excluir"]').addEventListener('click', async () => {
+        if (!confirmar('Excluir esta conta a receber?')) return;
+        try {
+          await api(`/api/pagamentos/cobrancas/${c.id}`, { method: 'DELETE' });
+          mostrarToast('Conta excluída.');
+          carregarFinanceiroPerfil();
+        } catch (err) { mostrarToast(err.message, true); }
+      });
+      tbody.appendChild(tr);
+    });
+  } catch (err) { mostrarToast(err.message, true); }
 }
+
+document.getElementById('btn-toggle-conta-perfil').addEventListener('click', () => {
+  document.getElementById('form-conta-perfil').classList.toggle('oculto');
+});
+document.getElementById('btn-cancelar-conta-perfil').addEventListener('click', () => {
+  document.getElementById('form-conta-perfil').classList.add('oculto');
+});
+
+document.getElementById('form-conta-perfil').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const dados = {
+    aluno_id: perfilAtualId,
+    descricao: document.getElementById('conta-perfil-descricao').value.trim() || 'Mensalidade',
+    valor_centavos: Math.round(parseFloat(document.getElementById('conta-perfil-valor').value) * 100),
+    vencimento: document.getElementById('conta-perfil-vencimento').value || null,
+    status: document.getElementById('conta-perfil-status').value,
+  };
+  try {
+    await api('/api/pagamentos/cobrancas', { method: 'POST', body: JSON.stringify(dados) });
+    mostrarToast('Conta cadastrada.');
+    ev.target.reset();
+    document.getElementById('conta-perfil-descricao').value = 'Mensalidade';
+    document.getElementById('form-conta-perfil').classList.add('oculto');
+    carregarFinanceiroPerfil();
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+document.getElementById('btn-nova-conta-parcelada-perfil').addEventListener('click', () => {
+  abrirModalParcelamento({ modo: 'novo', alunoIdPreselect: perfilAtualId });
+});
 
 document.getElementById('form-perfil-dados').addEventListener('submit', async (ev) => {
   ev.preventDefault();
@@ -851,6 +1098,7 @@ async function carregarPagamentos() {
   await popularSelectAlunos(document.getElementById('conta-aluno'));
   await popularSelectAlunosComTodos(document.getElementById('filtro-conta-aluno'));
   await carregarContas();
+      carregarFinanceiroPerfil();
 }
 
 // Select de filtro precisa listar TODOS os alunos (não só ativos), senão não dá
@@ -869,20 +1117,27 @@ async function carregarContas() {
   try {
     const alunoId = document.getElementById('filtro-conta-aluno').value;
     const status = document.getElementById('filtro-conta-status').value;
+    const busca = document.getElementById('busca-conta-nome').value.trim();
     const params = new URLSearchParams();
     if (alunoId) params.set('aluno_id', alunoId);
     if (status) params.set('status', status);
+    if (busca) params.set('busca', busca);
 
     const contas = await api(`/api/pagamentos/cobrancas${params.toString() ? '?' + params.toString() : ''}`);
     const tbody = document.getElementById('lista-contas');
     tbody.innerHTML = '';
 
     if (!contas.length) {
-      tbody.innerHTML = '<tr><td colspan="6">Nenhuma conta encontrada.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8">Nenhuma conta encontrada.</td></tr>';
       return;
     }
 
     contas.forEach((c) => {
+      // Fallback pra contas quitadas via webhook do gateway (Mercado Pago/InfinitePay) ou
+      // marcadas como pagas na criação manual antiga, que podem não ter linha em
+      // pagamentos_cobranca — nesses casos usa o valor/data cheios da própria conta.
+      const valorPago = Number(c.valor_pago_centavos || 0) || (c.status === 'pago' ? c.valor_centavos : 0);
+      const dataPago = c.data_pago_calc || (c.status === 'pago' ? c.pago_em : null);
       const tr = el(`
         <tr>
           <td>${c.aluno_nome}</td>
@@ -890,19 +1145,24 @@ async function carregarContas() {
           <td>${formatarMoeda(c.valor_centavos)}</td>
           <td>${c.vencimento || '—'}</td>
           <td><span class="badge ${c.status}">${c.status}</span></td>
+          <td>${dataPago ? new Date(dataPago).toLocaleDateString('pt-BR') : '—'}</td>
+          <td>${valorPago > 0 ? formatarMoeda(valorPago) : '—'}</td>
           <td>
-            <button class="btn-linha" data-acao="editar">Editar</button>
+            <button class="btn-linha" data-acao="editar">Alterar</button>
+            <button class="btn-linha" data-acao="parcelar">Parcelar</button>
             <button class="btn-linha perigo" data-acao="excluir">Excluir</button>
           </td>
         </tr>
       `);
-      tr.querySelector('[data-acao="editar"]').addEventListener('click', () => abrirEditarConta(c));
+      tr.querySelector('[data-acao="editar"]').addEventListener('click', () => abrirModalConta(c));
+      tr.querySelector('[data-acao="parcelar"]').addEventListener('click', () => abrirModalParcelamento({ modo: 'existente', conta: c }));
       tr.querySelector('[data-acao="excluir"]').addEventListener('click', async () => {
         if (!confirmar('Excluir esta conta a receber?')) return;
         try {
           await api(`/api/pagamentos/cobrancas/${c.id}`, { method: 'DELETE' });
           mostrarToast('Conta excluída.');
           carregarContas();
+      carregarFinanceiroPerfil();
         } catch (err) { mostrarToast(err.message, true); }
       });
       tbody.appendChild(tr);
@@ -913,34 +1173,377 @@ async function carregarContas() {
 document.getElementById('filtro-conta-aluno').addEventListener('change', carregarContas);
 document.getElementById('filtro-conta-status').addEventListener('change', carregarContas);
 
-function abrirEditarConta(conta) {
-  document.getElementById('form-editar-conta').classList.remove('oculto');
-  document.getElementById('editar-conta-id').value = conta.id;
-  document.getElementById('editar-conta-descricao').value = conta.descricao || '';
-  document.getElementById('editar-conta-valor').value = (conta.valor_centavos / 100).toFixed(2);
-  document.getElementById('editar-conta-vencimento').value = conta.vencimento || '';
-  document.getElementById('editar-conta-status').value = conta.status;
-  document.getElementById('form-editar-conta').scrollIntoView({ behavior: 'smooth' });
-}
-
-document.getElementById('btn-cancelar-editar-conta').addEventListener('click', () => {
-  document.getElementById('form-editar-conta').classList.add('oculto');
+let buscaContaTimeout = null;
+document.getElementById('busca-conta-nome').addEventListener('input', () => {
+  clearTimeout(buscaContaTimeout);
+  buscaContaTimeout = setTimeout(carregarContas, 300);
 });
 
-document.getElementById('form-editar-conta').addEventListener('submit', async (ev) => {
+// Mostrar/ocultar os formulários de "conta manual" e "gerar cobrança" (ficam
+// recolhidos por padrão para a tabela de Contas a Receber aparecer primeiro).
+document.getElementById('btn-toggle-conta-manual').addEventListener('click', () => {
+  document.getElementById('form-conta-manual').classList.toggle('oculto');
+  document.getElementById('form-cobranca').classList.add('oculto');
+});
+document.getElementById('btn-toggle-cobranca').addEventListener('click', () => {
+  document.getElementById('form-cobranca').classList.toggle('oculto');
+  document.getElementById('form-conta-manual').classList.add('oculto');
+});
+document.getElementById('btn-cancelar-conta-manual').addEventListener('click', () => {
+  document.getElementById('form-conta-manual').classList.add('oculto');
+});
+document.getElementById('btn-cancelar-cobranca').addEventListener('click', () => {
+  document.getElementById('form-cobranca').classList.add('oculto');
+});
+
+// ---------------- Modal "Conta" (edição + histórico de pagamentos, estilo Secullum) ----------------
+
+let modalContaAtual = null; // guarda a conta aberta no momento pra saber o id/valor/status atuais
+let modalContaTotalPagoCentavos = 0; // soma dos pagamentos já lançados na conta aberta no modal
+
+const ROTULOS_TIPO_PAGAMENTO = {
+  dinheiro: 'Dinheiro', pix: 'Pix', cartao_credito: 'Cartão de crédito', cartao_debito: 'Cartão de débito',
+  transferencia: 'Transferência bancária', boleto: 'Boleto', manual: 'Manual', outro: 'Outro',
+};
+
+async function abrirModalConta(conta) {
+  modalContaAtual = conta;
+  document.getElementById('mconta-id').value = conta.id;
+  document.getElementById('mconta-aluno-nome').textContent = conta.aluno_nome || '—';
+  document.getElementById('mconta-descricao').value = conta.descricao || '';
+  document.getElementById('mconta-valor').value = (conta.valor_centavos / 100).toFixed(2);
+  document.getElementById('mconta-vencimento').value = conta.vencimento || '';
+  document.getElementById('mconta-valor-total').textContent = formatarMoeda(conta.valor_centavos);
+  atualizarBadgeStatusModal(conta.status);
+  document.getElementById('modal-conta').classList.remove('oculto');
+  await carregarPagamentosModal();
+}
+
+function fecharModalConta() {
+  document.getElementById('modal-conta').classList.add('oculto');
+  modalContaAtual = null;
+}
+
+function atualizarBadgeStatusModal(status) {
+  const badge = document.getElementById('mconta-status-badge');
+  badge.textContent = status;
+  badge.className = `badge ${status}`;
+  document.getElementById('btn-remover-quitacao').classList.toggle('oculto', status !== 'pago');
+}
+
+async function carregarPagamentosModal() {
+  try {
+    const pagamentos = await api(`/api/pagamentos/cobrancas/${modalContaAtual.id}/pagamentos`);
+    const tbody = document.getElementById('mconta-lista-pagamentos');
+    tbody.innerHTML = pagamentos.length ? '' : '<tr><td colspan="5">Nenhum pagamento lançado ainda.</td></tr>';
+    let totalPago = 0;
+    pagamentos.forEach((p) => {
+      totalPago += p.valor_centavos;
+      const tr = el(`
+        <tr>
+          <td>${new Date(p.data).toLocaleDateString('pt-BR')}</td>
+          <td>${formatarMoeda(p.valor_centavos)}</td>
+          <td>${ROTULOS_TIPO_PAGAMENTO[p.tipo] || p.tipo || '—'}</td>
+          <td>${p.conta_corrente || '—'}</td>
+          <td><button type="button" class="btn-linha perigo" data-acao="excluir-pagamento">Excluir</button></td>
+        </tr>
+      `);
+      tr.querySelector('[data-acao="excluir-pagamento"]').addEventListener('click', async () => {
+        if (!confirmar('Excluir este pagamento? A conta pode voltar a ficar pendente/atrasada.')) return;
+        try {
+          const resp = await api(`/api/pagamentos/cobrancas/${modalContaAtual.id}/pagamentos/${p.id}`, { method: 'DELETE' });
+          mostrarToast('Pagamento excluído.');
+          if (resp.cobranca) atualizarBadgeStatusModal(resp.cobranca.status);
+          await carregarPagamentosModal();
+          carregarContas();
+      carregarFinanceiroPerfil();
+        } catch (err) { mostrarToast(err.message, true); }
+      });
+      tbody.appendChild(tr);
+    });
+    modalContaTotalPagoCentavos = totalPago;
+    document.getElementById('mconta-total-pago').textContent = formatarMoeda(totalPago);
+  } catch (err) { mostrarToast(err.message, true); }
+}
+
+document.getElementById('btn-fechar-modal-conta').addEventListener('click', fecharModalConta);
+
+document.getElementById('form-modal-conta').addEventListener('submit', async (ev) => {
   ev.preventDefault();
-  const id = document.getElementById('editar-conta-id').value;
+  const id = document.getElementById('mconta-id').value;
   const dados = {
-    descricao: document.getElementById('editar-conta-descricao').value.trim(),
-    valor_centavos: Math.round(parseFloat(document.getElementById('editar-conta-valor').value) * 100),
-    vencimento: document.getElementById('editar-conta-vencimento').value || null,
-    status: document.getElementById('editar-conta-status').value,
+    descricao: document.getElementById('mconta-descricao').value.trim(),
+    valor_centavos: Math.round(parseFloat(document.getElementById('mconta-valor').value) * 100),
+    vencimento: document.getElementById('mconta-vencimento').value || null,
   };
   try {
     await api(`/api/pagamentos/cobrancas/${id}`, { method: 'PUT', body: JSON.stringify(dados) });
     mostrarToast('Conta atualizada.');
-    document.getElementById('form-editar-conta').classList.add('oculto');
+    fecharModalConta();
     carregarContas();
+      carregarFinanceiroPerfil();
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+document.getElementById('btn-excluir-conta-modal').addEventListener('click', async () => {
+  if (!confirmar('Excluir esta conta a receber?')) return;
+  try {
+    await api(`/api/pagamentos/cobrancas/${modalContaAtual.id}`, { method: 'DELETE' });
+    mostrarToast('Conta excluída.');
+    fecharModalConta();
+    carregarContas();
+      carregarFinanceiroPerfil();
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+document.getElementById('btn-remover-quitacao').addEventListener('click', async () => {
+  if (!confirmar('Remover a quitação desta conta? Ela volta a ficar pendente/atrasada (o histórico de pagamentos é mantido).')) return;
+  try {
+    const resp = await api(`/api/pagamentos/cobrancas/${modalContaAtual.id}/remover-quitacao`, { method: 'POST' });
+    mostrarToast('Quitação removida.');
+    atualizarBadgeStatusModal(resp.cobranca.status);
+    carregarContas();
+      carregarFinanceiroPerfil();
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+// ---------------- Modal "Pagamento" (lançar um recebimento numa conta) ----------------
+
+function abrirModalPagamento() {
+  const saldoCentavos = Math.max(modalContaAtual.valor_centavos - modalContaTotalPagoCentavos, 0);
+
+  document.getElementById('pagamento-data').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('pagamento-valor').value = (saldoCentavos / 100).toFixed(2);
+  document.getElementById('pagamento-tipo').value = 'dinheiro';
+  document.getElementById('pagamento-conta-corrente').value = 'Caixa da empresa';
+  document.getElementById('modal-pagamento').classList.remove('oculto');
+}
+
+function fecharModalPagamento() {
+  document.getElementById('modal-pagamento').classList.add('oculto');
+}
+
+document.getElementById('btn-add-pagamento').addEventListener('click', abrirModalPagamento);
+document.getElementById('btn-fechar-modal-pagamento').addEventListener('click', fecharModalPagamento);
+document.getElementById('btn-cancelar-modal-pagamento').addEventListener('click', fecharModalPagamento);
+
+document.getElementById('form-modal-pagamento').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const dados = {
+    data: document.getElementById('pagamento-data').value,
+    valor_centavos: Math.round(parseFloat(document.getElementById('pagamento-valor').value) * 100),
+    tipo: document.getElementById('pagamento-tipo').value,
+    conta_corrente: document.getElementById('pagamento-conta-corrente').value.trim() || null,
+  };
+  try {
+    const resp = await api(`/api/pagamentos/cobrancas/${modalContaAtual.id}/pagamentos`, { method: 'POST', body: JSON.stringify(dados) });
+    mostrarToast(resp.cobranca?.status === 'pago' ? 'Pagamento lançado — conta quitada!' : 'Pagamento lançado.');
+    if (resp.cobranca) atualizarBadgeStatusModal(resp.cobranca.status);
+    fecharModalPagamento();
+    await carregarPagamentosModal();
+    carregarContas();
+      carregarFinanceiroPerfil();
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+// ---------------- Modal "Parcelamentos" (Parcelar Conta / Incluir Conta Parcelada) ----------------
+
+let modalParcelamentoModo = null; // 'existente' | 'novo'
+let modalParcelamentoConta = null; // conta original, só quando modo === 'existente'
+
+// Mesma lógica do backend (gerarParcelas em pagamentos.routes.js) — replicada aqui só
+// pra "Prever parcelamento" responder na hora, sem round-trip. Se mudar uma, muda a outra.
+function gerarParcelasPreview({
+  valorTotalCentavos, numParcelas, dataPrimeiraParcela, diaVencimento,
+  valorPrimeiraEspecialCentavos, taxaJurosPercentual, tipoJuros, arredondar,
+}) {
+  const temPrimeiraEspecial = valorPrimeiraEspecialCentavos != null;
+  const restante = temPrimeiraEspecial ? valorTotalCentavos - valorPrimeiraEspecialCentavos : valorTotalCentavos;
+  const qtdRestantes = temPrimeiraEspecial ? numParcelas - 1 : numParcelas;
+  const valorBase = qtdRestantes > 0 ? restante / qtdRestantes : restante;
+  const taxa = (taxaJurosPercentual || 0) / 100;
+
+  const parcelas = [];
+  for (let i = 0; i < numParcelas; i++) {
+    let valor;
+    if (i === 0 && temPrimeiraEspecial) {
+      valor = valorPrimeiraEspecialCentavos;
+    } else {
+      valor = taxa > 0
+        ? (tipoJuros === 'composto' ? valorBase * Math.pow(1 + taxa, i) : valorBase * (1 + taxa * i))
+        : valorBase;
+    }
+    valor = arredondar ? Math.round(valor / 100) * 100 : Math.round(valor);
+
+    const data = new Date(`${dataPrimeiraParcela}T00:00:00`);
+    data.setMonth(data.getMonth() + i);
+    if (diaVencimento) data.setDate(Math.min(diaVencimento, 28));
+    parcelas.push({ data: data.toISOString().slice(0, 10), valor_centavos: valor });
+  }
+
+  const soma = parcelas.reduce((acc, p) => acc + p.valor_centavos, 0);
+  const diferenca = valorTotalCentavos - soma;
+  if (diferenca !== 0) parcelas[parcelas.length - 1].valor_centavos += diferenca;
+
+  return parcelas;
+}
+
+async function abrirModalParcelamento({ modo, conta, alunoIdPreselect }) {
+  modalParcelamentoModo = modo;
+  modalParcelamentoConta = conta || null;
+
+  document.getElementById('mparc-bloco-novo').classList.toggle('oculto', modo !== 'novo');
+  document.getElementById('mparc-bloco-existente').classList.toggle('oculto', modo !== 'existente');
+
+  const hoje = new Date().toISOString().slice(0, 10);
+  if (modo === 'novo') {
+    const selectAluno = document.getElementById('mparc-aluno');
+    await popularSelectAlunos(selectAluno);
+    // Aberto a partir da aba Financeiro do perfil: já vem com o aluno certo e travado,
+    // já que o contexto (qual aluno) já está definido pela página onde o admin está.
+    if (alunoIdPreselect) {
+      selectAluno.value = alunoIdPreselect;
+      selectAluno.disabled = true;
+    } else {
+      selectAluno.disabled = false;
+    }
+    document.getElementById('mparc-descricao').value = 'Mensalidade';
+    document.getElementById('mparc-valor-total').value = '';
+    document.getElementById('mparc-valor-total').disabled = false;
+    document.getElementById('mparc-data-primeira').value = hoje;
+  } else {
+    document.getElementById('mparc-aluno-nome').textContent = conta.aluno_nome || '—';
+    document.getElementById('mparc-descricao-existente').textContent = conta.descricao || 'Mensalidade';
+    document.getElementById('mparc-valor-total').value = (conta.valor_centavos / 100).toFixed(2);
+    document.getElementById('mparc-valor-total').disabled = true; // parcela sempre soma o valor atual da conta
+    document.getElementById('mparc-data-primeira').value = conta.vencimento || hoje;
+  }
+
+  document.getElementById('mparc-parcelas').value = 2;
+  document.getElementById('mparc-dia-vencimento').value = '';
+  document.getElementById('mparc-chk-primeira-especial').checked = false;
+  document.getElementById('mparc-valor-primeira-especial').value = '';
+  document.getElementById('mparc-valor-primeira-especial').disabled = true;
+  document.getElementById('mparc-chk-juros').checked = false;
+  document.getElementById('mparc-taxa-juros').value = '';
+  document.getElementById('mparc-taxa-juros').disabled = true;
+  document.getElementById('mparc-tipo-juros').disabled = true;
+  document.getElementById('mparc-chk-arredondar').checked = false;
+  document.getElementById('mparc-chk-quitadas').checked = false;
+  document.getElementById('mparc-lista-preview').innerHTML = '<tr><td colspan="2">Clique em "Prever parcelamento" pra ver as parcelas.</td></tr>';
+  document.getElementById('mparc-total-preview').textContent = 'R$ 0,00';
+
+  document.getElementById('modal-parcelamento').classList.remove('oculto');
+}
+
+function fecharModalParcelamento() {
+  document.getElementById('modal-parcelamento').classList.add('oculto');
+}
+
+document.getElementById('mparc-chk-primeira-especial').addEventListener('change', (ev) => {
+  document.getElementById('mparc-valor-primeira-especial').disabled = !ev.target.checked;
+});
+document.getElementById('mparc-chk-juros').addEventListener('change', (ev) => {
+  document.getElementById('mparc-taxa-juros').disabled = !ev.target.checked;
+  document.getElementById('mparc-tipo-juros').disabled = !ev.target.checked;
+});
+
+// Lê os campos do formulário e devolve o payload usado tanto pra prévia (client) quanto
+// pro envio real (servidor) — os nomes de campo já saem no formato que a API espera.
+function lerFormParcelamento() {
+  const chkPrimeira = document.getElementById('mparc-chk-primeira-especial').checked;
+  const chkJuros = document.getElementById('mparc-chk-juros').checked;
+  const diaVencimento = document.getElementById('mparc-dia-vencimento').value;
+  return {
+    valor_centavos: Math.round(parseFloat(document.getElementById('mparc-valor-total').value || '0') * 100),
+    parcelas: parseInt(document.getElementById('mparc-parcelas').value, 10),
+    data_primeira_parcela: document.getElementById('mparc-data-primeira').value,
+    dia_vencimento: diaVencimento ? parseInt(diaVencimento, 10) : null,
+    valor_primeira_especial_centavos: chkPrimeira
+      ? Math.round(parseFloat(document.getElementById('mparc-valor-primeira-especial').value || '0') * 100)
+      : null,
+    taxa_juros_percentual: chkJuros ? parseFloat(document.getElementById('mparc-taxa-juros').value || '0') : 0,
+    tipo_juros: document.getElementById('mparc-tipo-juros').value,
+    arredondar: document.getElementById('mparc-chk-arredondar').checked,
+    lancar_quitadas: document.getElementById('mparc-chk-quitadas').checked,
+  };
+}
+
+document.getElementById('btn-prever-parcelamento').addEventListener('click', () => {
+  const dados = lerFormParcelamento();
+  if (!dados.valor_centavos || !dados.parcelas || !dados.data_primeira_parcela) {
+    mostrarToast('Preencha valor total, parcelas e data da 1ª parcela pra prever.', true);
+    return;
+  }
+  const parcelas = gerarParcelasPreview({
+    valorTotalCentavos: dados.valor_centavos,
+    numParcelas: dados.parcelas,
+    dataPrimeiraParcela: dados.data_primeira_parcela,
+    diaVencimento: dados.dia_vencimento,
+    valorPrimeiraEspecialCentavos: dados.valor_primeira_especial_centavos,
+    taxaJurosPercentual: dados.taxa_juros_percentual,
+    tipoJuros: dados.tipo_juros,
+    arredondar: dados.arredondar,
+  });
+  const tbody = document.getElementById('mparc-lista-preview');
+  tbody.innerHTML = parcelas.map((p) => `
+    <tr><td>${new Date(`${p.data}T00:00:00`).toLocaleDateString('pt-BR')}</td><td>${formatarMoeda(p.valor_centavos)}</td></tr>
+  `).join('');
+  const total = parcelas.reduce((acc, p) => acc + p.valor_centavos, 0);
+  document.getElementById('mparc-total-preview').textContent = formatarMoeda(total);
+});
+
+document.getElementById('btn-fechar-modal-parcelamento').addEventListener('click', fecharModalParcelamento);
+document.getElementById('btn-cancelar-modal-parcelamento').addEventListener('click', fecharModalParcelamento);
+
+document.getElementById('btn-nova-conta-parcelada').addEventListener('click', () => abrirModalParcelamento({ modo: 'novo' }));
+
+document.getElementById('btn-parcelar-conta-modal').addEventListener('click', () => {
+  const conta = modalContaAtual;
+  fecharModalConta();
+  abrirModalParcelamento({ modo: 'existente', conta });
+});
+
+document.getElementById('form-modal-parcelamento').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const dados = lerFormParcelamento();
+
+  // Validação manual (não dá pra confiar em `required` nativo aqui: o campo de aluno
+  // fica escondido no modo "existente", e o Chrome bloqueia o submit silenciosamente
+  // — sem mostrar nada na tela — quando um campo required não é focável).
+  if (!dados.valor_centavos) {
+    mostrarToast('Informe o valor total.', true);
+    return;
+  }
+  if (!dados.parcelas || dados.parcelas < 2) {
+    mostrarToast('Informe pelo menos 2 parcelas.', true);
+    return;
+  }
+  if (!dados.data_primeira_parcela) {
+    mostrarToast('Informe a data da 1ª parcela.', true);
+    return;
+  }
+  const alunoId = modalParcelamentoModo === 'novo' ? document.getElementById('mparc-aluno').value : null;
+  if (modalParcelamentoModo === 'novo' && !alunoId) {
+    mostrarToast('Selecione um aluno.', true);
+    return;
+  }
+
+  try {
+    if (modalParcelamentoModo === 'existente') {
+      await api(`/api/pagamentos/cobrancas/${modalParcelamentoConta.id}/parcelar`, { method: 'POST', body: JSON.stringify(dados) });
+    } else {
+      const payload = {
+        ...dados,
+        aluno_id: alunoId,
+        descricao: document.getElementById('mparc-descricao').value.trim() || 'Mensalidade',
+      };
+      await api('/api/pagamentos/cobrancas/parceladas', { method: 'POST', body: JSON.stringify(payload) });
+    }
+    mostrarToast('Parcelamento criado.');
+    fecharModalParcelamento();
+    carregarContas();
+      carregarFinanceiroPerfil();
   } catch (err) { mostrarToast(err.message, true); }
 });
 
@@ -957,7 +1560,9 @@ document.getElementById('form-conta-manual').addEventListener('submit', async (e
     await api('/api/pagamentos/cobrancas', { method: 'POST', body: JSON.stringify(dados) });
     mostrarToast('Conta cadastrada.');
     ev.target.reset();
+    document.getElementById('form-conta-manual').classList.add('oculto');
     carregarContas();
+      carregarFinanceiroPerfil();
   } catch (err) { mostrarToast(err.message, true); }
 });
 
@@ -978,6 +1583,7 @@ document.getElementById('form-cobranca').addEventListener('submit', async (ev) =
       : `Cobrança criada via <strong>${resp.provedor}</strong>, mas o provedor não retornou um link (verifique as credenciais no .env).`;
     mostrarToast('Cobrança gerada.');
     carregarContas();
+      carregarFinanceiroPerfil();
   } catch (err) {
     resultadoEl.classList.remove('oculto');
     resultadoEl.textContent = `Erro ao gerar cobrança: ${err.message}`;
@@ -1054,6 +1660,10 @@ function paramsCatraca() {
   return { ip, porta, query: params.toString() };
 }
 
+function rotuloModo(modo) {
+  return modo === 'agente' ? 'via agente local' : 'direto (mesma rede do servidor)';
+}
+
 document.getElementById('btn-testar-catraca').addEventListener('click', async () => {
   const resultadoEl = document.getElementById('catraca-resultado');
   const { query } = paramsCatraca();
@@ -1061,42 +1671,132 @@ document.getElementById('btn-testar-catraca').addEventListener('click', async ()
   try {
     const resp = await api(`/api/terminal/catraca/testar${query ? '?' + query : ''}`);
     resultadoEl.textContent = resp.ok
-      ? `✅ Conectou em ${resp.ip}:${resp.port}.`
-      : `⛔ Não conectou em ${resp.ip}:${resp.port} — ${resp.erro}`;
+      ? `✅ Conectou em ${resp.ip}:${resp.port} (${rotuloModo(resp.modo)}).`
+      : `⛔ Não conectou em ${resp.ip}:${resp.port} — ${resp.erro} (${rotuloModo(resp.modo)})`;
   } catch (err) {
     resultadoEl.textContent = `⚠️ ${err.message}`;
   }
 });
 
-document.getElementById('btn-abrir-catraca').addEventListener('click', async () => {
-  const resultadoEl = document.getElementById('catraca-resultado');
-  const { ip, porta } = paramsCatraca();
-  if (!confirmar('Isso vai abrir a catraca fisicamente agora, como teste. Continuar?')) return;
-  resultadoEl.textContent = 'Enviando comando de abertura...';
+// ---------------- Status do agente local (nuvem) / modo direto ----------------
+
+async function atualizarStatusAgenteCatraca() {
+  const el = document.getElementById('catraca-status-modo');
   try {
-    await api('/api/terminal/catraca/liberar', {
-      method: 'POST',
-      body: JSON.stringify({ ip: ip || undefined, port: porta ? Number(porta) : undefined, mensagem: 'TESTE DO PAINEL' }),
-    });
-    resultadoEl.textContent = '✅ Comando de abertura enviado. Confira se a catraca abriu fisicamente.';
+    const resp = await api('/api/terminal/catraca/agente/status');
+    el.textContent = resp.conectado
+      ? 'agente local conectado'
+      : 'modo direto (nenhum agente conectado)';
+  } catch (err) {
+    el.textContent = 'não foi possível checar';
+  }
+}
+
+// ---------------- Liberação de pânico (status) ----------------
+
+async function atualizarStatusPanico() {
+  try {
+    const resp = await api('/api/terminal/catraca/panico/status');
+    document.getElementById('panico-status-texto').textContent = resp.ativo ? 'ATIVA — catraca liberando continuamente' : 'inativa';
+  } catch (err) {
+    document.getElementById('panico-status-texto').textContent = 'não foi possível checar';
+  }
+}
+
+// ---------------- "Indicar uma pessoa" habilita/desabilita o select de aluno ----------------
+
+document.getElementById('catraca-chk-indicar-pessoa').addEventListener('change', (ev) => {
+  document.getElementById('catraca-liberar-aluno').disabled = !ev.target.checked;
+});
+
+// ---------------- Botão único "Liberar" — decide a ação pelo rádio marcado ----------------
+// (equivalente ao botão "Liberar" da janela "Liberar Equipamentos" do Secullum: um só botão,
+// o modo escolhido acima é que determina se libera um acesso, indica uma pessoa, ativa ou
+// cancela a liberação contínua/pânico)
+
+document.getElementById('btn-catraca-liberar').addEventListener('click', async () => {
+  const resultadoEl = document.getElementById('catraca-resultado');
+  const modo = document.querySelector('input[name="catraca-modo"]:checked').value;
+  const { ip, porta } = paramsCatraca();
+
+  try {
+    if (modo === 'panico') {
+      if (!confirmar('Isso vai manter a catraca liberando continuamente até você cancelar. Use apenas em emergência. Continuar?')) return;
+      await api('/api/terminal/catraca/panico/ativar', {
+        method: 'POST',
+        body: JSON.stringify({ ip: ip || undefined, port: porta ? Number(porta) : undefined }),
+      });
+      resultadoEl.textContent = '✅ Liberação contínua (pânico) ativada.';
+      mostrarToast('Liberação de pânico ativada.');
+      atualizarStatusPanico();
+      carregarAcessosCatraca();
+      return;
+    }
+
+    if (modo === 'cancelar-panico') {
+      if (!confirmar('Cancelar a liberação de pânico e voltar a catraca ao funcionamento normal?')) return;
+      await api('/api/terminal/catraca/panico/cancelar', { method: 'POST' });
+      resultadoEl.textContent = '✅ Liberação contínua (pânico) cancelada.';
+      mostrarToast('Liberação de pânico cancelada.');
+      atualizarStatusPanico();
+      carregarAcessosCatraca();
+      return;
+    }
+
+    // modo === 'unico'
+    const indicarPessoa = document.getElementById('catraca-chk-indicar-pessoa').checked;
+    const alunoId = document.getElementById('catraca-liberar-aluno').value;
+    const lado = document.getElementById('catraca-lado').value;
+    const rotuloLado = { ambos: 'Ambos os lados', entrada: 'Entrada', saida: 'Saída' }[lado] || '';
+    // Nota: o hardware Henry usado aqui libera sempre nos dois lados por comando — o
+    // "lado" escolhido acima fica registrado no histórico, mas não altera o comando físico.
+    if (!confirmar('Isso vai liberar a catraca fisicamente agora. Continuar?')) return;
+
+    if (indicarPessoa) {
+      if (!alunoId) { mostrarToast('Selecione o aluno em "Indicar uma pessoa".', true); return; }
+      await api('/api/terminal/catraca/liberar-aluno', {
+        method: 'POST',
+        body: JSON.stringify({
+          aluno_id: alunoId, ip: ip || undefined, port: porta ? Number(porta) : undefined,
+          mensagem: `Liberação manual pelo painel (${rotuloLado})`,
+        }),
+      });
+      resultadoEl.textContent = '✅ Catraca liberada para o aluno selecionado.';
+    } else {
+      await api('/api/terminal/catraca/liberar', {
+        method: 'POST',
+        body: JSON.stringify({ ip: ip || undefined, port: porta ? Number(porta) : undefined, mensagem: `Liberação manual do painel (${rotuloLado})` }),
+      });
+      resultadoEl.textContent = '✅ Comando de liberação enviado. Confira se a catraca abriu fisicamente.';
+    }
+    mostrarToast('Catraca liberada.');
+    carregarAcessosCatraca();
   } catch (err) {
     resultadoEl.textContent = `⚠️ ${err.message}`;
+    mostrarToast(err.message, true);
   }
 });
+
+document.getElementById('btn-fechar-janela-catraca-2').addEventListener('click', fecharJanelaCatraca);
+
+async function carregarSecaoCatraca() {
+  await popularSelectAlunos(document.getElementById('catraca-liberar-aluno'));
+  await atualizarStatusPanico();
+  await atualizarStatusAgenteCatraca();
+  await carregarAcessosCatraca();
+}
 
 async function carregarAcessosCatraca() {
   try {
     const lista = await api('/api/terminal/acessos');
     const tbody = document.getElementById('lista-acessos-catraca');
-    tbody.innerHTML = lista.length ? '' : '<tr><td colspan="5">Nenhuma tentativa registrada ainda.</td></tr>';
-    lista.forEach((a) => {
+    tbody.innerHTML = lista.length ? '' : '<tr><td colspan="3">Nenhuma tentativa registrada ainda.</td></tr>';
+    lista.slice(0, 15).forEach((a) => {
       const tr = el(`
         <tr>
           <td>${new Date(a.criado_em).toLocaleString('pt-BR')}</td>
           <td>${a.aluno_nome || '—'}</td>
-          <td>${a.metodo}</td>
-          <td><span class="badge ${a.resultado === 'liberado' ? 'ativo' : 'inadimplente'}">${a.resultado}</span></td>
-          <td>${a.mensagem || '—'}</td>
+          <td title="${a.mensagem || ''}"><span class="badge ${a.resultado === 'liberado' ? 'ativo' : 'inadimplente'}">${a.resultado}</span></td>
         </tr>
       `);
       tbody.appendChild(tr);
@@ -1104,7 +1804,217 @@ async function carregarAcessosCatraca() {
   } catch (err) { mostrarToast(err.message, true); }
 }
 
+// ---------------- RELATÓRIOS ----------------
+// Relatórios > Financeiro (Contas a Receber com filtros) e Relatórios > Acessos
+// (Acesso Diário / Acesso Pessoal / Último Acesso). Cada um tem seu próprio filtro de
+// data/período, conforme pedido.
+
+document.querySelectorAll('.relatorio-tab-btn').forEach((btn) => {
+  btn.addEventListener('click', () => trocarAbaRelatorio(btn.dataset.relatorio));
+});
+
+function trocarAbaRelatorio(nome) {
+  document.querySelectorAll('.relatorio-tab-btn').forEach((b) => b.classList.toggle('ativo', b.dataset.relatorio === nome));
+  document.querySelectorAll('.relatorio-painel').forEach((p) => p.classList.toggle('oculto', p.dataset.relatorioPainel !== nome));
+}
+
+async function carregarSecaoRelatorios() {
+  await popularSelectAlunosComTodos(document.getElementById('rel-fin-aluno'));
+  await popularSelectAlunos(document.getElementById('rel-pessoal-aluno'));
+  const hoje = new Date().toISOString().slice(0, 10);
+  if (!document.getElementById('rel-diario-data').value) document.getElementById('rel-diario-data').value = hoje;
+  await buscarRelatorioFinanceiro();
+  await buscarRelatorioAcessoDiario();
+}
+
+// ---- Relatório: Financeiro (Contas a Receber) ----
+async function buscarRelatorioFinanceiro() {
+  try {
+    const params = new URLSearchParams();
+    const vencDe = document.getElementById('rel-fin-vencimento-de').value;
+    const vencAte = document.getElementById('rel-fin-vencimento-ate').value;
+    const alunoId = document.getElementById('rel-fin-aluno').value;
+    const status = document.getElementById('rel-fin-status').value;
+    const ordenarPor = document.getElementById('rel-fin-ordenar').value;
+    const decrescente = document.getElementById('rel-fin-decrescente').checked;
+    if (vencDe) params.set('vencimento_de', vencDe);
+    if (vencAte) params.set('vencimento_ate', vencAte);
+    if (alunoId) params.set('aluno_id', alunoId);
+    if (status) params.set('status', status);
+    if (ordenarPor) params.set('ordenar_por', ordenarPor);
+    if (decrescente) params.set('decrescente', 'true');
+
+    const contas = await api(`/api/pagamentos/cobrancas${params.toString() ? '?' + params.toString() : ''}`);
+    const tbody = document.getElementById('rel-fin-lista');
+    tbody.innerHTML = contas.length ? '' : '<tr><td colspan="7">Nenhuma conta encontrada.</td></tr>';
+    let totalValor = 0;
+    let totalPago = 0;
+    contas.forEach((c) => {
+      const valorPago = Number(c.valor_pago_centavos || 0) || (c.status === 'pago' ? c.valor_centavos : 0);
+      const dataPago = c.data_pago_calc || (c.status === 'pago' ? c.pago_em : null);
+      totalValor += c.valor_centavos;
+      totalPago += valorPago;
+      tbody.appendChild(el(`
+        <tr>
+          <td>${c.aluno_nome}</td>
+          <td>${c.descricao || '—'}</td>
+          <td>${formatarMoeda(c.valor_centavos)}</td>
+          <td>${c.vencimento || '—'}</td>
+          <td><span class="badge ${c.status}">${c.status}</span></td>
+          <td>${dataPago ? new Date(dataPago).toLocaleDateString('pt-BR') : '—'}</td>
+          <td>${valorPago > 0 ? formatarMoeda(valorPago) : '—'}</td>
+        </tr>
+      `));
+    });
+    document.getElementById('rel-fin-total').textContent = contas.length
+      ? `${contas.length} conta(s) — total ${formatarMoeda(totalValor)}, pago ${formatarMoeda(totalPago)}`
+      : '';
+  } catch (err) { mostrarToast(err.message, true); }
+}
+document.getElementById('btn-rel-fin-buscar').addEventListener('click', buscarRelatorioFinanceiro);
+
+// ---- Relatório: Acesso Diário (todos os acessos de um dia) ----
+async function buscarRelatorioAcessoDiario() {
+  try {
+    const data = document.getElementById('rel-diario-data').value;
+    const busca = document.getElementById('rel-diario-busca').value.trim();
+    const params = new URLSearchParams();
+    if (data) params.set('data', data);
+    if (busca) params.set('busca', busca);
+
+    const lista = await api(`/api/terminal/acessos${params.toString() ? '?' + params.toString() : ''}`);
+    const tbody = document.getElementById('rel-diario-lista');
+    tbody.innerHTML = lista.length ? '' : '<tr><td colspan="5">Nenhum acesso nessa data.</td></tr>';
+    lista.forEach((a) => {
+      tbody.appendChild(el(`
+        <tr>
+          <td>${new Date(a.criado_em).toLocaleTimeString('pt-BR')}</td>
+          <td>${a.aluno_nome || '—'}</td>
+          <td>${a.metodo}</td>
+          <td><span class="badge ${a.resultado === 'liberado' ? 'ativo' : 'inadimplente'}">${a.resultado}</span></td>
+          <td>${a.mensagem || '—'}</td>
+        </tr>
+      `));
+    });
+  } catch (err) { mostrarToast(err.message, true); }
+}
+document.getElementById('btn-rel-diario-buscar').addEventListener('click', buscarRelatorioAcessoDiario);
+
+// ---- Relatório: Acesso Pessoal (histórico de um aluno específico) ----
+async function buscarRelatorioAcessoPessoal() {
+  const alunoId = document.getElementById('rel-pessoal-aluno').value;
+  const tbody = document.getElementById('rel-pessoal-lista');
+  if (!alunoId) {
+    tbody.innerHTML = '<tr><td colspan="4">Selecione um aluno.</td></tr>';
+    return;
+  }
+  try {
+    const params = new URLSearchParams({ aluno_id: alunoId });
+    const de = document.getElementById('rel-pessoal-de').value;
+    const ate = document.getElementById('rel-pessoal-ate').value;
+    if (de) params.set('data_inicio', de);
+    if (ate) params.set('data_fim', ate);
+
+    const lista = await api(`/api/terminal/acessos?${params.toString()}`);
+    tbody.innerHTML = lista.length ? '' : '<tr><td colspan="4">Nenhum acesso no período.</td></tr>';
+    lista.forEach((a) => {
+      tbody.appendChild(el(`
+        <tr>
+          <td>${new Date(a.criado_em).toLocaleString('pt-BR')}</td>
+          <td>${a.metodo}</td>
+          <td><span class="badge ${a.resultado === 'liberado' ? 'ativo' : 'inadimplente'}">${a.resultado}</span></td>
+          <td>${a.mensagem || '—'}</td>
+        </tr>
+      `));
+    });
+  } catch (err) { mostrarToast(err.message, true); }
+}
+document.getElementById('btn-rel-pessoal-buscar').addEventListener('click', buscarRelatorioAcessoPessoal);
+document.getElementById('rel-pessoal-aluno').addEventListener('change', buscarRelatorioAcessoPessoal);
+
+// ---- Relatório: Último Acesso (um registro por aluno) ----
+async function buscarRelatorioUltimoAcesso() {
+  try {
+    const params = new URLSearchParams();
+    const de = document.getElementById('rel-ultimo-de').value;
+    const ate = document.getElementById('rel-ultimo-ate').value;
+    const busca = document.getElementById('rel-ultimo-busca').value.trim();
+    if (de) params.set('data_inicio', de);
+    if (ate) params.set('data_fim', ate);
+    if (busca) params.set('busca', busca);
+
+    const lista = await api(`/api/terminal/acessos/ultimo-por-aluno${params.toString() ? '?' + params.toString() : ''}`);
+    const tbody = document.getElementById('rel-ultimo-lista');
+    tbody.innerHTML = lista.length ? '' : '<tr><td colspan="2">Nenhum acesso encontrado.</td></tr>';
+    lista.forEach((a) => {
+      tbody.appendChild(el(`
+        <tr>
+          <td>${a.aluno_nome}</td>
+          <td>${new Date(a.ultimo_acesso).toLocaleString('pt-BR')}</td>
+        </tr>
+      `));
+    });
+  } catch (err) { mostrarToast(err.message, true); }
+}
+document.getElementById('btn-rel-ultimo-buscar').addEventListener('click', buscarRelatorioUltimoAcesso);
+
+// ---------------- Painel lateral "Acessos recentes" (persiste entre abas) ----------------
+// Reaproveita o mesmo endpoint /api/terminal/acessos usado na aba Catraca. O painel fica
+// fora das <section class="secao">, então trocar de aba não fecha ele; só o botão de X fecha.
+
+let acessosRecentesTimer = null;
+
+function formatarTipoAcesso(a) {
+  if (a.resultado === 'liberado') return '<span class="badge ativo">Liberado</span>';
+  return `<span class="badge inadimplente">${a.mensagem && /venc/i.test(a.mensagem) ? 'Vencido' : 'Negado'}</span>`;
+}
+
+async function carregarAcessosRecentes() {
+  try {
+    const lista = await api('/api/terminal/acessos');
+    const tbody = document.getElementById('lista-acessos-recentes');
+    tbody.innerHTML = lista.length ? '' : '<tr><td colspan="4">Nenhum acesso registrado ainda.</td></tr>';
+    lista.forEach((a) => {
+      const quando = new Date(a.criado_em);
+      const tr = el(`
+        <tr>
+          <td>${quando.toLocaleDateString('pt-BR')}</td>
+          <td>${quando.toLocaleTimeString('pt-BR')}</td>
+          <td>${a.aluno_nome || '—'}</td>
+          <td>${formatarTipoAcesso(a)}</td>
+        </tr>
+      `);
+      tbody.appendChild(tr);
+    });
+  } catch (err) {
+    // Silencioso: esse painel pode ficar aberto em qualquer aba, não queremos
+    // toasts repetidos de erro a cada atualização automática.
+  }
+}
+
+function abrirPainelAcessos() {
+  document.getElementById('painel-acessos').classList.add('aberto');
+  carregarAcessosRecentes();
+  clearInterval(acessosRecentesTimer);
+  acessosRecentesTimer = setInterval(carregarAcessosRecentes, 8000);
+}
+
+function fecharPainelAcessos() {
+  document.getElementById('painel-acessos').classList.remove('aberto');
+  clearInterval(acessosRecentesTimer);
+  acessosRecentesTimer = null;
+}
+
+document.getElementById('btn-acessos-recentes').addEventListener('click', () => {
+  const painel = document.getElementById('painel-acessos');
+  if (painel.classList.contains('aberto')) fecharPainelAcessos();
+  else abrirPainelAcessos();
+});
+document.getElementById('btn-fechar-acessos').addEventListener('click', fecharPainelAcessos);
+
 // ---------------- Inicialização ----------------
+
+carregarConfigApp();
 
 if (estado.token && estado.usuario) {
   mostrarApp();

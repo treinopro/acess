@@ -4,6 +4,7 @@
 CREATE TABLE IF NOT EXISTS usuarios (
   id TEXT PRIMARY KEY,
   nome TEXT NOT NULL,
+  usuario TEXT, -- nome de login alternativo ao e-mail (ex: sistemas sem e-mail) - unicidade garantida por indice abaixo
   email TEXT NOT NULL UNIQUE,
   senha_hash TEXT NOT NULL,
   papel TEXT NOT NULL DEFAULT 'admin', -- admin | professor | recepcao
@@ -51,8 +52,34 @@ CREATE TABLE IF NOT EXISTS avaliacoes_fisicas (
   medida_peito_cm REAL,
   medida_braco_cm REAL,
   medida_coxa_cm REAL,
+  medida_panturrilha_cm REAL,
+  imc_atual REAL,
+  imc_ideal REAL,
+  iac REAL,
+  massa_magra_kg REAL,
+  perfil_morfologico TEXT, -- ex: grande | media | delgada
+  dados_extras TEXT, -- JSON livre para valores secundarios (dobras cutaneas, classificacoes, achados de avaliacao etc.)
   objetivo TEXT,
   observacoes TEXT,
+  criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Perguntas configuraveis de anamnese (sim/nao ou texto curto), pensadas para
+-- preenchimento rapido (inclusive futuramente no totem/autoatendimento).
+CREATE TABLE IF NOT EXISTS anamnese_perguntas (
+  id TEXT PRIMARY KEY,
+  texto TEXT NOT NULL,
+  tipo TEXT NOT NULL DEFAULT 'sim_nao', -- sim_nao | texto
+  ordem INTEGER NOT NULL DEFAULT 0,
+  ativo INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS anamnese_respostas (
+  id TEXT PRIMARY KEY,
+  anamnese_id TEXT NOT NULL REFERENCES anamneses(id) ON DELETE CASCADE,
+  pergunta_id TEXT NOT NULL REFERENCES anamnese_perguntas(id),
+  resposta_sim_nao INTEGER, -- 1=sim, 0=nao, NULL se a pergunta for do tipo texto
+  resposta_texto TEXT, -- usado quando tipo=texto, ou como complemento de uma resposta "sim"
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -132,6 +159,27 @@ CREATE TABLE IF NOT EXISTS acessos_catraca (
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Pagamentos individuais de uma conta a receber. Permite pagamento parcial/parcelado:
+-- cada conta pode ter varios registros aqui, e quando a soma bate o valor total da
+-- conta ela e marcada como quitada automaticamente (fluxo inspirado no Secullum).
+CREATE TABLE IF NOT EXISTS pagamentos_cobranca (
+  id TEXT PRIMARY KEY,
+  cobranca_id TEXT NOT NULL REFERENCES cobrancas(id) ON DELETE CASCADE,
+  data TEXT NOT NULL,
+  valor_centavos INTEGER NOT NULL,
+  tipo TEXT, -- dinheiro | pix | cartao_credito | cartao_debito | transferencia | boleto | outro
+  conta_corrente TEXT,
+  criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Configurações gerais do app (par chave/valor) — nome do app, "licenciado para", etc.
+-- Tabela pequena e genérica de propósito: permite adicionar novas configs no futuro
+-- sem precisar de ALTER TABLE.
+CREATE TABLE IF NOT EXISTS configuracoes (
+  chave TEXT PRIMARY KEY,
+  valor TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_alunos_status ON alunos(status);
 CREATE INDEX IF NOT EXISTS idx_matriculas_aluno ON matriculas(aluno_id);
 CREATE INDEX IF NOT EXISTS idx_agendamentos_turma_data ON agendamentos(turma_id, data_aula);
@@ -140,3 +188,6 @@ CREATE INDEX IF NOT EXISTS idx_cobrancas_aluno ON cobrancas(aluno_id);
 CREATE INDEX IF NOT EXISTS idx_avaliacoes_aluno ON avaliacoes_fisicas(aluno_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_alunos_codigo_acesso ON alunos(codigo_acesso);
 CREATE INDEX IF NOT EXISTS idx_acessos_catraca_aluno ON acessos_catraca(aluno_id);
+CREATE INDEX IF NOT EXISTS idx_pagamentos_cobranca_cobranca ON pagamentos_cobranca(cobranca_id);
+CREATE INDEX IF NOT EXISTS idx_anamnese_respostas_anamnese ON anamnese_respostas(anamnese_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_usuario ON usuarios(usuario);

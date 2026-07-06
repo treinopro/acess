@@ -11,11 +11,12 @@
   <!-- TELA DE LOGIN -->
   <div id="tela-login" class="tela-login">
     <div class="card-login">
-      <h1>Academia Gestão</h1>
+      <h1 id="login-nome-app">Academia Gestão</h1>
+      <p class="licenciado-para oculto" id="login-licenciado-para"></p>
       <p class="subtitulo">Entre com sua conta de administrador</p>
       <form id="form-login">
-        <label>E-mail</label>
-        <input type="email" id="login-email" placeholder="admin@academia.com" required />
+        <label>E-mail ou usuário</label>
+        <input type="text" id="login-email" placeholder="admin@academia.com ou nome de usuário" required />
         <label>Senha</label>
         <input type="password" id="login-senha" placeholder="••••••••" required />
         <button type="submit">Entrar</button>
@@ -28,16 +29,20 @@
   <!-- APP PRINCIPAL -->
   <div id="tela-app" class="app oculto">
     <aside class="sidebar">
-      <div class="logo">🏋️ Academia Gestão</div>
+      <div class="logo">🏋️ <span id="sidebar-nome-app">Academia Gestão</span></div>
+      <p class="licenciado-para oculto" id="sidebar-licenciado-para"></p>
       <nav>
         <button class="nav-btn ativo" data-secao="alunos">Alunos</button>
         <button class="nav-btn" data-secao="planos">Planos</button>
         <button class="nav-btn" data-secao="agenda">Turmas &amp; Agenda</button>
         <button class="nav-btn" data-secao="pagamentos">Contas a Receber</button>
+        <button class="nav-btn" data-secao="relatorios">Relatórios</button>
         <button class="nav-btn oculto" id="nav-usuarios" data-secao="usuarios">Usuários</button>
+        <button class="nav-btn oculto" id="nav-config" data-secao="config">Configurações</button>
         <button class="nav-btn oculto" id="nav-catraca" data-secao="catraca">Catraca</button>
       </nav>
       <div class="sidebar-rodape">
+        <button class="btn-acessos-recentes oculto" id="btn-acessos-recentes">🕓 Acessos recentes</button>
         <span id="usuario-nome"></span>
         <button id="btn-sair">Sair</button>
       </div>
@@ -49,7 +54,12 @@
       <section id="secao-alunos" class="secao">
         <div class="secao-topo">
           <h2>Alunos</h2>
-          <button class="btn-primario" id="btn-novo-aluno">+ Novo aluno</button>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <button class="btn-secundario" id="btn-exportar-alunos">Exportar CSV</button>
+            <button class="btn-secundario" id="btn-importar-alunos">Importar CSV</button>
+            <input type="file" id="input-importar-alunos" accept=".csv,text/csv" class="oculto" />
+            <button class="btn-primario" id="btn-novo-aluno">+ Novo aluno</button>
+          </div>
         </div>
 
         <form id="form-aluno" class="form-painel oculto">
@@ -113,132 +123,189 @@
           <button class="btn-secundario" id="btn-voltar-alunos">&larr; Voltar para Alunos</button>
         </div>
 
-        <h3>Dados pessoais</h3>
-        <form id="form-perfil-dados" class="form-painel">
-          <input type="hidden" id="perfil-aluno-id" />
-          <div class="grid-2">
-            <div><label>Nome *</label><input id="perfil-nome" required /></div>
-            <div><label>E-mail</label><input id="perfil-email" type="email" /></div>
-            <div><label>Telefone</label><input id="perfil-telefone" /></div>
-            <div><label>CPF</label><input id="perfil-cpf" /></div>
-            <div><label>Data de nascimento</label><input id="perfil-nascimento" type="date" /></div>
-          </div>
-          <label>Observações</label>
-          <textarea id="perfil-observacoes" rows="2"></textarea>
-          <div class="form-acoes">
-            <button type="submit" class="btn-primario">Salvar dados</button>
-            <button type="button" class="btn-secundario perigo" id="btn-excluir-aluno">Excluir aluno</button>
-          </div>
-        </form>
+        <div class="perfil-tabs">
+          <button class="perfil-tab-btn ativo" data-tab="dados">Dados pessoais</button>
+          <button class="perfil-tab-btn" data-tab="biometria">Biometria &amp; acesso</button>
+          <button class="perfil-tab-btn" data-tab="anamnese">Anamnese</button>
+          <button class="perfil-tab-btn" data-tab="avaliacoes">Avaliações</button>
+          <button class="perfil-tab-btn" data-tab="matriculas">Matrículas</button>
+          <button class="perfil-tab-btn" data-tab="agendamentos">Agendamentos</button>
+          <button class="perfil-tab-btn" data-tab="financeiro">Financeiro</button>
+        </div>
 
-        <h3>Biometria (integração com catraca/leitor externo)</h3>
-        <form id="form-biometria" class="form-painel">
-          <p style="margin-top:0;color:#667085;font-size:13px">
-            Cadastre o template no leitor biométrico/catraca e cole aqui o ID de referência retornado pelo dispositivo.
-          </p>
-          <div class="grid-2">
-            <div><label>ID biométrico</label><input id="perfil-biometria-id" placeholder="ex: BIO-00123" /></div>
-          </div>
-          <div class="form-acoes">
-            <button type="submit" class="btn-primario">Salvar ID biométrico</button>
-            <button type="button" class="btn-secundario" id="btn-remover-biometria">Remover cadastro</button>
-          </div>
-        </form>
-
-        <h3>Acesso pelo totem (QR pessoal / reconhecimento facial)</h3>
-        <div class="form-painel">
-          <p style="margin-top:0;color:#667085;font-size:13px">
-            Gere o link/QR pessoal do aluno para ele usar no totem ao lado da catraca (celular). O reconhecimento
-            facial pode ser cadastrado pelo próprio aluno no totem, ou por aqui mesmo usando a câmera deste
-            computador (útil para cadastrar na hora da matrícula, sem levar o aluno até o totem).
-          </p>
-          <div class="grid-2">
-            <div>
-              <label>Link "meu acesso"</label>
-              <input id="perfil-link-acesso" readonly placeholder="clique em Gerar link" />
+        <!-- ABA: Dados pessoais -->
+        <div class="perfil-tab-painel" data-tab-painel="dados">
+          <form id="form-perfil-dados" class="form-painel">
+            <input type="hidden" id="perfil-aluno-id" />
+            <div class="grid-2">
+              <div><label>Nome *</label><input id="perfil-nome" required /></div>
+              <div><label>E-mail</label><input id="perfil-email" type="email" /></div>
+              <div><label>Telefone</label><input id="perfil-telefone" /></div>
+              <div><label>CPF</label><input id="perfil-cpf" /></div>
+              <div><label>Data de nascimento</label><input id="perfil-nascimento" type="date" /></div>
             </div>
-          </div>
-          <div class="form-acoes">
-            <button type="button" class="btn-secundario" id="btn-gerar-link-acesso">Gerar/copiar link</button>
-            <button type="button" class="btn-secundario" id="btn-regenerar-link-acesso">Gerar novo (invalida o antigo)</button>
-            <button type="button" class="btn-secundario perigo" id="btn-remover-face">Remover rosto cadastrado</button>
-          </div>
-
-          <p style="margin-bottom:6px;color:#667085;font-size:13px">
-            Ou cadastre o rosto agora mesmo, usando a câmera deste computador (não precisa levar o aluno até o totem):
-          </p>
-          <div id="captura-facial-perfil">
-            <video id="video-facial-perfil" autoplay muted playsinline style="width:280px;height:210px;border-radius:10px;background:#000;object-fit:cover;display:none"></video>
-            <div id="status-facial-perfil" style="color:#667085;font-size:13px;margin:6px 0"></div>
+            <label>Observações</label>
+            <textarea id="perfil-observacoes" rows="2"></textarea>
             <div class="form-acoes">
-              <button type="button" class="btn-secundario" id="btn-abrir-camera-perfil">Abrir câmera</button>
-              <button type="button" class="btn-primario oculto" id="btn-capturar-facial-perfil">Capturar rosto</button>
-              <button type="button" class="btn-secundario oculto" id="btn-cancelar-camera-perfil">Cancelar</button>
+              <button type="submit" class="btn-primario">Salvar dados</button>
+              <button type="button" class="btn-secundario perigo" id="btn-excluir-aluno">Excluir aluno</button>
+            </div>
+          </form>
+        </div>
+
+        <!-- ABA: Biometria & acesso pelo totem -->
+        <div class="perfil-tab-painel oculto" data-tab-painel="biometria">
+          <h3 style="margin-top:0">Biometria (integração com catraca/leitor externo)</h3>
+          <form id="form-biometria" class="form-painel">
+            <p style="margin-top:0;color:#667085;font-size:13px">
+              Cadastre o template no leitor biométrico/catraca e cole aqui o ID de referência retornado pelo dispositivo.
+            </p>
+            <div class="grid-2">
+              <div><label>ID biométrico</label><input id="perfil-biometria-id" placeholder="ex: BIO-00123" /></div>
+            </div>
+            <div class="form-acoes">
+              <button type="submit" class="btn-primario">Salvar ID biométrico</button>
+              <button type="button" class="btn-secundario" id="btn-remover-biometria">Remover cadastro</button>
+            </div>
+          </form>
+
+          <h3>Acesso pelo totem (QR pessoal / reconhecimento facial)</h3>
+          <div class="form-painel">
+            <p style="margin-top:0;color:#667085;font-size:13px">
+              Gere o link/QR pessoal do aluno para ele usar no totem ao lado da catraca (celular). O reconhecimento
+              facial pode ser cadastrado pelo próprio aluno no totem, ou por aqui mesmo usando a câmera deste
+              computador (útil para cadastrar na hora da matrícula, sem levar o aluno até o totem).
+            </p>
+            <div class="grid-2">
+              <div>
+                <label>Link "meu acesso"</label>
+                <input id="perfil-link-acesso" readonly placeholder="clique em Gerar link" />
+              </div>
+            </div>
+            <div class="form-acoes">
+              <button type="button" class="btn-secundario" id="btn-gerar-link-acesso">Gerar/copiar link</button>
+              <button type="button" class="btn-secundario" id="btn-regenerar-link-acesso">Gerar novo (invalida o antigo)</button>
+              <button type="button" class="btn-secundario perigo" id="btn-remover-face">Remover rosto cadastrado</button>
+            </div>
+
+            <p style="margin-bottom:6px;color:#667085;font-size:13px">
+              Ou cadastre o rosto agora mesmo, usando a câmera deste computador (não precisa levar o aluno até o totem):
+            </p>
+            <div id="captura-facial-perfil">
+              <video id="video-facial-perfil" autoplay muted playsinline style="width:280px;height:210px;border-radius:10px;background:#000;object-fit:cover;display:none"></video>
+              <div id="status-facial-perfil" style="color:#667085;font-size:13px;margin:6px 0"></div>
+              <div class="form-acoes">
+                <button type="button" class="btn-secundario" id="btn-abrir-camera-perfil">Abrir câmera</button>
+                <button type="button" class="btn-primario oculto" id="btn-capturar-facial-perfil">Capturar rosto</button>
+                <button type="button" class="btn-secundario oculto" id="btn-cancelar-camera-perfil">Cancelar</button>
+              </div>
             </div>
           </div>
         </div>
 
-        <h3>Anamnese / saúde</h3>
-        <form id="form-anamnese" class="form-painel">
-          <div class="grid-2">
-            <div><label>Peso (kg)</label><input id="anamnese-peso" type="number" step="0.1" /></div>
-            <div><label>Altura (cm)</label><input id="anamnese-altura" type="number" step="0.1" /></div>
-          </div>
-          <label>Histórico de saúde</label>
-          <textarea id="anamnese-historico" rows="2"></textarea>
-          <label>Restrições</label>
-          <textarea id="anamnese-restricoes" rows="2"></textarea>
-          <label>Observações médicas</label>
-          <textarea id="anamnese-observacoes" rows="2"></textarea>
-          <div class="form-acoes">
-            <button type="submit" class="btn-primario">Salvar anamnese</button>
-          </div>
-        </form>
-
-        <div class="secao-topo" style="margin-top:8px">
-          <h3 style="margin:0">Avaliações físicas (evolução)</h3>
+        <!-- ABA: Anamnese -->
+        <div class="perfil-tab-painel oculto" data-tab-painel="anamnese">
+          <form id="form-anamnese" class="form-painel">
+            <div class="grid-2">
+              <div><label>Peso (kg)</label><input id="anamnese-peso" type="number" step="0.1" /></div>
+              <div><label>Altura (cm)</label><input id="anamnese-altura" type="number" step="0.1" /></div>
+            </div>
+            <label>Histórico de saúde</label>
+            <textarea id="anamnese-historico" rows="2"></textarea>
+            <label>Restrições</label>
+            <textarea id="anamnese-restricoes" rows="2"></textarea>
+            <label>Observações médicas</label>
+            <textarea id="anamnese-observacoes" rows="2"></textarea>
+            <div class="form-acoes">
+              <button type="submit" class="btn-primario">Salvar anamnese</button>
+            </div>
+          </form>
         </div>
-        <form id="form-avaliacao" class="form-painel">
-          <div class="grid-2">
-            <div><label>Data *</label><input id="avaliacao-data" type="date" required /></div>
-            <div><label>Peso (kg)</label><input id="avaliacao-peso" type="number" step="0.1" /></div>
-            <div><label>Altura (cm)</label><input id="avaliacao-altura" type="number" step="0.1" /></div>
-            <div><label>% de gordura</label><input id="avaliacao-gordura" type="number" step="0.1" /></div>
-            <div><label>Cintura (cm)</label><input id="avaliacao-cintura" type="number" step="0.1" /></div>
-            <div><label>Quadril (cm)</label><input id="avaliacao-quadril" type="number" step="0.1" /></div>
-            <div><label>Peito (cm)</label><input id="avaliacao-peito" type="number" step="0.1" /></div>
-            <div><label>Braço (cm)</label><input id="avaliacao-braco" type="number" step="0.1" /></div>
-            <div><label>Coxa (cm)</label><input id="avaliacao-coxa" type="number" step="0.1" /></div>
-            <div><label>Objetivo</label><input id="avaliacao-objetivo" placeholder="ex: hipertrofia, emagrecimento" /></div>
+
+        <!-- ABA: Avaliações físicas -->
+        <div class="perfil-tab-painel oculto" data-tab-painel="avaliacoes">
+          <form id="form-avaliacao" class="form-painel">
+            <h3 style="margin-top:0">Nova avaliação</h3>
+            <div class="grid-2">
+              <div><label>Data *</label><input id="avaliacao-data" type="date" required /></div>
+              <div><label>Peso (kg)</label><input id="avaliacao-peso" type="number" step="0.1" /></div>
+              <div><label>Altura (cm)</label><input id="avaliacao-altura" type="number" step="0.1" /></div>
+              <div><label>% de gordura</label><input id="avaliacao-gordura" type="number" step="0.1" /></div>
+              <div><label>Cintura (cm)</label><input id="avaliacao-cintura" type="number" step="0.1" /></div>
+              <div><label>Quadril (cm)</label><input id="avaliacao-quadril" type="number" step="0.1" /></div>
+              <div><label>Peito (cm)</label><input id="avaliacao-peito" type="number" step="0.1" /></div>
+              <div><label>Braço (cm)</label><input id="avaliacao-braco" type="number" step="0.1" /></div>
+              <div><label>Coxa (cm)</label><input id="avaliacao-coxa" type="number" step="0.1" /></div>
+              <div><label>Objetivo</label><input id="avaliacao-objetivo" placeholder="ex: hipertrofia, emagrecimento" /></div>
+            </div>
+            <label>Observações</label>
+            <textarea id="avaliacao-observacoes" rows="2"></textarea>
+            <div class="form-acoes">
+              <button type="submit" class="btn-primario">Adicionar avaliação</button>
+            </div>
+          </form>
+          <h3>Evolução</h3>
+          <table class="tabela">
+            <thead><tr><th>Data</th><th>Peso</th><th>% Gordura</th><th>Objetivo</th><th>Ações</th></tr></thead>
+            <tbody id="lista-avaliacoes"></tbody>
+          </table>
+        </div>
+
+        <!-- ABA: Matrículas -->
+        <div class="perfil-tab-painel oculto" data-tab-painel="matriculas">
+          <h3 style="margin-top:0">Matrículas</h3>
+          <table class="tabela">
+            <thead><tr><th>Plano</th><th>Início</th><th>Fim</th><th>Status</th></tr></thead>
+            <tbody id="perfil-lista-matriculas"></tbody>
+          </table>
+        </div>
+
+        <!-- ABA: Agendamentos -->
+        <div class="perfil-tab-painel oculto" data-tab-painel="agendamentos">
+          <h3 style="margin-top:0">Últimos agendamentos</h3>
+          <table class="tabela">
+            <thead><tr><th>Data</th><th>Turma</th><th>Status</th></tr></thead>
+            <tbody id="perfil-lista-agendamentos"></tbody>
+          </table>
+        </div>
+
+        <!-- ABA: Financeiro (espelha a tela de Contas a Receber, já filtrada neste aluno) -->
+        <div class="perfil-tab-painel oculto" data-tab-painel="financeiro">
+          <div class="secao-topo">
+            <h3 style="margin:0">Contas a receber deste aluno</h3>
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+              <button type="button" class="btn-secundario" id="btn-toggle-conta-perfil">+ Incluir conta</button>
+              <button type="button" class="btn-secundario" id="btn-nova-conta-parcelada-perfil">+ Incluir conta parcelada</button>
+            </div>
           </div>
-          <label>Observações</label>
-          <textarea id="avaliacao-observacoes" rows="2"></textarea>
-          <div class="form-acoes">
-            <button type="submit" class="btn-primario">Adicionar avaliação</button>
-          </div>
-        </form>
-        <table class="tabela">
-          <thead><tr><th>Data</th><th>Peso</th><th>% Gordura</th><th>Objetivo</th><th>Ações</th></tr></thead>
-          <tbody id="lista-avaliacoes"></tbody>
-        </table>
 
-        <h3 style="margin-top:24px">Matrículas</h3>
-        <table class="tabela">
-          <thead><tr><th>Plano</th><th>Início</th><th>Fim</th><th>Status</th></tr></thead>
-          <tbody id="perfil-lista-matriculas"></tbody>
-        </table>
+          <form id="form-conta-perfil" class="form-painel oculto">
+            <div class="grid-2">
+              <div><label>Descrição</label><input id="conta-perfil-descricao" value="Mensalidade" /></div>
+              <div><label>Valor (R$) *</label><input id="conta-perfil-valor" type="number" step="0.01" required /></div>
+              <div><label>Vencimento</label><input id="conta-perfil-vencimento" type="date" /></div>
+              <div>
+                <label>Status</label>
+                <select id="conta-perfil-status">
+                  <option value="pendente">Pendente</option>
+                  <option value="pago">Pago</option>
+                  <option value="atrasado">Atrasado</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-acoes">
+              <button type="submit" class="btn-primario">Cadastrar conta</button>
+              <button type="button" class="btn-secundario" id="btn-cancelar-conta-perfil">Cancelar</button>
+            </div>
+          </form>
 
-        <h3 style="margin-top:24px">Últimos agendamentos</h3>
-        <table class="tabela">
-          <thead><tr><th>Data</th><th>Turma</th><th>Status</th></tr></thead>
-          <tbody id="perfil-lista-agendamentos"></tbody>
-        </table>
-
-        <h3 style="margin-top:24px">Contas / cobranças</h3>
-        <table class="tabela">
-          <thead><tr><th>Descrição</th><th>Valor</th><th>Vencimento</th><th>Status</th></tr></thead>
-          <tbody id="perfil-lista-cobrancas"></tbody>
-        </table>
+          <table class="tabela">
+            <thead>
+              <tr><th>Descrição</th><th>Valor</th><th>Vencimento</th><th>Status</th><th>Data Pago</th><th>Valor Pago</th><th>Ações</th></tr>
+            </thead>
+            <tbody id="perfil-lista-cobrancas"></tbody>
+          </table>
+        </div>
       </section>
 
       <!-- PLANOS -->
@@ -377,34 +444,50 @@
       <!-- CONTAS A RECEBER -->
       <section id="secao-pagamentos" class="secao oculto">
         <div class="secao-topo">
-          <h2>Gerar cobrança com link de pagamento</h2>
+          <h2>Contas a receber</h2>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <button class="btn-secundario" id="btn-toggle-conta-manual">+ Incluir conta</button>
+            <button class="btn-secundario" id="btn-nova-conta-parcelada">+ Incluir conta parcelada</button>
+            <button class="btn-primario" id="btn-toggle-cobranca">+ Gerar cobrança (link)</button>
+          </div>
         </div>
-        <form id="form-cobranca" class="form-painel">
-          <div class="grid-2">
-            <div>
-              <label>Aluno *</label>
-              <select id="cobranca-aluno" required></select>
-            </div>
-            <div><label>Descrição</label><input id="cobranca-descricao" value="Mensalidade" /></div>
-            <div><label>Valor (R$) *</label><input id="cobranca-valor" type="number" step="0.01" required /></div>
-            <div>
-              <label>Provedor</label>
-              <select id="cobranca-provedor">
-                <option value="mercadopago">Mercado Pago</option>
-                <option value="infinitepay">InfinitePay</option>
-              </select>
-            </div>
+
+        <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
+          <div style="flex:1;min-width:200px">
+            <label>Buscar por nome</label>
+            <input type="text" id="busca-conta-nome" placeholder="Digite o nome do aluno..." />
           </div>
-          <div class="form-acoes">
-            <button type="submit" class="btn-primario">Gerar link de pagamento</button>
+          <div style="flex:1;min-width:200px">
+            <label>Aluno</label>
+            <select id="filtro-conta-aluno"><option value="">Todos os alunos</option></select>
           </div>
-        </form>
-        <div id="cobranca-resultado" class="oculto"></div>
+          <div style="flex:1;min-width:160px">
+            <label>Status</label>
+            <select id="filtro-conta-status">
+              <option value="">Todos</option>
+              <option value="pendente">Pendente</option>
+              <option value="pago">Pago</option>
+              <option value="atrasado">Atrasado</option>
+              <option value="cancelado">Cancelado</option>
+              <option value="estornado">Estornado</option>
+            </select>
+          </div>
+        </div>
+
+        <table class="tabela">
+          <thead>
+            <tr>
+              <th>Aluno</th><th>Descrição</th><th>Valor</th><th>Vencimento</th><th>Status</th>
+              <th>Data Pago</th><th>Valor Pago</th><th>Ações</th>
+            </tr>
+          </thead>
+          <tbody id="lista-contas"></tbody>
+        </table>
 
         <div class="secao-topo" style="margin-top:32px">
           <h2>Nova conta a receber (manual)</h2>
         </div>
-        <form id="form-conta-manual" class="form-painel">
+        <form id="form-conta-manual" class="form-painel oculto">
           <div class="grid-2">
             <div>
               <label>Aluno *</label>
@@ -424,40 +507,63 @@
           </div>
           <div class="form-acoes">
             <button type="submit" class="btn-primario">Cadastrar conta</button>
+            <button type="button" class="btn-secundario" id="btn-cancelar-conta-manual">Cancelar</button>
           </div>
         </form>
 
         <div class="secao-topo" style="margin-top:32px">
-          <h2>Contas a receber</h2>
+          <h2>Gerar cobrança com link de pagamento</h2>
         </div>
-        <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end">
-          <div style="flex:1">
-            <label>Buscar por aluno</label>
-            <select id="filtro-conta-aluno"><option value="">Todos os alunos</option></select>
+        <form id="form-cobranca" class="form-painel oculto">
+          <div class="grid-2">
+            <div>
+              <label>Aluno *</label>
+              <select id="cobranca-aluno" required></select>
+            </div>
+            <div><label>Descrição</label><input id="cobranca-descricao" value="Mensalidade" /></div>
+            <div><label>Valor (R$) *</label><input id="cobranca-valor" type="number" step="0.01" required /></div>
+            <div>
+              <label>Provedor</label>
+              <select id="cobranca-provedor">
+                <option value="mercadopago">Mercado Pago</option>
+                <option value="infinitepay">InfinitePay</option>
+              </select>
+            </div>
           </div>
-          <div style="flex:1">
-            <label>Status</label>
-            <select id="filtro-conta-status">
-              <option value="">Todos</option>
-              <option value="pendente">Pendente</option>
-              <option value="pago">Pago</option>
-              <option value="atrasado">Atrasado</option>
-              <option value="cancelado">Cancelado</option>
-              <option value="estornado">Estornado</option>
-            </select>
+          <div class="form-acoes">
+            <button type="submit" class="btn-primario">Gerar link de pagamento</button>
+            <button type="button" class="btn-secundario" id="btn-cancelar-cobranca">Cancelar</button>
           </div>
+        </form>
+        <div id="cobranca-resultado" class="oculto"></div>
+      </section>
+
+      <!-- RELATÓRIOS -->
+      <section id="secao-relatorios" class="secao oculto">
+        <div class="secao-topo">
+          <h2>Relatórios</h2>
         </div>
 
-        <form id="form-editar-conta" class="form-painel oculto">
-          <h3>Editar conta</h3>
-          <input type="hidden" id="editar-conta-id" />
-          <div class="grid-2">
-            <div><label>Descrição</label><input id="editar-conta-descricao" /></div>
-            <div><label>Valor (R$)</label><input id="editar-conta-valor" type="number" step="0.01" /></div>
-            <div><label>Vencimento</label><input id="editar-conta-vencimento" type="date" /></div>
+        <div class="perfil-tabs">
+          <button class="relatorio-tab-btn ativo" data-relatorio="financeiro">Financeiro</button>
+          <button class="relatorio-tab-btn" data-relatorio="acesso-diario">Acesso Diário</button>
+          <button class="relatorio-tab-btn" data-relatorio="acesso-pessoal">Acesso Pessoal</button>
+          <button class="relatorio-tab-btn" data-relatorio="ultimo-acesso">Último Acesso</button>
+        </div>
+
+        <!-- Relatório: Contas a Receber -->
+        <div class="relatorio-painel" data-relatorio-painel="financeiro">
+          <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
+            <div><label>Vencimento de</label><input type="date" id="rel-fin-vencimento-de" /></div>
+            <div><label>até</label><input type="date" id="rel-fin-vencimento-ate" /></div>
+            <div style="flex:1;min-width:180px">
+              <label>Pessoa</label>
+              <select id="rel-fin-aluno"><option value="">Todos os alunos</option></select>
+            </div>
             <div>
               <label>Status</label>
-              <select id="editar-conta-status">
+              <select id="rel-fin-status">
+                <option value="">Todos</option>
                 <option value="pendente">Pendente</option>
                 <option value="pago">Pago</option>
                 <option value="atrasado">Atrasado</option>
@@ -465,17 +571,79 @@
                 <option value="estornado">Estornado</option>
               </select>
             </div>
+            <div>
+              <label>Ordenar por</label>
+              <select id="rel-fin-ordenar">
+                <option value="vencimento">Vencimento</option>
+                <option value="valor">Valor</option>
+                <option value="aluno">Aluno</option>
+                <option value="status">Status</option>
+              </select>
+            </div>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#667085;padding-bottom:9px">
+              <input type="checkbox" id="rel-fin-decrescente" style="width:auto" /> Decrescente
+            </label>
+            <button type="button" class="btn-primario" id="btn-rel-fin-buscar">Filtrar</button>
           </div>
-          <div class="form-acoes">
-            <button type="submit" class="btn-primario">Salvar alterações</button>
-            <button type="button" class="btn-secundario" id="btn-cancelar-editar-conta">Cancelar</button>
-          </div>
-        </form>
 
-        <table class="tabela">
-          <thead><tr><th>Aluno</th><th>Descrição</th><th>Valor</th><th>Vencimento</th><th>Status</th><th>Ações</th></tr></thead>
-          <tbody id="lista-contas"></tbody>
-        </table>
+          <table class="tabela">
+            <thead>
+              <tr><th>Aluno</th><th>Descrição</th><th>Valor</th><th>Vencimento</th><th>Status</th><th>Data Pago</th><th>Valor Pago</th></tr>
+            </thead>
+            <tbody id="rel-fin-lista"></tbody>
+          </table>
+          <p id="rel-fin-total" style="font-size:13px;color:#667085;margin-top:8px"></p>
+        </div>
+
+        <!-- Relatório: Acesso Diário -->
+        <div class="relatorio-painel oculto" data-relatorio-painel="acesso-diario">
+          <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
+            <div><label>Data</label><input type="date" id="rel-diario-data" /></div>
+            <div style="flex:1;min-width:180px">
+              <label>Buscar por nome</label>
+              <input type="text" id="rel-diario-busca" placeholder="Nome do aluno..." />
+            </div>
+            <button type="button" class="btn-primario" id="btn-rel-diario-buscar">Filtrar</button>
+          </div>
+          <table class="tabela">
+            <thead><tr><th>Hora</th><th>Aluno</th><th>Método</th><th>Resultado</th><th>Mensagem</th></tr></thead>
+            <tbody id="rel-diario-lista"></tbody>
+          </table>
+        </div>
+
+        <!-- Relatório: Acesso Pessoal -->
+        <div class="relatorio-painel oculto" data-relatorio-painel="acesso-pessoal">
+          <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
+            <div style="flex:1;min-width:200px">
+              <label>Aluno *</label>
+              <select id="rel-pessoal-aluno"><option value="">Selecione...</option></select>
+            </div>
+            <div><label>Período de</label><input type="date" id="rel-pessoal-de" /></div>
+            <div><label>até</label><input type="date" id="rel-pessoal-ate" /></div>
+            <button type="button" class="btn-primario" id="btn-rel-pessoal-buscar">Filtrar</button>
+          </div>
+          <table class="tabela">
+            <thead><tr><th>Data/Hora</th><th>Método</th><th>Resultado</th><th>Mensagem</th></tr></thead>
+            <tbody id="rel-pessoal-lista"></tbody>
+          </table>
+        </div>
+
+        <!-- Relatório: Último Acesso -->
+        <div class="relatorio-painel oculto" data-relatorio-painel="ultimo-acesso">
+          <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
+            <div><label>Período de</label><input type="date" id="rel-ultimo-de" /></div>
+            <div><label>até</label><input type="date" id="rel-ultimo-ate" /></div>
+            <div style="flex:1;min-width:180px">
+              <label>Buscar por nome</label>
+              <input type="text" id="rel-ultimo-busca" placeholder="Nome do aluno..." />
+            </div>
+            <button type="button" class="btn-primario" id="btn-rel-ultimo-buscar">Filtrar</button>
+          </div>
+          <table class="tabela">
+            <thead><tr><th>Aluno</th><th>Último acesso</th></tr></thead>
+            <tbody id="rel-ultimo-lista"></tbody>
+          </table>
+        </div>
       </section>
 
       <!-- USUÁRIOS -->
@@ -508,35 +676,290 @@
         </table>
       </section>
 
-      <!-- CATRACA -->
-      <section id="secao-catraca" class="secao oculto">
+      <!-- CONFIGURAÇÕES -->
+      <section id="secao-config" class="secao oculto">
         <div class="secao-topo">
-          <h2>Integração com a catraca</h2>
-        </div>
-        <div class="form-painel">
-          <p style="margin-top:0;color:#667085;font-size:13px">
-            Deixe IP/porta em branco para usar o que está configurado em HENRY_CATRACA_IP/PORT no servidor,
-            ou informe aqui para testar um endereço diferente pontualmente.
-          </p>
-          <div class="grid-2">
-            <div><label>IP da catraca</label><input id="catraca-ip" placeholder="ex: 192.168.0.79" /></div>
-            <div><label>Porta</label><input id="catraca-porta" placeholder="3000" /></div>
-          </div>
-          <div class="form-acoes">
-            <button type="button" class="btn-secundario" id="btn-testar-catraca">Testar conexão</button>
-            <button type="button" class="btn-primario" id="btn-abrir-catraca">Abrir catraca agora (teste)</button>
-          </div>
-          <p id="catraca-resultado" style="font-size:14px;margin-top:8px"></p>
+          <h2>Configurações</h2>
         </div>
 
-        <h3 style="margin-top:24px">Últimas tentativas de acesso (totem)</h3>
-        <table class="tabela">
-          <thead><tr><th>Quando</th><th>Aluno</th><th>Método</th><th>Resultado</th><th>Mensagem</th></tr></thead>
-          <tbody id="lista-acessos-catraca"></tbody>
-        </table>
+        <form id="form-config-app" class="form-painel">
+          <h3 style="margin-top:0">Identidade do app</h3>
+          <div class="grid-2">
+            <div><label>Nome do app</label><input id="config-nome-app" placeholder="ex: Academia Gestão" /></div>
+            <div><label>Licenciado para</label><input id="config-licenciado-para" placeholder="ex: Academia Superação" /></div>
+          </div>
+          <p style="margin:8px 0 0;color:#667085;font-size:13px">
+            O nome aparece na tela de login e na barra lateral. "Licenciado para" some abaixo do nome, em letra
+            menor — deixe em branco pra não mostrar nada.
+          </p>
+          <div class="form-acoes">
+            <button type="submit" class="btn-primario">Salvar</button>
+          </div>
+        </form>
+
+        <div class="form-painel">
+          <h3 style="margin-top:0">Backup</h3>
+          <p style="margin-top:0;color:#667085;font-size:13px">
+            O sistema já gera um backup automático a cada 24h guardado no próprio servidor, mas isso não é uma
+            cópia de segurança de verdade (some se o servidor reiniciar/redeployar). Use o botão abaixo pra
+            baixar um backup completo agora — em JSON, direto pro seu computador — e guarde num lugar seguro
+            (Google Drive, e-mail, etc.) de tempos em tempos.
+          </p>
+          <div class="form-acoes">
+            <button type="button" class="btn-primario" id="btn-baixar-backup">Baixar backup agora</button>
+          </div>
+        </div>
       </section>
 
     </main>
+  </div>
+
+  <!-- JANELA FLUTUANTE - CATRACA (compacta, estilo "Liberar Equipamentos" do Secullum;
+       sobrepõe o conteúdo e pode ser arrastada pela barra do topo) -->
+  <div id="janela-catraca" class="janela-flutuante janela-flutuante-compacta oculto">
+    <div class="janela-flutuante-topo" id="janela-catraca-alca">
+      <h3>Liberar Equipamentos</h3>
+      <button type="button" class="btn-fechar-painel" id="btn-fechar-janela-catraca" title="Fechar">&times;</button>
+    </div>
+    <div class="janela-flutuante-corpo">
+
+      <p style="font-size:12px;color:#667085;margin:0 0 10px">
+        Conexão com a catraca: <strong id="catraca-status-modo">verificando...</strong>
+      </p>
+
+      <div class="lista-equipamentos">
+        <label class="item-equipamento">
+          <input type="checkbox" id="catraca-equip-chk" checked disabled />
+          <span>1 - Catraca principal</span>
+        </label>
+      </div>
+
+      <div class="catraca-opcao">
+        <label>
+          <input type="radio" name="catraca-modo" value="unico" id="catraca-modo-unico" checked />
+          Liberar somente um acesso
+        </label>
+        <select id="catraca-lado">
+          <option value="ambos">Ambos os lados</option>
+          <option value="entrada">Entrada</option>
+          <option value="saida">Saída</option>
+        </select>
+      </div>
+
+      <div class="catraca-opcao">
+        <label>
+          <input type="checkbox" id="catraca-chk-indicar-pessoa" />
+          Indicar uma pessoa
+        </label>
+        <select id="catraca-liberar-aluno" disabled></select>
+      </div>
+
+      <div class="catraca-opcao">
+        <label>
+          <input type="radio" name="catraca-modo" value="panico" id="catraca-modo-panico" />
+          Liberação contínua (Função Pânico)
+        </label>
+      </div>
+      <div class="catraca-opcao">
+        <label>
+          <input type="radio" name="catraca-modo" value="cancelar-panico" id="catraca-modo-cancelar-panico" />
+          Cancelar Liberação contínua
+        </label>
+      </div>
+      <p style="font-size:12px;color:#98a2b3;margin:2px 0 0">
+        Status da função pânico: <strong id="panico-status-texto">verificando...</strong>. Aviso: é um mecanismo
+        por software (não substitui trava mecânica de emergência exigida por norma de incêndio/saída de emergência).
+      </p>
+
+      <p id="catraca-resultado" style="font-size:13px;margin:10px 0 0"></p>
+
+      <details class="catraca-avancado">
+        <summary>Configuração avançada (IP/porta)</summary>
+        <div class="grid-2">
+          <div><label>IP da catraca</label><input id="catraca-ip" placeholder="ex: 192.168.0.79" /></div>
+          <div><label>Porta</label><input id="catraca-porta" placeholder="3000" /></div>
+        </div>
+        <p style="margin:4px 0 0;color:#667085;font-size:12px">
+          Deixe em branco para usar o que está configurado em HENRY_CATRACA_IP/PORT no servidor.
+        </p>
+        <button type="button" class="btn-secundario" id="btn-testar-catraca" style="margin-top:8px">Testar conexão</button>
+      </details>
+
+      <div class="form-acoes">
+        <button type="button" class="btn-primario" id="btn-catraca-liberar">Liberar</button>
+        <button type="button" class="btn-secundario" id="btn-fechar-janela-catraca-2">Fechar</button>
+      </div>
+
+      <h3 style="margin-top:20px;font-size:14px">Últimas tentativas de acesso</h3>
+      <table class="tabela">
+        <thead><tr><th>Quando</th><th>Aluno</th><th>Resultado</th></tr></thead>
+        <tbody id="lista-acessos-catraca"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- PAINEL LATERAL - ACESSOS RECENTES (persiste entre abas, estilo catraca/totem) -->
+  <div id="painel-acessos" class="painel-lateral">
+    <div class="painel-lateral-topo">
+      <h3>Acompanhamento de acessos</h3>
+      <button id="btn-fechar-acessos" class="btn-fechar-painel" title="Fechar">&times;</button>
+    </div>
+    <div class="painel-lateral-corpo">
+      <table class="tabela">
+        <thead><tr><th>Data</th><th>Hora</th><th>Nome</th><th>Tipo</th></tr></thead>
+        <tbody id="lista-acessos-recentes"><tr><td colspan="4">Carregando...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- MODAL: Conta (edição + histórico de pagamentos, estilo Secullum) -->
+  <div id="modal-conta" class="modal-overlay oculto">
+    <div class="modal-card">
+      <div class="modal-topo">
+        <h3>Conta</h3>
+        <button type="button" class="btn-fechar-painel" id="btn-fechar-modal-conta" title="Fechar">&times;</button>
+      </div>
+
+      <form id="form-modal-conta">
+        <input type="hidden" id="mconta-id" />
+        <p style="margin:0 0 12px;color:#667085;font-size:13px">Aluno: <strong id="mconta-aluno-nome">—</strong></p>
+        <div class="grid-2">
+          <div><label>Descrição</label><input id="mconta-descricao" /></div>
+          <div><label>Valor (R$)</label><input id="mconta-valor" type="number" step="0.01" /></div>
+          <div><label>Vencimento</label><input id="mconta-vencimento" type="date" /></div>
+          <div>
+            <label>Status</label>
+            <div style="display:flex;align-items:center;gap:10px;padding-top:9px">
+              <span class="badge" id="mconta-status-badge">—</span>
+              <button type="button" class="btn-linha oculto" id="btn-remover-quitacao">Remover quitação</button>
+            </div>
+          </div>
+        </div>
+        <div class="form-acoes">
+          <button type="submit" class="btn-primario">Salvar alterações</button>
+          <button type="button" class="btn-secundario" id="btn-parcelar-conta-modal">Parcelar conta</button>
+          <button type="button" class="btn-secundario perigo" id="btn-excluir-conta-modal">Excluir conta</button>
+        </div>
+      </form>
+
+      <div class="secao-topo" style="margin-top:24px">
+        <h3 style="margin:0">Pagamentos</h3>
+        <button type="button" class="btn-secundario" id="btn-add-pagamento">+ Adicionar pagamento</button>
+      </div>
+      <table class="tabela">
+        <thead><tr><th>Data</th><th>Valor</th><th>Tipo</th><th>Conta corrente</th><th>Ações</th></tr></thead>
+        <tbody id="mconta-lista-pagamentos"></tbody>
+      </table>
+      <p style="text-align:right;font-weight:600;margin:10px 0 0">
+        Total pago: <span id="mconta-total-pago">R$ 0,00</span> / <span id="mconta-valor-total">R$ 0,00</span>
+      </p>
+    </div>
+  </div>
+
+  <!-- MODAL: Pagamento (lançar um recebimento numa conta) -->
+  <div id="modal-pagamento" class="modal-overlay oculto">
+    <div class="modal-card modal-card-pequeno">
+      <div class="modal-topo">
+        <h3>Pagamento</h3>
+        <button type="button" class="btn-fechar-painel" id="btn-fechar-modal-pagamento" title="Fechar">&times;</button>
+      </div>
+      <form id="form-modal-pagamento">
+        <label>Data</label>
+        <input id="pagamento-data" type="date" required />
+        <label>Valor (R$)</label>
+        <input id="pagamento-valor" type="number" step="0.01" required />
+        <label>Tipo</label>
+        <select id="pagamento-tipo">
+          <option value="dinheiro">Dinheiro</option>
+          <option value="pix">Pix</option>
+          <option value="cartao_credito">Cartão de crédito</option>
+          <option value="cartao_debito">Cartão de débito</option>
+          <option value="transferencia">Transferência bancária</option>
+          <option value="boleto">Boleto</option>
+          <option value="outro">Outro</option>
+        </select>
+        <label>Conta corrente</label>
+        <input id="pagamento-conta-corrente" value="Caixa da empresa" />
+        <div class="form-acoes">
+          <button type="submit" class="btn-primario">OK</button>
+          <button type="button" class="btn-secundario" id="btn-cancelar-modal-pagamento">Cancelar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: Parcelamentos (Parcelar Conta existente / Incluir Conta Parcelada do zero) -->
+  <div id="modal-parcelamento" class="modal-overlay oculto">
+    <div class="modal-card">
+      <div class="modal-topo">
+        <h3>Parcelamentos</h3>
+        <button type="button" class="btn-fechar-painel" id="btn-fechar-modal-parcelamento" title="Fechar">&times;</button>
+      </div>
+
+      <form id="form-modal-parcelamento">
+        <div id="mparc-bloco-novo" class="oculto">
+          <div class="grid-2">
+            <div>
+              <label>Aluno *</label>
+              <select id="mparc-aluno"></select>
+            </div>
+            <div><label>Descrição</label><input id="mparc-descricao" value="Mensalidade" /></div>
+          </div>
+        </div>
+        <div id="mparc-bloco-existente" class="oculto">
+          <p style="margin:0 0 4px;color:#667085;font-size:13px">
+            Aluno: <strong id="mparc-aluno-nome">—</strong> — Descrição: <strong id="mparc-descricao-existente">—</strong>
+          </p>
+        </div>
+
+        <div class="grid-2">
+          <div><label>Valor total (R$) *</label><input id="mparc-valor-total" type="number" step="0.01" required /></div>
+          <div><label>Parcelas *</label><input id="mparc-parcelas" type="number" min="2" max="60" value="2" required /></div>
+          <div><label>Data da 1ª parcela *</label><input id="mparc-data-primeira" type="date" required /></div>
+          <div><label>Dia de vencimento</label><input id="mparc-dia-vencimento" type="number" min="1" max="28" placeholder="ex: 10" /></div>
+        </div>
+
+        <label style="display:flex;align-items:center;gap:8px;margin-top:14px">
+          <input type="checkbox" id="mparc-chk-primeira-especial" style="width:auto" /> Valor especial para a primeira parcela
+        </label>
+        <input id="mparc-valor-primeira-especial" type="number" step="0.01" placeholder="Valor (R$)" disabled />
+
+        <label style="display:flex;align-items:center;gap:8px;margin-top:14px">
+          <input type="checkbox" id="mparc-chk-juros" style="width:auto" /> Calcular juros
+        </label>
+        <div class="grid-2">
+          <div><input id="mparc-taxa-juros" type="number" step="0.01" placeholder="% ao mês" disabled /></div>
+          <div>
+            <select id="mparc-tipo-juros" disabled>
+              <option value="simples">Simples</option>
+              <option value="composto">Composto</option>
+            </select>
+          </div>
+        </div>
+
+        <label style="display:flex;align-items:center;gap:8px;margin-top:14px">
+          <input type="checkbox" id="mparc-chk-arredondar" style="width:auto" /> Arredondar valor das parcelas
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:8px">
+          <input type="checkbox" id="mparc-chk-quitadas" style="width:auto" /> Lançar parcelas já quitadas
+        </label>
+
+        <div class="form-acoes">
+          <button type="button" class="btn-secundario" id="btn-prever-parcelamento">Prever parcelamento</button>
+        </div>
+
+        <table class="tabela" style="margin-top:14px">
+          <thead><tr><th>Data</th><th>Valor</th></tr></thead>
+          <tbody id="mparc-lista-preview"><tr><td colspan="2">Clique em "Prever parcelamento" pra ver as parcelas.</td></tr></tbody>
+        </table>
+        <p style="text-align:right;font-weight:600;margin:10px 0 0">Total: <span id="mparc-total-preview">R$ 0,00</span></p>
+
+        <div class="form-acoes">
+          <button type="submit" class="btn-primario">Confirmar parcelamento</button>
+          <button type="button" class="btn-secundario" id="btn-cancelar-modal-parcelamento">Cancelar</button>
+        </div>
+      </form>
+    </div>
   </div>
 
   <div id="toast" class="toast oculto"></div>

@@ -41,14 +41,171 @@ const avaliacaoSchema = z.object({
   observacoes: z.string().optional().nullable(),
 });
 
-// GET /api/alunos?status=ativo&busca=texto — busca por nome ou ID (parcial, case-insensitive)
+// ---------------- Importar / exportar em CSV ----------------
+// Sem dependência externa de propósito (nenhuma lib de CSV instalada) — o parser/gerador
+// abaixo é minimalista mas cobre o essencial (campos com vírgula/aspas/quebra de linha).
+
+function paraCsvCampo(valor) {
+  const str = valor === null || valor === undefined ? '' : String(valor);
+  if (/[",\n]/.test(str)) return `"${str.replace(/"/g, '""')}"`;
+  return str;
+}
+
+function gerarCsv(linhas, colunas) {
+  const cabecalho = colunas.join(',');
+  const corpo = linhas.map((linha) => colunas.map((col) => paraCsvCampo(linha[col])).join(',')).join('\n');
+  return `${cabecalho}\n${corpo}`;
+}
+
+function parseCsv(texto) {
+  const linhas = [];
+  let campo = '';
+  let linhaAtual = [];
+  let dentroAspas = false;
+  const chars = texto.replace(/\r\n/g, '\n');
+
+  for (let i = 0; i < chars.length; i++) {
+    const c = chars[i];
+    if (dentroAspas) {
+      if (c === '"') {
+        if (chars[i + 1] === '"') { campo += '"'; i++; } else { dentroAspas = false; }
+      } else {
+        campo += c;
+      }
+    } else if (c === '"') {
+      dentroAspas = true;
+    } else if (c === ',') {
+      linhaAtual.push(campo); campo = '';
+    } else if (c === '\n') {
+      linhaAtual.push(campo); campo = '';
+      linhas.push(linhaAtual); linhaAtual = [];
+    } else {
+      campo += c;
+    }
+  }
+  if (campo.length || linhaAtual.length) { linhaAtual.push(campo); linhas.push(linhaAtual); }
+  if (!linhas.length) return [];
+
+  const cabecalho = linhas[0].map((h) => h.trim());
+  return linhas.slice(1)
+    .filter((l) => l.some((v) => v !== ''))
+    .map((l) => {
+      const obj = {};
+      cabecalho.forEach((h, idx) => { obj[h] = l[idx] !== undefined ? l[idx] : ''; });
+      return obj;
+    });
+}
+
+const COLUNAS_CSV_ALUNOS = ['nome', 'email', 'telefone', 'cpf', 'data_nascimento', 'status', 'observacoes'];
+
+// GET /api/alunos/exportar?incluir_inativos=true — exporta os alunos em CSV.
+// Por padrão só os ativos; passe incluir_inativos=true (checkbox "mostrar inativos"
+// na tela) pra exportar todo mundo. Baixado sem nenhum aluno cadastrado ainda,
+// serve como modelo em branco (só o cabeçalho) pra preencher no Excel/Sheets.
+router.get('/exportar', async (req, res, next) => {
+  try {
+    const incluirInativos = req.query.incluir_inativos === 'true' || req.query.incluir_inativos === '1';
+    const sql = incluirInativos
+      ? 'SELECT * FROM alunos ORDER BY nome'
+      : "SELECT * FROM alunos WHERE status = 'ativo' ORDER BY nome";
+    const result = await db.execute(sql);
+    const csv = gerarCsv(result.rows, COLUNAS_CSV_ALUNOS);
+    const nomeArquivo = `alunos-${new Date().toISOString().slice(0, 10)}.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${nomeArquivo}"`);
+    res.send(`﻿${csv}`); // BOM — abre certinho com acentos no Excel
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/alunos/importar { csv: "<texto csv>" }
+// Casa por CPF (se informado) ou e-mail pra decidir entre atualizar um aluno existente
+// ou criar um novo. Linhas sem nome são ignoradas e reportadas em "erros".
+router.post('/importar', async (req, res, next) => {
+  try {
+    const { csv } = z.object({ csv: z.string().min(1) }).parse(req.body);
+    const linhas = parseCsv(csv);
+
+    let criados = 0;
+    let atualizados = 0;
+    const erros = [];
+
+    for (let i = 0; i < linhas.length; i++) {
+      const linha = linhas[i];
+      const nome = (linha.nome || '').trim();
+      if (!nome) { erros.push(`Linha ${i + 2}: sem nome, ignorada.`); continue; }
+
+      const cpf = (linha.cpf || '').trim() || null;
+      const email = (linha.email || '').trim() || null;
+
+      let existente = null;
+      if (cpf) {
+        const r = await db.execute({ sql: 'SELECT id FROM alunos WHERE cpf = ?', args: [cpf] });
+        existente = r.rows[0] || null;
+      }
+      if (!existente && email) {
+        const r = await db.execute({ sql: 'SELECT id FROM alunos WHERE email = ?', args: [email] });
+        existente = r.rows[0] || null;
+      }
+
+      const dados = {
+        nome,
+        email,
+        telefone: (linha.telefone || '').trim() || null,
+        cpf,
+        data_nascimento: (linha.data_nascimento || '').trim() || null,
+        observacoes: (linha.observacoes || '').trim() || null,
+      };
+      const statusLido = (linha.status || '').trim();
+      const statusValido = ['ativo', 'inativo', 'trancado', 'inadimplente'].includes(statusLido) ? statusLido : null;
+
+      try {
+        if (existente) {
+          await db.execute({
+            sql: `UPDATE alunos SET nome = ?, email = ?, telefone = ?, cpf = ?, data_nascimento = ?, observacoes = ?
+                  WHERE id = ?`,
+            args: [dados.nome, dados.email, dados.telefone, dados.cpf, dados.data_nascimento, dados.observacoes, existente.id],
+          });
+          if (statusValido) {
+            await db.execute({ sql: 'UPDATE alunos SET status = ? WHERE id = ?', args: [statusValido, existente.id] });
+          }
+          atualizados++;
+        } else {
+          const id = uuid();
+          await db.execute({
+            sql: `INSERT INTO alunos (id, nome, email, telefone, cpf, data_nascimento, observacoes, status)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            args: [id, dados.nome, dados.email, dados.telefone, dados.cpf, dados.data_nascimento, dados.observacoes, statusValido || 'ativo'],
+          });
+          criados++;
+        }
+      } catch (errLinha) {
+        erros.push(`Linha ${i + 2} (${nome}): ${errLinha.message}`);
+      }
+    }
+
+    res.json({ ok: true, criados, atualizados, erros });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/alunos?status=ativo&busca=texto&incluir_inativos=true — busca por nome ou ID
+// (parcial, case-insensitive). Por padrão só retorna alunos com status='ativo'; passe
+// incluir_inativos=true (checkbox "mostrar inativos" na tela) pra ver todos os status,
+// ou status=<algo> pra filtrar por um status específico (tem prioridade sobre o padrão).
 router.get('/', async (req, res, next) => {
   try {
-    const { status, busca } = req.query;
+    const { status, busca, incluir_inativos: incluirInativos } = req.query;
     const condicoes = [];
     const args = [];
 
-    if (status) { condicoes.push('status = ?'); args.push(status); }
+    if (status) {
+      condicoes.push('status = ?'); args.push(status);
+    } else if (!(incluirInativos === 'true' || incluirInativos === '1')) {
+      condicoes.push("status = 'ativo'");
+    }
     if (busca) {
       condicoes.push('(nome LIKE ? OR id LIKE ?)');
       args.push(`%${busca}%`, `%${busca}%`);

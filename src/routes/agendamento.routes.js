@@ -41,15 +41,18 @@ router.post('/turmas', async (req, res, next) => {
 
 // ---- Agendamentos (marcação de aula pelo aluno) ----
 
-// GET /api/agendamentos?data=YYYY-MM-DD&turma_id=...
+// GET /api/agendamentos?data=YYYY-MM-DD&turma_id=...&incluir_inativos=true — por padrão só
+// mostra agendamentos de alunos com status='ativo'; passe incluir_inativos=true (checkbox
+// "mostrar inativos") pra ver todos.
 router.get('/', async (req, res, next) => {
   try {
-    const { data, turma_id: turmaId } = req.query;
+    const { data, turma_id: turmaId, incluir_inativos: incluirInativos } = req.query;
     const condicoes = [];
     const args = [];
 
     if (data) { condicoes.push('ag.data_aula = ?'); args.push(data); }
     if (turmaId) { condicoes.push('ag.turma_id = ?'); args.push(turmaId); }
+    if (!(incluirInativos === 'true' || incluirInativos === '1')) { condicoes.push("a.status = 'ativo'"); }
 
     const where = condicoes.length ? `WHERE ${condicoes.join(' AND ')}` : '';
 

@@ -1,19 +1,14 @@
 /**
  * Lógica compartilhada do totem/terminal de auto atendimento: identificação do
  * aluno (CPF, código/QR, reconhecimento facial, biometria da própria catraca),
- * checagem de status e acionamento da catraca Henry via henryCatraca.service.
- *
- * Nesta fase o servidor principal ainda fala TCP direto com a catraca (deploy
- * local). Quando o painel for para a nuvem (Render), a função `liberarNaCatraca`
- * abaixo é o único ponto que precisa ser trocado por uma chamada ao "agente
- * local" instalado na academia — todo o resto (checagem de status, log,
- * identificação) continua igual.
+ * checagem de status e acionamento da catraca Henry via catracaGateway.service
+ * (que decide sozinho entre TCP direto e o agente local — ver esse arquivo).
  */
 
 const crypto = require('crypto');
 const { v4: uuid } = require('uuid');
 const db = require('../db/client');
-const henry = require('./henryCatraca.service');
+const catracaGateway = require('./catracaGateway.service');
 
 const FACE_MATCH_THRESHOLD = Number(process.env.FACE_MATCH_THRESHOLD || 0.6);
 
@@ -164,15 +159,15 @@ async function registrarAcesso({ alunoId, metodo, resultado, mensagem }) {
 }
 
 /**
- * Ponto único de acionamento físico da catraca. Nesta fase (deploy local) fala
- * TCP direto; quando existir o agente local/nuvem, troque o corpo desta função
- * por uma chamada HTTP/fila para o agente, mantendo a mesma assinatura.
+ * Ponto único de acionamento físico da catraca. catracaGateway decide sozinho
+ * se fala TCP direto (deploy local, mesma rede da catraca) ou se repassa o
+ * comando para o agente local via WebSocket (deploy na nuvem).
  */
 async function liberarNaCatraca(mensagem) {
   const ip = process.env.HENRY_CATRACA_IP;
   const port = Number(process.env.HENRY_CATRACA_PORT || 3000);
   if (!ip) throw new Error('HENRY_CATRACA_IP não configurado no servidor.');
-  await henry.liberarAcesso({ ip, port, mensagem });
+  await catracaGateway.liberarAcesso({ ip, port, mensagem });
 }
 
 /**

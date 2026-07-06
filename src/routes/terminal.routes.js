@@ -2,7 +2,7 @@ const express = require('express');
 const { v4: uuid } = require('uuid');
 const { z } = require('zod');
 const { autenticar, apenasAdmin, autenticarTerminal } = require('../middleware/auth');
-const henry = require('../services/henryCatraca.service');
+const catracaGateway = require('../services/catracaGateway.service');
 const acessoTerminal = require('../services/acessoTerminal.service');
 const mercadopago = require('../services/payment/mercadopago.service');
 const infinitepay = require('../services/payment/infinitepay.service');
@@ -208,24 +208,63 @@ terminal.post('/auto-cadastro', autenticarTerminal, async (req, res, next) => {
     const descricao = `Matrícula - ${p.nome}`;
     const provedor = process.env.PAYMENT_PROVIDER || 'mercadopago';
 
-    // Gera o link de pagamento ANTES de escrever qualquer coisa no banco — se o
+    // Gera o pagamento ANTES de escrever qualquer coisa no banco — se o
     // gateway falhar, a requisição falha inteira e nenhum registro órfão fica
     // para trás (mesmo padrão usado em POST /api/pagamentos/cobrar).
-    let linkPagamento;
+    let linkPagamento = null;
+    let qrCodePix = null; // copia-e-cola (texto)
+    let qrCodePixImagem = null; // base64 (imagem pronta do Mercado Pago)
+    // provedorReferencia: no Mercado Pago guardamos o ID do pagamento (não o
+    // cobrancaId) para poder consultar o status diretamente na API como
+    // reforço ao webhook — webhook sozinho depende de estar bem configurado
+    // no painel do Mercado Pago e de o servidor estar publicamente acessível,
+    // então o polling do totem confere os dois.
+    let provedorReferencia = cobrancaId;
     if (provedor === 'mercadopago') {
-      const pref = await mercadopago.criarPreferencia({
-        titulo: descricao,
+      // Pix direto via API de Orders (Checkout Transparente) — sem
+      // redirecionar pra nenhuma tela externa, o QR já sai pronto pra
+      // mostrar no totem. A API exige um e-mail do pagador; como o totem não
+      // pede e-mail, usamos um sintético baseado no CPF quando o aluno não
+      // informou um de verdade.
+      //
+      // A API de Orders SEMPRE exige o Access Token de PRODUÇÃO
+      // ("APP_USR-..."), mesmo pra simular — ela não aceita token "TEST-...".
+      // O "modo teste" é ativado pelo PAGADOR: se MERCADOPAGO_TEST_PAYER_EMAIL
+      // estiver configurado, usamos esse e-mail de teste + o valor mágico
+      // "APRO" em first_name, que faz o Mercado Pago simular a aprovação
+      // automaticamente, sem mexer em dinheiro de verdade. Remova essa
+      // variável (ou apague-a) quando o totem for pra produção de verdade, e
+      // o pagamento passa a valer o dinheiro real dos alunos.
+      const emailTeste = process.env.MERCADOPAGO_TEST_PAYER_EMAIL;
+      const emailPagador = emailTeste || dados.email || `aluno-${dados.cpf.replace(/\D/g, '')}@academia-gestao.com`;
+      const firstNamePagador = emailTeste ? 'APRO' : undefined;
+
+      const order = await mercadopago.criarOrderPix({
+        descricao,
         valorCentavos: p.valor_centavos,
         referenciaExterna: cobrancaId,
-        urlRetorno: process.env.APP_URL || 'http://localhost:3000',
+        email: emailPagador,
+        firstName: firstNamePagador,
       });
-      linkPagamento = pref.init_point;
+      const metodoPix = order.transactions?.payments?.[0]?.payment_method || {};
+      qrCodePix = metodoPix.qr_code || null;
+      qrCodePixImagem = metodoPix.qr_code_base64 || null;
+      provedorReferencia = String(order.id);
     } else {
+      // Repassa os dados que o aluno já digitou no totem (nome/telefone/email)
+      // para o checkout da InfinitePay pré-preencher esses campos e pular essa
+      // etapa manual na tela de pagamento.
+      const customer = {
+        name: dados.nome,
+        ...(dados.email ? { email: dados.email } : {}),
+        ...(dados.telefone ? { phone_number: dados.telefone } : {}),
+      };
       const link = await infinitepay.criarLinkPagamento({
         descricao,
         valorCentavos: p.valor_centavos,
         orderNsu: cobrancaId,
         redirectUrl: process.env.APP_URL || 'http://localhost:3000',
+        customer,
       });
       linkPagamento = link.url || link.checkout_url;
     }
@@ -250,12 +289,14 @@ terminal.post('/auto-cadastro', autenticarTerminal, async (req, res, next) => {
     await db.execute({
       sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, provedor, provedor_referencia, descricao, vencimento)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      args: [cobrancaId, alunoId, matriculaId, p.valor_centavos, provedor, cobrancaId, descricao, hoje],
+      args: [cobrancaId, alunoId, matriculaId, p.valor_centavos, provedor, provedorReferencia, descricao, hoje],
     });
 
     res.status(201).json({
       cobranca_id: cobrancaId,
       link_pagamento: linkPagamento,
+      qr_code_pix: qrCodePix,
+      qr_code_pix_imagem: qrCodePixImagem,
       valor_centavos: p.valor_centavos,
       aluno_nome: dados.nome,
     });
@@ -271,8 +312,30 @@ terminal.post('/auto-cadastro', autenticarTerminal, async (req, res, next) => {
 terminal.get('/auto-cadastro/status/:cobrancaId', autenticarTerminal, async (req, res, next) => {
   try {
     const cobranca = await db.execute({ sql: 'SELECT * FROM cobrancas WHERE id = ?', args: [req.params.cobrancaId] });
-    const c = cobranca.rows[0];
+    let c = cobranca.rows[0];
     if (!c) return res.status(404).json({ erro: 'Cobrança não encontrada.' });
+
+    // Reforço ao webhook: se ainda não chegou confirmação (webhook não
+    // configurado no painel do Mercado Pago, atraso de entrega, etc.),
+    // consulta o status direto na API a cada poll do totem. Assim o totem
+    // não depende só do webhook pra saber que o Pix foi pago.
+    if (c.status !== 'pago' && c.provedor === 'mercadopago' && c.provedor_referencia) {
+      try {
+        const order = await mercadopago.consultarOrder(c.provedor_referencia);
+        const pagamentoOrder = order.transactions?.payments?.[0] || {};
+        const aprovado = order.status === 'processed' || pagamentoOrder.status === 'approved';
+        if (aprovado) {
+          await db.execute({
+            sql: `UPDATE cobrancas SET status = 'pago', metodo_pagamento = ?, pago_em = datetime('now') WHERE id = ?`,
+            args: ['pix', c.id],
+          });
+          c = { ...c, status: 'pago' };
+        }
+      } catch (err) {
+        // Não interrompe o polling por causa de uma falha pontual na consulta
+        // — o totem simplesmente tenta de novo no próximo tick.
+      }
+    }
 
     if (c.status !== 'pago') {
       return res.json({ pago: false });
@@ -320,15 +383,113 @@ function configCatraca(body = {}) {
   return { ip, port };
 }
 
-// GET /api/terminal/catraca/testar?ip=...&port=... — testa conectividade TCP simples
+// ---------------------------------------------------------------------------
+// "Liberação de pânico": mantém a catraca liberada continuamente, chamando
+// liberarAcesso em loop (o protocolo Henry só libera por tempo fixo por
+// comando — RELEASE_TIME em henryCatraca.service.js — não existe um comando
+// nativo de "travar aberto"). ATENÇÃO: isso é um mecanismo por software, que
+// depende do servidor e da rede estarem no ar; não é um substituto de uma
+// trava mecânica de emergência exigida por norma de segurança contra
+// incêndio/saída de emergência. Use com essa ressalva em mente.
+// ---------------------------------------------------------------------------
+let panicoInterval = null;
+let panicoConfig = null;
+
+const PANICO_INTERVALO_MS = 3000; // menor que os 4s de liberação por comando, pra não deixar brecha
+
+// POST /api/terminal/catraca/panico/ativar { ip?, port? }
+admin.post('/catraca/panico/ativar', async (req, res, next) => {
+  try {
+    const { ip, port } = configCatraca(req.body || {});
+    if (panicoInterval) return res.json({ ok: true, ativo: true, ja_estava_ativo: true });
+
+    panicoConfig = { ip, port };
+    await catracaGateway.liberarAcesso({ ip, port, mensagem: 'PANICO - LIBERACAO DE EMERGENCIA' });
+    panicoInterval = setInterval(() => {
+      catracaGateway.liberarAcesso({ ip, port, mensagem: 'PANICO - LIBERACAO DE EMERGENCIA' }).catch(() => {});
+    }, PANICO_INTERVALO_MS);
+
+    await acessoTerminal.registrarAcesso({
+      alunoId: null, metodo: 'admin_panico', resultado: 'liberado',
+      mensagem: `Liberação de pânico ATIVADA por ${req.usuario?.email || 'admin'}`,
+    });
+
+    res.json({ ok: true, ativo: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/terminal/catraca/panico/cancelar
+admin.post('/catraca/panico/cancelar', async (req, res, next) => {
+  try {
+    if (panicoInterval) {
+      clearInterval(panicoInterval);
+      panicoInterval = null;
+      await acessoTerminal.registrarAcesso({
+        alunoId: null, metodo: 'admin_panico', resultado: 'liberado',
+        mensagem: `Liberação de pânico CANCELADA por ${req.usuario?.email || 'admin'}`,
+      });
+    }
+    panicoConfig = null;
+    res.json({ ok: true, ativo: false });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/terminal/catraca/panico/status
+admin.get('/catraca/panico/status', (req, res) => {
+  res.json({ ativo: Boolean(panicoInterval), config: panicoConfig });
+});
+
+// POST /api/terminal/catraca/liberar-aluno { aluno_id, ip?, port?, mensagem? }
+// Libera a catraca manualmente indicando o aluno — diferente de /catraca/liberar
+// (teste de campo anônimo), este fica registrado em acessos_catraca com o
+// aluno_id, então aparece no histórico e no painel de "Acessos recentes".
+admin.post('/catraca/liberar-aluno', async (req, res, next) => {
+  try {
+    const schema = z.object({
+      aluno_id: z.string(),
+      ip: z.string().optional(),
+      port: z.number().optional(),
+      mensagem: z.string().optional(),
+    });
+    const body = schema.parse(req.body || {});
+    const { ip, port } = configCatraca(body);
+
+    const alunoResult = await db.execute({ sql: 'SELECT id, nome FROM alunos WHERE id = ?', args: [body.aluno_id] });
+    const aluno = alunoResult.rows[0];
+    if (!aluno) return res.status(404).json({ erro: 'Aluno não encontrado.' });
+
+    await catracaGateway.liberarAcesso({ ip, port, mensagem: body.mensagem || `Liberação manual - ${aluno.nome}` });
+    await acessoTerminal.registrarAcesso({
+      alunoId: aluno.id, metodo: 'admin', resultado: 'liberado',
+      mensagem: `Liberação manual pelo painel (${req.usuario?.email || 'admin'})`,
+    });
+
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/terminal/catraca/testar?ip=...&port=... — testa conectividade (TCP
+// direto ou, se houver agente local conectado, TCP feito por ele)
 admin.get('/catraca/testar', async (req, res, next) => {
   try {
     const { ip, port } = configCatraca(req.query);
-    const resultado = await henry.testarConexao({ ip, port });
+    const resultado = await catracaGateway.testarConexao({ ip, port });
     res.json({ ip, port, ...resultado });
   } catch (err) {
     next(err);
   }
+});
+
+// GET /api/terminal/catraca/agente/status — se há um agente local conectado
+// agora (usado pelo painel pra indicar "agente conectado" vs "modo direto")
+admin.get('/catraca/agente/status', (req, res) => {
+  res.json(catracaGateway.statusAgente());
 });
 
 // POST /api/terminal/catraca/liberar { ip?, port?, mensagem? } — dispara abertura manual (teste de campo)
@@ -337,23 +498,70 @@ admin.post('/catraca/liberar', async (req, res, next) => {
     const schema = z.object({ ip: z.string().optional(), port: z.number().optional(), mensagem: z.string().optional() });
     const body = schema.parse(req.body || {});
     const { ip, port } = configCatraca(body);
-    await henry.liberarAcesso({ ip, port, mensagem: body.mensagem });
+    await catracaGateway.liberarAcesso({ ip, port, mensagem: body.mensagem });
     res.json({ ok: true });
   } catch (err) {
     next(err);
   }
 });
 
-// GET /api/terminal/acessos?aluno_id=... — histórico de tentativas de acesso pelo totem
+// GET /api/terminal/acessos?aluno_id=&data=&data_inicio=&data_fim=&busca= — histórico de
+// tentativas de acesso pelo totem/catraca. Usado pelo painel "Acessos recentes", pela janela
+// da catraca e pelos relatórios "Acesso Diário" (usa "data") e "Acesso Pessoal" (usa
+// "aluno_id" + "data_inicio"/"data_fim").
 admin.get('/acessos', async (req, res, next) => {
   try {
-    const { aluno_id: alunoId } = req.query;
-    const sql = alunoId
-      ? `SELECT ac.*, a.nome as aluno_nome FROM acessos_catraca ac LEFT JOIN alunos a ON a.id = ac.aluno_id
-         WHERE ac.aluno_id = ? ORDER BY ac.criado_em DESC LIMIT 200`
-      : `SELECT ac.*, a.nome as aluno_nome FROM acessos_catraca ac LEFT JOIN alunos a ON a.id = ac.aluno_id
-         ORDER BY ac.criado_em DESC LIMIT 200`;
-    const result = await db.execute({ sql, args: alunoId ? [alunoId] : [] });
+    const {
+      aluno_id: alunoId, data, data_inicio: dataInicio, data_fim: dataFim, busca,
+    } = req.query;
+    const condicoes = [];
+    const args = [];
+    if (alunoId) { condicoes.push('ac.aluno_id = ?'); args.push(alunoId); }
+    if (data) { condicoes.push("date(ac.criado_em) = ?"); args.push(data); }
+    if (dataInicio) { condicoes.push('date(ac.criado_em) >= ?'); args.push(dataInicio); }
+    if (dataFim) { condicoes.push('date(ac.criado_em) <= ?'); args.push(dataFim); }
+    if (busca) { condicoes.push('a.nome LIKE ?'); args.push(`%${busca}%`); }
+    const where = condicoes.length ? `WHERE ${condicoes.join(' AND ')}` : '';
+
+    const result = await db.execute({
+      sql: `SELECT ac.*, a.nome as aluno_nome FROM acessos_catraca ac LEFT JOIN alunos a ON a.id = ac.aluno_id
+            ${where} ORDER BY ac.criado_em DESC LIMIT 500`,
+      args,
+    });
+    res.json(result.rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/terminal/acessos/ultimo-por-aluno?data_inicio=&data_fim=&busca=&incluir_inativos=
+// relatório "Último Acesso": um registro por aluno, com a data/hora do acesso mais recente
+// (que tenha sido efetivamente liberado). O período, quando informado, restringe quais acessos
+// contam pra esse "mais recente" — útil pra achar quem não vem há tempos. Por padrão só traz
+// alunos com status='ativo'; passe incluir_inativos=true (checkbox "mostrar inativos") pra
+// incluir todo mundo.
+admin.get('/acessos/ultimo-por-aluno', async (req, res, next) => {
+  try {
+    const {
+      data_inicio: dataInicio, data_fim: dataFim, busca, incluir_inativos: incluirInativos,
+    } = req.query;
+    const condicoes = ["ac.resultado = 'liberado'"];
+    const args = [];
+    if (!(incluirInativos === 'true' || incluirInativos === '1')) { condicoes.push("a.status = 'ativo'"); }
+    if (dataInicio) { condicoes.push('date(ac.criado_em) >= ?'); args.push(dataInicio); }
+    if (dataFim) { condicoes.push('date(ac.criado_em) <= ?'); args.push(dataFim); }
+    if (busca) { condicoes.push('a.nome LIKE ?'); args.push(`%${busca}%`); }
+    const where = `WHERE ${condicoes.join(' AND ')}`;
+
+    const result = await db.execute({
+      sql: `SELECT a.id as aluno_id, a.nome as aluno_nome, MAX(ac.criado_em) as ultimo_acesso
+            FROM acessos_catraca ac
+            JOIN alunos a ON a.id = ac.aluno_id
+            ${where}
+            GROUP BY a.id, a.nome
+            ORDER BY ultimo_acesso DESC`,
+      args,
+    });
     res.json(result.rows);
   } catch (err) {
     next(err);

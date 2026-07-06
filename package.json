@@ -12,7 +12,9 @@
     "dev": "node --watch src/server.js",
     "migrate": "node src/db/migrate.js",
     "seed": "node src/db/seed.js",
-    "gerar-cobrancas": "node src/jobs/recorrencia.js"
+    "gerar-cobrancas": "node src/jobs/recorrencia.js",
+    "backup": "node src/jobs/backup.js",
+    "migrar-secullum": "node scripts/migrar-secullum.js"
   },
   "dependencies": {
     "@libsql/client": "^0.14.0",
@@ -23,6 +25,7 @@
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
     "uuid": "^9.0.1",
+    "ws": "^8.18.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {

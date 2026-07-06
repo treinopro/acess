@@ -7,18 +7,18 @@ const { assinarToken } = require('../utils/jwt');
 const router = express.Router();
 
 const loginSchema = z.object({
-  email: z.string().email(),
+  identificador: z.string().min(1), // pode ser e-mail ou nome de usuario
   senha: z.string().min(6),
 });
 
 // POST /api/auth/login
 router.post('/login', async (req, res, next) => {
   try {
-    const { email, senha } = loginSchema.parse(req.body);
+    const { identificador, senha } = loginSchema.parse(req.body);
 
     const result = await db.execute({
-      sql: 'SELECT * FROM usuarios WHERE email = ?',
-      args: [email],
+      sql: 'SELECT * FROM usuarios WHERE email = ? OR usuario = ?',
+      args: [identificador, identificador],
     });
 
     const usuario = result.rows[0];

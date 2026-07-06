@@ -138,25 +138,37 @@ Ao matricular um aluno em um plano (`POST /api/planos/matricular`):
 
 **Nota sobre produção:** em serviços "free tier" do Render o servidor pode dormir por inatividade, o que pausa o `setInterval`. Para garantir que a recorrência rode mesmo assim, configure um **Render Cron Job** (ou qualquer scheduler externo) para chamar `npm run gerar-cobrancas` uma vez por dia — o comando é idempotente, então rodar mais de uma vez no mesmo dia não duplica cobranças.
 
-## 9. Integração direta com a catraca Henry (TCP/IP)
+## 9. Integração com a catraca Henry (TCP/IP) — funciona local E na nuvem
 
-Em vez de depender do Secullum Academia.Net ou do Kernel7x.dll (COM), o sistema fala diretamente o protocolo proprietário da Henry (linha 7x: Primme Acesso 8X, Primme Acesso SF, Argos) por socket TCP — porta padrão **3000** — na mesma rede local do equipamento. Implementação em `src/services/henryCatraca.service.js`:
+Em vez de depender do Secullum Academia.Net ou do Kernel7x.dll (COM), o sistema fala diretamente o protocolo proprietário da Henry (linha 7x: Primme Acesso 8X, Primme Acesso SF, Argos) por socket TCP — porta padrão **3000**. Implementação de baixo nível em `src/services/henryCatraca.service.js`:
 
 - `liberarAcesso({ ip, port, mensagem })` — abre a catraca diretamente (fluxo do terminal/kiosk: após confirmar matrícula/pagamento do aluno).
 - `permitirEntrada` / `impedirEntrada` — confirma ou bloqueia a passagem depois que a própria catraca captura um evento (cartão/biometria do equipamento) via `escutar()`.
 - `escutar({ ip, port })` — escuta bloqueante do próximo evento enviado pela catraca.
 - `testarConexao({ ip, port })` — apenas testa se a porta está acessível.
 
-Configure `HENRY_CATRACA_IP` e `HENRY_CATRACA_PORT` no `.env` (a catraca precisa estar na mesma rede/alcançável pelo servidor). Rotas de teste (somente admin), em `src/routes/terminal.routes.js`:
+**Nenhuma rota/serviço chama `henryCatraca.service.js` diretamente.** Todos passam por `src/services/catracaGateway.service.js`, que decide sozinho, a cada chamada, qual dos dois modos usar:
+
+| Modo | Quando é usado | Como funciona |
+|---|---|---|
+| **Direto** | Nenhum agente local conectado (ex.: servidor rodando localmente, na mesma rede da catraca) | Fala TCP direto daqui mesmo, via `henryCatraca.service.js`. Zero configuração extra — é o que já funcionava antes. |
+| **Agente** | Um agente local está conectado (ver pasta `agente-local/` na raiz do repositório) | O comando é repassado por WebSocket até o agente, que fala TCP com a catraca de dentro da rede da academia, e devolve o resultado. Necessário quando o painel está hospedado na nuvem (Northflank/Render) — a nuvem não alcança o IP privado da catraca (ex.: `192.168.0.79`). |
+
+A troca entre os dois modos é automática e transparente — nenhuma tela do painel muda. `GET /api/terminal/catraca/testar` devolve um campo `modo` (`"direto"` ou `"agente"`) indicando qual foi usado naquele teste, e `GET /api/terminal/catraca/agente/status` (admin) devolve `{ conectado, conectado_desde, ultimo_pong, modo }` a qualquer momento.
+
+Configure `HENRY_CATRACA_IP` e `HENRY_CATRACA_PORT` no `.env` do servidor (usado como padrão quando a "Configuração avançada" do painel fica em branco) e, se o painel estiver na nuvem, também `AGENTE_TOKEN` (string aleatória — precisa ser **igual** à configurada no `.env` do agente local). Ver `agente-local/README.md` para instalar e rodar o agente num PC da academia.
+
+Rotas relevantes (somente admin), em `src/routes/terminal.routes.js`:
 
 | Método | Rota | Descrição |
 |---|---|---|
-| GET | `/api/terminal/catraca/testar?ip=&port=` | Testa conectividade TCP com a catraca |
+| GET | `/api/terminal/catraca/testar?ip=&port=` | Testa conectividade (direto ou via agente) — resposta inclui `modo` |
+| GET | `/api/terminal/catraca/agente/status` | Status da conexão do agente local |
 | POST | `/api/terminal/catraca/liberar` | Dispara abertura manual (teste de campo) — body opcional `{ ip, port, mensagem }` |
 
-**Nota:** o protocolo foi portado a partir da especificação pública do protocolo Henry Primme Acesso/Argos (mesma família usada pelo Kernel7x/Secullum). Se seu modelo específico usar comandos diferentes, ajuste as strings de comando em `henryCatraca.service.js` conforme o manual do equipamento. Ainda falta testar contra a catraca real (assim que houver acesso de rede a ela).
+**Nota:** o protocolo foi portado a partir da especificação pública do protocolo Henry Primme Acesso/Argos (mesma família usada pelo Kernel7x/Secullum). Se seu modelo específico usar comandos diferentes, ajuste as strings de comando em `henryCatraca.service.js` (e no arquivo equivalente em `agente-local/henryCatraca.js`) conforme o manual do equipamento. Ainda falta testar contra a catraca real (assim que houver acesso de rede a ela).
 
-**Arquitetura de produção (nuvem + agente local):** hoje o servidor fala TCP com a catraca diretamente (deploy local, ok para desenvolvimento/teste). Se o painel for hospedado no Render, a catraca só é alcançável pela rede local da academia — nesse caso, extraia a chamada de `liberarNaCatraca()` em `src/services/acessoTerminal.service.js` para um pequeno "agente local" (processo Node rodando num PC da academia, conectado à nuvem) que seja o único a falar TCP com o equipamento. Essa troca é isolada — o resto do sistema não muda.
+**Arquitetura (nuvem + agente local):** implementada em `src/services/agenteGateway.service.js` (servidor WebSocket embutido no mesmo processo/porta do Express, path `/agente/socket`) + `src/services/catracaGateway.service.js` (abstração usada por toda a aplicação) + a pasta `agente-local/` (programa standalone que roda no PC da academia). O agente conecta DE DENTRO da rede local PARA a nuvem (WebSocket de saída) — por isso não é preciso abrir porta nenhuma no roteador da academia.
 
 ## 10. Totem de auto atendimento (`/terminal.html`)
 
@@ -204,6 +216,6 @@ Rode a partir da pasta `academia-gestao` (onde fica a pasta `public`). Os 3 arqu
 
 ## 11. Próximos passos sugeridos
 
-Auto cadastro + pagamento (QR code/maquininha InfinitePay) direto pelo totem para alunos novos, cartão RFID como método de acesso adicional, agente local para a arquitetura nuvem+catraca, notificações automáticas (WhatsApp/e-mail), relatórios de frequência/faturamento/churn, assinatura recorrente real (Mercado Pago Subscriptions), app do aluno, e regras de LGPD para os dados de anamnese/avaliação física/reconhecimento facial (tabelas `anamneses`, `avaliacoes_fisicas` e `alunos.face_descriptor`) — ver o documento de planejamento para o roteiro completo por fases.
+Auto cadastro + pagamento (QR code/maquininha InfinitePay) direto pelo totem para alunos novos, cartão RFID como método de acesso adicional, notificações automáticas (WhatsApp/e-mail), relatórios de frequência/faturamento/churn, assinatura recorrente real (Mercado Pago Subscriptions), app do aluno, e regras de LGPD para os dados de anamnese/avaliação física/reconhecimento facial (tabelas `anamneses`, `avaliacoes_fisicas` e `alunos.face_descriptor`) — ver o documento de planejamento para o roteiro completo por fases. (Agente local para a arquitetura nuvem+catraca já foi implementado — ver seção 9 e `agente-local/README.md`; falta apenas testar contra a catraca física real.)
 
 **Biometria cadastrada direto no leitor da catraca:** hoje o campo `alunos.biometria_id` só guarda um ID que foi cadastrado manualmente no leitor da própria catraca (pelo software/menu dela) e colado no painel. Para cadastrar a digital *pelo nosso sistema* — seja na hora da matrícula, seja depois pelo painel — seria preciso implementar o comando de cadastro de biometria do protocolo Henry (colocar a catraca em "modo cadastro", capturar o índice/template retornado e gravar em `biometria_id`). Ainda não está mapeado qual comando TCP faz isso neste modelo; verificar no manual do protocolo Henry ou com o suporte Primme/Henry antes de implementar.

@@ -5,7 +5,7 @@
 // IMPORTANTE: troque o valor abaixo pelo mesmo TERMINAL_TOKEN configurado no
 // .env do servidor. Como o aluno não faz login, este token é o que autentica
 // o totem perante a API — mantenha o dispositivo fisicamente controlado.
-const TERMINAL_TOKEN = '8f3a1c9e6b2d4f705a8c1e9b3d6f2a0c7e4b1d9f6a2c8e0b3d5f7a1c9e6b2d4f';
+const TERMINAL_TOKEN = 'w7bN3qXeR9mKpL2vJ8tYd5cA6sZ0hU4gF1oQnE7iBxW';
 
 // URL dos modelos do face-api.js — hospedados localmente em public/vendor/,
 // já que o totem roda numa rede sem internet. Ver README (seção do totem)
@@ -351,6 +351,7 @@ function resetCadastro() {
   document.getElementById('painel-cadastro-pagamento').classList.add('oculto');
   document.getElementById('painel-cadastro-sucesso').classList.add('oculto');
   document.getElementById('painel-cadastro-facial').classList.add('oculto');
+  document.getElementById('btn-copiar-pix').classList.add('oculto');
   carregarPlanosCadastro();
 }
 
@@ -393,8 +394,61 @@ document.getElementById('btn-cadastro-continuar').addEventListener('click', asyn
 
     const alvo = document.getElementById('qrcode-cadastro-pagamento');
     alvo.innerHTML = '';
-    // eslint-disable-next-line no-new
-    new QRCode(alvo, { text: resp.link_pagamento, width: 220, height: 220, colorDark: '#0f172a', colorLight: '#ffffff' });
+    const btnCopiarPix = document.getElementById('btn-copiar-pix');
+    const instrucaoEl = document.getElementById('cadastro-pagamento-instrucao');
+
+    if (resp.qr_code_pix_imagem) {
+      // Mercado Pago: Pix direto — o QR já vem pronto (imagem), sem redirecionar
+      // pra nenhuma tela externa. Mostra também o código copia-e-cola.
+      const img = document.createElement('img');
+      img.src = `data:image/png;base64,${resp.qr_code_pix_imagem}`;
+      img.style.width = '220px';
+      img.style.height = '220px';
+      img.style.borderRadius = '12px';
+      alvo.appendChild(img);
+      instrucaoEl.textContent = 'Escaneie o QR com o app do seu banco (Pix) para pagar. A tela avança sozinha assim que o pagamento for confirmado.';
+
+      if (resp.qr_code_pix) {
+        btnCopiarPix.classList.remove('oculto');
+        btnCopiarPix.onclick = async () => {
+          try {
+            await navigator.clipboard.writeText(resp.qr_code_pix);
+            btnCopiarPix.textContent = 'Código copiado!';
+            setTimeout(() => { btnCopiarPix.textContent = 'Copiar código Pix'; }, 2000);
+          } catch {
+            alert('Não foi possível copiar automaticamente. Código Pix:\n' + resp.qr_code_pix);
+          }
+        };
+      } else {
+        btnCopiarPix.classList.add('oculto');
+      }
+    } else if (resp.qr_code_pix) {
+      // Mercado Pago: a API não devolveu a imagem pronta (comum em modo de
+      // teste), mas devolveu o código Pix (copia-e-cola) em texto — geramos
+      // o QR no próprio totem a partir desse texto. É um QR Pix de verdade
+      // (não aponta pra link nenhum), então o app do banco lê normalmente.
+      // eslint-disable-next-line no-new
+      new QRCode(alvo, { text: resp.qr_code_pix, width: 220, height: 220, colorDark: '#0f172a', colorLight: '#ffffff' });
+      instrucaoEl.textContent = 'Escaneie o QR com o app do seu banco (Pix) para pagar. A tela avança sozinha assim que o pagamento for confirmado.';
+
+      btnCopiarPix.classList.remove('oculto');
+      btnCopiarPix.onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(resp.qr_code_pix);
+          btnCopiarPix.textContent = 'Código copiado!';
+          setTimeout(() => { btnCopiarPix.textContent = 'Copiar código Pix'; }, 2000);
+        } catch {
+          alert('Não foi possível copiar automaticamente. Código Pix:\n' + resp.qr_code_pix);
+        }
+      };
+    } else {
+      // InfinitePay: link de checkout — o QR aponta pra URL, o aluno escaneia
+      // com a câmera normal do celular (não é um QR Pix em si).
+      // eslint-disable-next-line no-new
+      new QRCode(alvo, { text: resp.link_pagamento, width: 220, height: 220, colorDark: '#0f172a', colorLight: '#ffffff' });
+      instrucaoEl.textContent = 'Escaneie com a câmera do seu celular para pagar. A tela avança sozinha assim que o pagamento for confirmado.';
+      btnCopiarPix.classList.add('oculto');
+    }
 
     iniciarPollCadastro(resp.cobranca_id);
   } catch (err) {

@@ -169,16 +169,21 @@ router.patch('/matriculas/:id/status', async (req, res, next) => {
   }
 });
 
-// GET /api/planos/matriculas?aluno_id=... — lista matrículas (todas ou de um aluno)
+// GET /api/planos/matriculas?aluno_id=...&incluir_inativos=true — lista matrículas
+// (todas ou de um aluno). Ao listar todos os alunos, por padrão só mostra quem está com
+// status='ativo'; passe incluir_inativos=true (checkbox "mostrar inativos") pra ver todos.
+// Quando aluno_id é informado (tela do próprio aluno) não filtra por status.
 router.get('/matriculas', async (req, res, next) => {
   try {
-    const { aluno_id: alunoId } = req.query;
+    const { aluno_id: alunoId, incluir_inativos: incluirInativos } = req.query;
+    const mostrarTodos = incluirInativos === 'true' || incluirInativos === '1';
     const sql = alunoId
       ? `SELECT m.*, a.nome as aluno_nome, p.nome as plano_nome FROM matriculas m
          JOIN alunos a ON a.id = m.aluno_id JOIN planos p ON p.id = m.plano_id
          WHERE m.aluno_id = ? ORDER BY m.data_inicio DESC`
       : `SELECT m.*, a.nome as aluno_nome, p.nome as plano_nome FROM matriculas m
          JOIN alunos a ON a.id = m.aluno_id JOIN planos p ON p.id = m.plano_id
+         ${mostrarTodos ? '' : "WHERE a.status = 'ativo'"}
          ORDER BY m.data_inicio DESC`;
     const result = await db.execute({ sql, args: alunoId ? [alunoId] : [] });
     res.json(result.rows);

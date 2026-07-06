@@ -12,7 +12,10 @@ function getHandle() {
 }
 
 // Cria um link de pagamento para uma cobrança (mensalidade, matrícula, aula avulsa).
-async function criarLinkPagamento({ descricao, valorCentavos, orderNsu, redirectUrl }) {
+// `customer` é opcional: quando informado (nome/email/telefone), a tela de
+// checkout da InfinitePay já vem preenchida e pula a etapa de pedir esses
+// dados do pagador manualmente.
+async function criarLinkPagamento({ descricao, valorCentavos, orderNsu, redirectUrl, customer }) {
   const resp = await fetch(`${BASE_URL}/links`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -22,6 +25,7 @@ async function criarLinkPagamento({ descricao, valorCentavos, orderNsu, redirect
       order_nsu: orderNsu,
       redirect_url: redirectUrl,
       webhook_url: process.env.INFINITEPAY_WEBHOOK_URL || undefined,
+      ...(customer ? { customer } : {}),
     }),
   });
 

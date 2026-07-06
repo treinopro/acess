@@ -6,3 +6,4 @@ local.db
 dist/
 .DS_Store
 npm-debug.log*
+backups/

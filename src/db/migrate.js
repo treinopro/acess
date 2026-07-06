@@ -11,6 +11,14 @@ const ALTERACOES_INCREMENTAIS = [
   "ALTER TABLE cobrancas ADD COLUMN descricao TEXT",
   "ALTER TABLE alunos ADD COLUMN codigo_acesso TEXT",
   "ALTER TABLE alunos ADD COLUMN face_descriptor TEXT",
+  "ALTER TABLE usuarios ADD COLUMN usuario TEXT",
+  "ALTER TABLE avaliacoes_fisicas ADD COLUMN medida_panturrilha_cm REAL",
+  "ALTER TABLE avaliacoes_fisicas ADD COLUMN imc_atual REAL",
+  "ALTER TABLE avaliacoes_fisicas ADD COLUMN imc_ideal REAL",
+  "ALTER TABLE avaliacoes_fisicas ADD COLUMN iac REAL",
+  "ALTER TABLE avaliacoes_fisicas ADD COLUMN massa_magra_kg REAL",
+  "ALTER TABLE avaliacoes_fisicas ADD COLUMN perfil_morfologico TEXT",
+  "ALTER TABLE avaliacoes_fisicas ADD COLUMN dados_extras TEXT",
 ];
 
 async function migrate() {

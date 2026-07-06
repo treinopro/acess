@@ -343,6 +343,50 @@ document.getElementById('btn-voltar-alunos').addEventListener('click', voltarPar
 
 // ---------------- ALUNOS ----------------
 
+// Estado de ordenação da tabela de Alunos (clique no título da coluna).
+// "id" ordena por data de criação de verdade (o id é um UUID, não sequencial) —
+// primeiro clique mostra do mais recente ao mais antigo, como pedido.
+const DIRECAO_INICIAL_COLUNA_ALUNOS = { id: 'desc', nome: 'asc', contato: 'asc', status: 'asc' };
+let ordenacaoAlunos = { campo: null, direcao: 'asc' };
+
+function alternarOrdenacaoAlunos(campo) {
+  if (ordenacaoAlunos.campo === campo) {
+    ordenacaoAlunos.direcao = ordenacaoAlunos.direcao === 'asc' ? 'desc' : 'asc';
+  } else {
+    ordenacaoAlunos = { campo, direcao: DIRECAO_INICIAL_COLUNA_ALUNOS[campo] || 'asc' };
+  }
+  carregarAlunos();
+}
+
+function ordenarAlunos(lista) {
+  if (!ordenacaoAlunos.campo) return lista;
+  const { campo, direcao } = ordenacaoAlunos;
+  const mult = direcao === 'asc' ? 1 : -1;
+  const valorDe = (aluno) => {
+    if (campo === 'id') return aluno.criado_em || '';
+    if (campo === 'contato') return [aluno.email, aluno.telefone].filter(Boolean).join(' · ');
+    return (aluno[campo] || '').toString().toLowerCase();
+  };
+  return [...lista].sort((a, b) => {
+    const va = valorDe(a);
+    const vb = valorDe(b);
+    if (va < vb) return -1 * mult;
+    if (va > vb) return 1 * mult;
+    return 0;
+  });
+}
+
+function atualizarSetasOrdenacaoAlunos() {
+  document.querySelectorAll('#secao-alunos .seta-ordenacao').forEach((span) => {
+    const campo = span.dataset.seta;
+    span.textContent = ordenacaoAlunos.campo !== campo ? '' : (ordenacaoAlunos.direcao === 'asc' ? '▲' : '▼');
+  });
+}
+
+document.querySelectorAll('#secao-alunos .th-ordenavel').forEach((th) => {
+  th.addEventListener('click', () => alternarOrdenacaoAlunos(th.dataset.sort));
+});
+
 async function carregarAlunos() {
   try {
     const busca = document.getElementById('busca-aluno').value.trim();
@@ -350,13 +394,16 @@ async function carregarAlunos() {
     const params = new URLSearchParams();
     if (busca) params.set('busca', busca);
     if (mostrarInativos) params.set('incluir_inativos', 'true');
-    const alunos = await api(`/api/alunos${params.toString() ? '?' + params.toString() : ''}`);
+    const alunosBrutos = await api(`/api/alunos${params.toString() ? '?' + params.toString() : ''}`);
+    const alunos = ordenarAlunos(alunosBrutos);
+    atualizarSetasOrdenacaoAlunos();
     const tbody = document.getElementById('lista-alunos');
     tbody.innerHTML = '';
     alunos.forEach((aluno) => {
       const contato = [aluno.email, aluno.telefone].filter(Boolean).join(' · ') || '—';
       const tr = el(`
         <tr>
+          <td title="${aluno.id}">${aluno.id.slice(0, 8)}</td>
           <td>${aluno.nome}</td>
           <td>${contato}</td>
           <td><span class="badge ${aluno.status}">${aluno.status}</span></td>
@@ -1170,7 +1217,33 @@ document.getElementById('form-agendamento').addEventListener('submit', async (ev
 
 // ---------------- CONTAS A RECEBER (PAGAMENTOS) ----------------
 
+// Período de "Contas a receber" fica lembrado (localStorage) até o usuário trocar por
+// outro — a tela nunca lista tudo sem limite nenhum. Sem período salvo ainda, cai no
+// mês corrente (do dia 1 ao último dia do mês).
+function inicializarPeriodoContas() {
+  const campoDe = document.getElementById('conta-periodo-de');
+  const campoAte = document.getElementById('conta-periodo-ate');
+  if (campoDe.value || campoAte.value) return; // já tem valor (ex.: veio de uma troca recente), não sobrescreve
+
+  const salvoDe = localStorage.getItem('contaPeriodoDe');
+  const salvoAte = localStorage.getItem('contaPeriodoAte');
+  if (salvoDe || salvoAte) {
+    campoDe.value = salvoDe || '';
+    campoAte.value = salvoAte || '';
+    return;
+  }
+
+  const hoje = new Date();
+  const primeiroDia = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
+  const ultimoDia = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0);
+  campoDe.value = primeiroDia.toISOString().slice(0, 10);
+  campoAte.value = ultimoDia.toISOString().slice(0, 10);
+  localStorage.setItem('contaPeriodoDe', campoDe.value);
+  localStorage.setItem('contaPeriodoAte', campoAte.value);
+}
+
 async function carregarPagamentos() {
+  inicializarPeriodoContas();
   await popularSelectAlunos(document.getElementById('cobranca-aluno'));
   await popularSelectAlunos(document.getElementById('conta-aluno'));
   await popularSelectAlunosComTodos(document.getElementById('filtro-conta-aluno'));
@@ -1196,11 +1269,15 @@ async function carregarContas() {
     const status = document.getElementById('filtro-conta-status').value;
     const busca = document.getElementById('busca-conta-nome').value.trim();
     const mostrarInativos = document.getElementById('mostrar-inativos-contas').checked;
+    const periodoDe = document.getElementById('conta-periodo-de').value;
+    const periodoAte = document.getElementById('conta-periodo-ate').value;
     const params = new URLSearchParams();
     if (alunoId) params.set('aluno_id', alunoId);
     if (status) params.set('status', status);
     if (busca) params.set('busca', busca);
     if (mostrarInativos) params.set('incluir_inativos', 'true');
+    if (periodoDe) params.set('vencimento_de', periodoDe);
+    if (periodoAte) params.set('vencimento_ate', periodoAte);
 
     const contas = await api(`/api/pagamentos/cobrancas${params.toString() ? '?' + params.toString() : ''}`);
     const tbody = document.getElementById('lista-contas');
@@ -1252,6 +1329,14 @@ async function carregarContas() {
 document.getElementById('filtro-conta-aluno').addEventListener('change', carregarContas);
 document.getElementById('filtro-conta-status').addEventListener('change', carregarContas);
 document.getElementById('mostrar-inativos-contas').addEventListener('change', carregarContas);
+document.getElementById('conta-periodo-de').addEventListener('change', (ev) => {
+  localStorage.setItem('contaPeriodoDe', ev.target.value);
+  carregarContas();
+});
+document.getElementById('conta-periodo-ate').addEventListener('change', (ev) => {
+  localStorage.setItem('contaPeriodoAte', ev.target.value);
+  carregarContas();
+});
 
 let buscaContaTimeout = null;
 document.getElementById('busca-conta-nome').addEventListener('input', () => {

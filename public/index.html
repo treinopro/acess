@@ -462,6 +462,14 @@
         </div>
 
         <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
+          <div>
+            <label>Vencimento de</label>
+            <input type="date" id="conta-periodo-de" />
+          </div>
+          <div>
+            <label>até</label>
+            <input type="date" id="conta-periodo-ate" />
+          </div>
           <div style="flex:1;min-width:200px">
             <label>Buscar por nome</label>
             <input type="text" id="busca-conta-nome" placeholder="Digite o nome do aluno..." />
@@ -485,6 +493,7 @@
             </select>
           </div>
         </div>
+        <p style="margin:0 0 12px;color:#667085;font-size:13px">Mostrando contas do período selecionado acima. O período escolhido fica valendo até você trocar por outro.</p>
 
         <table class="tabela">
           <thead>

@@ -115,10 +115,74 @@ async function carregarConfigApp() {
       el.textContent = licenciadoTexto;
       el.classList.toggle('oculto', !licenciadoTexto);
     });
+
+    aplicarOrdemMenu(config.menu_ordem);
   } catch (err) {
     // Falha em buscar config não pode travar o app — segue com os valores padrão do HTML.
   }
 }
+
+// ---------------- Ordem dos menus (reordenável pelo admin em Configurações) ----------------
+
+const LABELS_MENU = {
+  alunos: 'Alunos',
+  planos: 'Planos',
+  agenda: 'Turmas & Agenda',
+  pagamentos: 'Contas a Receber',
+  relatorios: 'Relatórios',
+  usuarios: 'Usuários',
+  config: 'Configurações',
+  catraca: 'Catraca',
+};
+const ORDEM_MENU_PADRAO = ['alunos', 'planos', 'agenda', 'pagamentos', 'relatorios', 'usuarios', 'config', 'catraca'];
+let ordemMenuAtual = [...ORDEM_MENU_PADRAO];
+
+// Reordena os botões <nav> de verdade na barra lateral (move os elementos já
+// existentes — não recria nada, então os listeners de clique continuam valendo).
+function aplicarOrdemMenu(ordem) {
+  const nav = document.querySelector('.sidebar nav') || document.querySelector('nav');
+  if (!nav || !Array.isArray(ordem) || !ordem.length) return;
+  ordem.forEach((secao) => {
+    const btn = nav.querySelector(`.nav-btn[data-secao="${secao}"]`);
+    if (btn) nav.appendChild(btn);
+  });
+}
+
+// Desenha a listinha com setas ▲▼ na tela de Configurações, a partir do
+// estado em memória `ordemMenuAtual` (só é gravado no servidor ao clicar "Salvar ordem").
+function renderizarOrdemMenu() {
+  const lista = document.getElementById('lista-ordem-menu');
+  if (!lista) return;
+  lista.innerHTML = '';
+  ordemMenuAtual.forEach((secao, idx) => {
+    const li = el(`
+      <li style="display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid #e4e7ec;border-radius:8px">
+        <span style="flex:1">${LABELS_MENU[secao] || secao}</span>
+        <button type="button" class="btn-linha" data-acao="subir" ${idx === 0 ? 'disabled' : ''}>▲</button>
+        <button type="button" class="btn-linha" data-acao="descer" ${idx === ordemMenuAtual.length - 1 ? 'disabled' : ''}>▼</button>
+      </li>
+    `);
+    li.querySelector('[data-acao="subir"]').addEventListener('click', () => {
+      if (idx === 0) return;
+      [ordemMenuAtual[idx - 1], ordemMenuAtual[idx]] = [ordemMenuAtual[idx], ordemMenuAtual[idx - 1]];
+      renderizarOrdemMenu();
+    });
+    li.querySelector('[data-acao="descer"]').addEventListener('click', () => {
+      if (idx === ordemMenuAtual.length - 1) return;
+      [ordemMenuAtual[idx + 1], ordemMenuAtual[idx]] = [ordemMenuAtual[idx], ordemMenuAtual[idx + 1]];
+      renderizarOrdemMenu();
+    });
+    lista.appendChild(li);
+  });
+}
+
+document.getElementById('btn-salvar-ordem-menu').addEventListener('click', async () => {
+  try {
+    await api('/api/config', { method: 'PUT', body: JSON.stringify({ menu_ordem: ordemMenuAtual }) });
+    aplicarOrdemMenu(ordemMenuAtual);
+    mostrarToast('Ordem dos menus salva.');
+  } catch (err) { mostrarToast(err.message, true); }
+});
 
 function mostrarLogin() {
   document.getElementById('tela-app').classList.add('oculto');
@@ -237,6 +301,10 @@ async function carregarConfiguracoesForm() {
     const config = await api('/api/config');
     document.getElementById('config-nome-app').value = config.nome_app || '';
     document.getElementById('config-licenciado-para').value = config.licenciado_para || '';
+    ordemMenuAtual = Array.isArray(config.menu_ordem) && config.menu_ordem.length
+      ? [...config.menu_ordem]
+      : [...ORDEM_MENU_PADRAO];
+    renderizarOrdemMenu();
   } catch (err) { mostrarToast(err.message, true); }
 }
 
@@ -278,7 +346,11 @@ document.getElementById('btn-voltar-alunos').addEventListener('click', voltarPar
 async function carregarAlunos() {
   try {
     const busca = document.getElementById('busca-aluno').value.trim();
-    const alunos = await api(`/api/alunos${busca ? `?busca=${encodeURIComponent(busca)}` : ''}`);
+    const mostrarInativos = document.getElementById('mostrar-inativos-alunos').checked;
+    const params = new URLSearchParams();
+    if (busca) params.set('busca', busca);
+    if (mostrarInativos) params.set('incluir_inativos', 'true');
+    const alunos = await api(`/api/alunos${params.toString() ? '?' + params.toString() : ''}`);
     const tbody = document.getElementById('lista-alunos');
     tbody.innerHTML = '';
     alunos.forEach((aluno) => {
@@ -328,6 +400,9 @@ let buscaAlunoTimeout = null;
 document.getElementById('busca-aluno').addEventListener('input', () => {
   clearTimeout(buscaAlunoTimeout);
   buscaAlunoTimeout = setTimeout(carregarAlunos, 300);
+});
+document.getElementById('mostrar-inativos-alunos').addEventListener('change', () => {
+  carregarAlunos();
 });
 
 // ---------------- Importar / exportar alunos (CSV) ----------------
@@ -894,10 +969,12 @@ function popularSelectPlanos(select, planos) {
   select.innerHTML = planos.map((p) => `<option value="${p.id}">${p.nome} (${formatarMoeda(p.valor_centavos)})</option>`).join('');
 }
 
-async function popularSelectAlunos(select) {
+async function popularSelectAlunos(select, { incluirInativos = false, comPlaceholder = false } = {}) {
   try {
-    const alunos = await api('/api/alunos?status=ativo');
-    select.innerHTML = alunos.map((a) => `<option value="${a.id}">${a.nome}</option>`).join('');
+    const query = incluirInativos ? '?incluir_inativos=true' : '?status=ativo';
+    const alunos = await api(`/api/alunos${query}`);
+    const placeholder = comPlaceholder ? '<option value="">Selecione...</option>' : '';
+    select.innerHTML = placeholder + alunos.map((a) => `<option value="${a.id}">${a.nome}</option>`).join('');
   } catch (err) { mostrarToast(err.message, true); }
 }
 
@@ -1118,10 +1195,12 @@ async function carregarContas() {
     const alunoId = document.getElementById('filtro-conta-aluno').value;
     const status = document.getElementById('filtro-conta-status').value;
     const busca = document.getElementById('busca-conta-nome').value.trim();
+    const mostrarInativos = document.getElementById('mostrar-inativos-contas').checked;
     const params = new URLSearchParams();
     if (alunoId) params.set('aluno_id', alunoId);
     if (status) params.set('status', status);
     if (busca) params.set('busca', busca);
+    if (mostrarInativos) params.set('incluir_inativos', 'true');
 
     const contas = await api(`/api/pagamentos/cobrancas${params.toString() ? '?' + params.toString() : ''}`);
     const tbody = document.getElementById('lista-contas');
@@ -1172,6 +1251,7 @@ async function carregarContas() {
 
 document.getElementById('filtro-conta-aluno').addEventListener('change', carregarContas);
 document.getElementById('filtro-conta-status').addEventListener('change', carregarContas);
+document.getElementById('mostrar-inativos-contas').addEventListener('change', carregarContas);
 
 let buscaContaTimeout = null;
 document.getElementById('busca-conta-nome').addEventListener('input', () => {
@@ -1602,6 +1682,7 @@ async function carregarUsuarios() {
       const tr = el(`
         <tr>
           <td>${u.nome}</td>
+          <td>${u.usuario || '—'}</td>
           <td>${u.email}</td>
           <td>
             <select class="btn-linha" data-acao="papel" style="padding:5px">
@@ -1638,6 +1719,7 @@ document.getElementById('form-usuario').addEventListener('submit', async (ev) =>
   const dados = {
     nome: document.getElementById('usuario-nome-novo').value.trim(),
     email: document.getElementById('usuario-email-novo').value.trim(),
+    usuario: document.getElementById('usuario-usuario-novo').value.trim(),
     senha: document.getElementById('usuario-senha-novo').value,
     papel: document.getElementById('usuario-papel-novo').value,
   };
@@ -1750,7 +1832,8 @@ document.getElementById('btn-catraca-liberar').addEventListener('click', async (
     const rotuloLado = { ambos: 'Ambos os lados', entrada: 'Entrada', saida: 'Saída' }[lado] || '';
     // Nota: o hardware Henry usado aqui libera sempre nos dois lados por comando — o
     // "lado" escolhido acima fica registrado no histórico, mas não altera o comando físico.
-    if (!confirmar('Isso vai liberar a catraca fisicamente agora. Continuar?')) return;
+    // Sem confirmação de propósito: liberação manual é uma ação de uso frequente no dia a
+    // dia da recepção, e um "Continuar?" a cada clique só atrapalha o fluxo.
 
     if (indicarPessoa) {
       if (!alunoId) { mostrarToast('Selecione o aluno em "Indicar uma pessoa".', true); return; }
@@ -1820,7 +1903,7 @@ function trocarAbaRelatorio(nome) {
 
 async function carregarSecaoRelatorios() {
   await popularSelectAlunosComTodos(document.getElementById('rel-fin-aluno'));
-  await popularSelectAlunos(document.getElementById('rel-pessoal-aluno'));
+  await popularSelectAlunos(document.getElementById('rel-pessoal-aluno'), { comPlaceholder: true });
   const hoje = new Date().toISOString().slice(0, 10);
   if (!document.getElementById('rel-diario-data').value) document.getElementById('rel-diario-data').value = hoje;
   await buscarRelatorioFinanceiro();
@@ -1837,12 +1920,14 @@ async function buscarRelatorioFinanceiro() {
     const status = document.getElementById('rel-fin-status').value;
     const ordenarPor = document.getElementById('rel-fin-ordenar').value;
     const decrescente = document.getElementById('rel-fin-decrescente').checked;
+    const mostrarInativos = document.getElementById('rel-fin-mostrar-inativos').checked;
     if (vencDe) params.set('vencimento_de', vencDe);
     if (vencAte) params.set('vencimento_ate', vencAte);
     if (alunoId) params.set('aluno_id', alunoId);
     if (status) params.set('status', status);
     if (ordenarPor) params.set('ordenar_por', ordenarPor);
     if (decrescente) params.set('decrescente', 'true');
+    if (mostrarInativos) params.set('incluir_inativos', 'true');
 
     const contas = await api(`/api/pagamentos/cobrancas${params.toString() ? '?' + params.toString() : ''}`);
     const tbody = document.getElementById('rel-fin-lista');
@@ -1872,6 +1957,7 @@ async function buscarRelatorioFinanceiro() {
   } catch (err) { mostrarToast(err.message, true); }
 }
 document.getElementById('btn-rel-fin-buscar').addEventListener('click', buscarRelatorioFinanceiro);
+document.getElementById('rel-fin-mostrar-inativos').addEventListener('change', buscarRelatorioFinanceiro);
 
 // ---- Relatório: Acesso Diário (todos os acessos de um dia) ----
 async function buscarRelatorioAcessoDiario() {
@@ -1931,6 +2017,11 @@ async function buscarRelatorioAcessoPessoal() {
 }
 document.getElementById('btn-rel-pessoal-buscar').addEventListener('click', buscarRelatorioAcessoPessoal);
 document.getElementById('rel-pessoal-aluno').addEventListener('change', buscarRelatorioAcessoPessoal);
+document.getElementById('rel-pessoal-mostrar-inativos').addEventListener('change', async (ev) => {
+  const select = document.getElementById('rel-pessoal-aluno');
+  await popularSelectAlunos(select, { incluirInativos: ev.target.checked, comPlaceholder: true });
+  await buscarRelatorioAcessoPessoal();
+});
 
 // ---- Relatório: Último Acesso (um registro por aluno) ----
 async function buscarRelatorioUltimoAcesso() {
@@ -1939,9 +2030,11 @@ async function buscarRelatorioUltimoAcesso() {
     const de = document.getElementById('rel-ultimo-de').value;
     const ate = document.getElementById('rel-ultimo-ate').value;
     const busca = document.getElementById('rel-ultimo-busca').value.trim();
+    const mostrarInativos = document.getElementById('rel-ultimo-mostrar-inativos').checked;
     if (de) params.set('data_inicio', de);
     if (ate) params.set('data_fim', ate);
     if (busca) params.set('busca', busca);
+    if (mostrarInativos) params.set('incluir_inativos', 'true');
 
     const lista = await api(`/api/terminal/acessos/ultimo-por-aluno${params.toString() ? '?' + params.toString() : ''}`);
     const tbody = document.getElementById('rel-ultimo-lista');
@@ -1957,6 +2050,7 @@ async function buscarRelatorioUltimoAcesso() {
   } catch (err) { mostrarToast(err.message, true); }
 }
 document.getElementById('btn-rel-ultimo-buscar').addEventListener('click', buscarRelatorioUltimoAcesso);
+document.getElementById('rel-ultimo-mostrar-inativos').addEventListener('change', buscarRelatorioUltimoAcesso);
 
 // ---------------- Painel lateral "Acessos recentes" (persiste entre abas) ----------------
 // Reaproveita o mesmo endpoint /api/terminal/acessos usado na aba Catraca. O painel fica

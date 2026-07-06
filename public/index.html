@@ -104,13 +104,22 @@
           </div>
         </form>
 
-        <div style="margin-bottom:12px">
+        <div style="margin-bottom:12px;display:flex;gap:16px;align-items:center;flex-wrap:wrap">
           <input type="text" id="busca-aluno" placeholder="Buscar por nome ou ID..." style="max-width:340px;padding:9px 12px;border:1px solid #d0d5dd;border-radius:8px;font-size:14px" />
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#667085">
+            <input type="checkbox" id="mostrar-inativos-alunos" style="width:auto" /> Mostrar inativos
+          </label>
         </div>
 
         <table class="tabela">
           <thead>
-            <tr><th>Nome</th><th>Contato</th><th>Status</th><th>Ações</th></tr>
+            <tr>
+              <th class="th-ordenavel" data-sort="id" style="cursor:pointer;user-select:none">ID <span class="seta-ordenacao" data-seta="id"></span></th>
+              <th class="th-ordenavel" data-sort="nome" style="cursor:pointer;user-select:none">Nome <span class="seta-ordenacao" data-seta="nome"></span></th>
+              <th class="th-ordenavel" data-sort="contato" style="cursor:pointer;user-select:none">Contato <span class="seta-ordenacao" data-seta="contato"></span></th>
+              <th class="th-ordenavel" data-sort="status" style="cursor:pointer;user-select:none">Status <span class="seta-ordenacao" data-seta="status"></span></th>
+              <th>Ações</th>
+            </tr>
           </thead>
           <tbody id="lista-alunos"></tbody>
         </table>
@@ -461,6 +470,9 @@
             <label>Aluno</label>
             <select id="filtro-conta-aluno"><option value="">Todos os alunos</option></select>
           </div>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#667085;padding-bottom:9px">
+            <input type="checkbox" id="mostrar-inativos-contas" style="width:auto" /> Mostrar inativos
+          </label>
           <div style="flex:1;min-width:160px">
             <label>Status</label>
             <select id="filtro-conta-status">
@@ -583,6 +595,9 @@
             <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#667085;padding-bottom:9px">
               <input type="checkbox" id="rel-fin-decrescente" style="width:auto" /> Decrescente
             </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#667085;padding-bottom:9px">
+              <input type="checkbox" id="rel-fin-mostrar-inativos" style="width:auto" /> Mostrar inativos
+            </label>
             <button type="button" class="btn-primario" id="btn-rel-fin-buscar">Filtrar</button>
           </div>
 
@@ -618,6 +633,9 @@
               <label>Aluno *</label>
               <select id="rel-pessoal-aluno"><option value="">Selecione...</option></select>
             </div>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#667085;padding-bottom:9px">
+              <input type="checkbox" id="rel-pessoal-mostrar-inativos" style="width:auto" /> Mostrar inativos
+            </label>
             <div><label>Período de</label><input type="date" id="rel-pessoal-de" /></div>
             <div><label>até</label><input type="date" id="rel-pessoal-ate" /></div>
             <button type="button" class="btn-primario" id="btn-rel-pessoal-buscar">Filtrar</button>
@@ -637,6 +655,9 @@
               <label>Buscar por nome</label>
               <input type="text" id="rel-ultimo-busca" placeholder="Nome do aluno..." />
             </div>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#667085;padding-bottom:9px">
+              <input type="checkbox" id="rel-ultimo-mostrar-inativos" style="width:auto" /> Mostrar inativos
+            </label>
             <button type="button" class="btn-primario" id="btn-rel-ultimo-buscar">Filtrar</button>
           </div>
           <table class="tabela">
@@ -655,6 +676,7 @@
           <div class="grid-2">
             <div><label>Nome *</label><input id="usuario-nome-novo" required /></div>
             <div><label>E-mail *</label><input id="usuario-email-novo" type="email" required /></div>
+            <div><label>Usuário (login curto, opcional)</label><input id="usuario-usuario-novo" placeholder="ex: joao" minlength="3" /></div>
             <div><label>Senha *</label><input id="usuario-senha-novo" type="password" minlength="6" required /></div>
             <div>
               <label>Papel</label>
@@ -671,7 +693,7 @@
         </form>
 
         <table class="tabela">
-          <thead><tr><th>Nome</th><th>E-mail</th><th>Papel</th><th>Ações</th></tr></thead>
+          <thead><tr><th>Nome</th><th>Usuário</th><th>E-mail</th><th>Papel</th><th>Ações</th></tr></thead>
           <tbody id="lista-usuarios"></tbody>
         </table>
       </section>
@@ -696,6 +718,18 @@
             <button type="submit" class="btn-primario">Salvar</button>
           </div>
         </form>
+
+        <div class="form-painel">
+          <h3 style="margin-top:0">Ordem dos menus</h3>
+          <p style="margin-top:0;color:#667085;font-size:13px">
+            Use as setas para mudar a ordem dos itens na barra lateral. A ordem salva aqui vale para todos os
+            usuários do sistema.
+          </p>
+          <ul id="lista-ordem-menu" style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:6px;max-width:340px"></ul>
+          <div class="form-acoes">
+            <button type="button" class="btn-primario" id="btn-salvar-ordem-menu">Salvar ordem</button>
+          </div>
+        </div>
 
         <div class="form-painel">
           <h3 style="margin-top:0">Backup</h3>

@@ -11,6 +11,9 @@ router.use(autenticar, apenasAdmin);
 const usuarioSchema = z.object({
   nome: z.string().min(2),
   email: z.string().email(),
+  // Login curto opcional (ex.: "joao"), alternativo ao e-mail na tela de login.
+  // Aceita letras/números/ponto/hífen/underscore; vazio ou ausente vira null.
+  usuario: z.string().trim().min(3).max(50).regex(/^[a-zA-Z0-9._-]+$/, 'Use apenas letras, números, ponto, hífen ou underscore.').optional().or(z.literal('')),
   senha: z.string().min(6),
   papel: z.enum(['admin', 'professor', 'recepcao']).default('admin'),
 });
@@ -18,7 +21,7 @@ const usuarioSchema = z.object({
 // GET /api/usuarios — lista usuários do sistema (sem o hash da senha)
 router.get('/', async (req, res, next) => {
   try {
-    const result = await db.execute('SELECT id, nome, email, papel, criado_em FROM usuarios ORDER BY nome');
+    const result = await db.execute('SELECT id, nome, usuario, email, papel, criado_em FROM usuarios ORDER BY nome');
     res.json(result.rows);
   } catch (err) {
     next(err);
@@ -29,18 +32,24 @@ router.get('/', async (req, res, next) => {
 router.post('/', async (req, res, next) => {
   try {
     const dados = usuarioSchema.parse(req.body);
+    const usuarioLogin = dados.usuario ? dados.usuario : null;
 
-    const existente = await db.execute({ sql: 'SELECT id FROM usuarios WHERE email = ?', args: [dados.email] });
-    if (existente.rows[0]) return res.status(409).json({ erro: 'Já existe um usuário com este e-mail.' });
+    const existenteEmail = await db.execute({ sql: 'SELECT id FROM usuarios WHERE email = ?', args: [dados.email] });
+    if (existenteEmail.rows[0]) return res.status(409).json({ erro: 'Já existe um usuário com este e-mail.' });
+
+    if (usuarioLogin) {
+      const existenteUsuario = await db.execute({ sql: 'SELECT id FROM usuarios WHERE usuario = ?', args: [usuarioLogin] });
+      if (existenteUsuario.rows[0]) return res.status(409).json({ erro: 'Já existe um usuário com esse nome de login.' });
+    }
 
     const id = uuid();
     const senhaHash = await bcrypt.hash(dados.senha, 10);
     await db.execute({
-      sql: 'INSERT INTO usuarios (id, nome, email, senha_hash, papel) VALUES (?, ?, ?, ?, ?)',
-      args: [id, dados.nome, dados.email, senhaHash, dados.papel],
+      sql: 'INSERT INTO usuarios (id, nome, usuario, email, senha_hash, papel) VALUES (?, ?, ?, ?, ?, ?)',
+      args: [id, dados.nome, usuarioLogin, dados.email, senhaHash, dados.papel],
     });
 
-    res.status(201).json({ id, nome: dados.nome, email: dados.email, papel: dados.papel });
+    res.status(201).json({ id, nome: dados.nome, usuario: usuarioLogin, email: dados.email, papel: dados.papel });
   } catch (err) {
     next(err);
   }

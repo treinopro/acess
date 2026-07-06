@@ -131,9 +131,11 @@ async function possuiCobrancaEmAtraso(alunoId) {
 
 /**
  * Decide se o aluno pode entrar agora, com o motivo em caso negativo.
- * Checa tanto o status geral do cadastro quanto a existência de uma
- * matrícula ativa — cancelar/trancar a matrícula (sem mexer no status do
- * aluno) também deve bloquear o acesso pelo totem.
+ * Regra: o que bloqueia de verdade é o status do cadastro e a existência de
+ * cobrança em atraso — NÃO a falta de matrícula ativa. Um aluno sem nenhuma
+ * matrícula (ex.: ainda não vendeu plano, ou plano expirou) mas sem nenhuma
+ * conta em aberto continua liberado; só cancelar/trancar o cadastro ou ter
+ * mensalidade vencida é que bloqueia.
  */
 async function verificarAutorizacaoAluno(aluno) {
   if (!aluno) return { autorizado: false, motivo: 'Aluno não encontrado.' };
@@ -144,9 +146,6 @@ async function verificarAutorizacaoAluno(aluno) {
 
   const emAtraso = await possuiCobrancaEmAtraso(aluno.id);
   if (emAtraso) return { autorizado: false, motivo: 'Existem mensalidades em atraso.' };
-
-  const possuiMatriculaAtiva = await temMatriculaAtiva(aluno.id);
-  if (!possuiMatriculaAtiva) return { autorizado: false, motivo: 'Nenhuma matrícula ativa (verifique se foi cancelada/trancada).' };
 
   return { autorizado: true, motivo: null };
 }

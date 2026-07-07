@@ -4,6 +4,12 @@ const db = require('../db/client');
 // Tipos de plano que geram cobrança recorrente automaticamente. "avulso" e
 // "pacote_aulas" são pagamentos únicos e não entram nesse ciclo.
 const TIPOS_RECORRENTES = ['mensal', 'trimestral', 'semestral', 'anual'];
+// Duração de cada ciclo em MESES (não em dias fixos). Usar dias fixos (ex: 30
+// para "mensal") faz o vencimento "arrastar" 1 dia a cada ciclo em meses de 31
+// dias, gerando cobranças fantasma fora do padrão real (dia 10 ou 20) — foi
+// exatamente esse bug que causou duplicação de mensalidade em produção (ver
+// scripts/corrigir-recorrencia.js). Meses de calendário não têm esse problema.
+const MESES_POR_TIPO = { mensal: 1, trimestral: 3, semestral: 6, anual: 12 };
 
 function ehRecorrente(tipoPlano) {
   return TIPOS_RECORRENTES.includes(tipoPlano);
@@ -13,6 +19,28 @@ function somarDias(dataISO, dias) {
   const data = new Date(`${dataISO}T00:00:00`);
   data.setDate(data.getDate() + dias);
   return data.toISOString().slice(0, 10);
+}
+
+// Dia-alvo de vencimento: matrícula que começou entre os dias 1-15 cobra
+// sempre no dia 10; começando de 16 em diante, cobra no dia 20. Mesma regra
+// usada no diagnóstico/correção da duplicação de cobranças.
+function diaVencimentoPadrao(dataISO) {
+  const dia = Number(dataISO.slice(8, 10));
+  return dia <= 15 ? 10 : 20;
+}
+
+// Soma em MESES de calendário (não em dias fixos) e alinha no dia-alvo,
+// truncando se o mês de destino for mais curto que o dia-alvo.
+function somarMesesComDiaAlvo(dataISO, meses, diaAlvo) {
+  const [ano, mes] = dataISO.split('-').map(Number);
+  const totalMeses = (mes - 1) + meses;
+  const novoAno = ano + Math.floor(totalMeses / 12);
+  const novoMesIndex = totalMeses % 12;
+  const ultimoDiaDoMes = new Date(novoAno, novoMesIndex + 1, 0).getDate();
+  const dia = Math.min(diaAlvo, ultimoDiaDoMes);
+  const mm = String(novoMesIndex + 1).padStart(2, '0');
+  const dd = String(dia).padStart(2, '0');
+  return `${novoAno}-${mm}-${dd}`;
 }
 
 // Cria a cobrança referente a um ciclo (mensalidade) de uma matrícula.
@@ -43,17 +71,21 @@ async function gerarCobrancasRecorrentes() {
   let geradas = 0;
 
   for (const matricula of matriculas.rows) {
-    if (!ehRecorrente(matricula.plano_tipo) || !matricula.duracao_dias) continue;
+    if (!ehRecorrente(matricula.plano_tipo)) continue;
 
     // Data do próximo vencimento: com base na última cobrança gerada para esta
-    // matrícula, ou na data de início se ainda não existe nenhuma.
+    // matrícula, ou na data de início se ainda não existe nenhuma. Soma em
+    // MESES (não em dias fixos) e alinha no dia-alvo (10 ou 20) da matrícula —
+    // ver comentário de MESES_POR_TIPO acima sobre por que dias fixos causam
+    // cobrança fantasma.
     const ultimaCobranca = await db.execute({
       sql: `SELECT vencimento FROM cobrancas WHERE matricula_id = ? ORDER BY vencimento DESC LIMIT 1`,
       args: [matricula.id],
     });
 
+    const diaAlvo = diaVencimentoPadrao(matricula.data_inicio);
     const proximoVencimento = ultimaCobranca.rows[0]
-      ? somarDias(ultimaCobranca.rows[0].vencimento, matricula.duracao_dias)
+      ? somarMesesComDiaAlvo(ultimaCobranca.rows[0].vencimento, MESES_POR_TIPO[matricula.plano_tipo], diaAlvo)
       : matricula.data_inicio;
 
     // Só gera quando o ciclo já venceu ou vence em até 3 dias (evita gerar

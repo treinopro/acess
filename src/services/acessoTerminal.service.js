@@ -108,9 +108,14 @@ async function temMatriculaAtiva(alunoId) {
 }
 
 /**
- * Verifica se o aluno tem cobrança em aberto de verdade — ou seja, mensalidade
- * pendente vencida ou já marcada como atrasada — independente do campo
- * alunos.status (que é só um rótulo manual e pode estar desatualizado).
+ * Verifica se o aluno tem MENSALIDADE em aberto de verdade — ou seja, cobrança
+ * vinculada a uma matrícula de plano (matricula_id preenchido), pendente e
+ * vencida, ou já marcada como atrasada — independente do campo alunos.status
+ * (que é só um rótulo manual e pode estar desatualizado).
+ *
+ * Só cobrança de mensalidade bloqueia o acesso. Uma conta avulsa (produto,
+ * avaliação, taxa) criada manualmente sem vínculo de matrícula — mesmo vencida
+ * — NÃO bloqueia: o aluno pode dever por um produto e continuar treinando.
  *
  * status = 'atrasado' sempre bloqueia, mesmo sem vencimento preenchido (o
  * campo é opcional). status = 'pendente' só bloqueia se o vencimento já
@@ -120,7 +125,7 @@ async function temMatriculaAtiva(alunoId) {
 async function possuiCobrancaEmAtraso(alunoId) {
   const result = await db.execute({
     sql: `SELECT COUNT(*) as total FROM cobrancas
-          WHERE aluno_id = ? AND (
+          WHERE aluno_id = ? AND matricula_id IS NOT NULL AND (
             status = 'atrasado'
             OR (status = 'pendente' AND vencimento IS NOT NULL AND vencimento < date('now'))
           )`,

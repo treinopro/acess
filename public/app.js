@@ -364,7 +364,8 @@ document.getElementById('btn-voltar-alunos').addEventListener('click', voltarPar
 // "id" ordena por data de criação de verdade (o id é um UUID, não sequencial) —
 // primeiro clique mostra do mais recente ao mais antigo, como pedido.
 const DIRECAO_INICIAL_COLUNA_ALUNOS = { id: 'desc', nome: 'asc', contato: 'asc', status: 'asc' };
-let ordenacaoAlunos = { campo: null, direcao: 'asc' };
+// Padrão da tela: mais recente cadastrado primeiro (mesma regra do clique na coluna ID).
+let ordenacaoAlunos = { campo: 'id', direcao: 'desc' };
 
 function alternarOrdenacaoAlunos(campo) {
   if (ordenacaoAlunos.campo === campo) {

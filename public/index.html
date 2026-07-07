@@ -284,7 +284,7 @@
             </div>
           </form>
           <table class="tabela">
-            <thead><tr><th>Plano</th><th>Início</th><th>Fim</th><th>Status</th></tr></thead>
+            <thead><tr><th>Plano</th><th>Início</th><th>Fim</th><th>Status</th><th>Ações</th></tr></thead>
             <tbody id="perfil-lista-matriculas"></tbody>
           </table>
         </div>
@@ -311,6 +311,12 @@
 
           <form id="form-conta-perfil" class="form-painel oculto">
             <div class="grid-2">
+              <div>
+                <label>Plano</label>
+                <select id="conta-perfil-plano">
+                  <option value="">Personalizado (digitar descrição/valor)</option>
+                </select>
+              </div>
               <div><label>Descrição</label><input id="conta-perfil-descricao" value="Mensalidade" /></div>
               <div><label>Valor (R$) *</label><input id="conta-perfil-valor" type="number" step="0.01" required /></div>
               <div><label>Vencimento</label><input id="conta-perfil-vencimento" type="date" /></div>
@@ -662,6 +668,12 @@
             <div>
               <label>Aluno *</label>
               <select id="conta-aluno" required></select>
+            </div>
+            <div>
+              <label>Plano</label>
+              <select id="conta-plano">
+                <option value="">Personalizado (digitar descrição/valor)</option>
+              </select>
             </div>
             <div><label>Descrição</label><input id="conta-descricao" value="Mensalidade" /></div>
             <div><label>Valor (R$) *</label><input id="conta-valor" type="number" step="0.01" required /></div>

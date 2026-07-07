@@ -181,10 +181,10 @@ CREATE TABLE IF NOT EXISTS pagamentos_cobranca (
 -- Pagamento agregado de contas em atraso feito pelo totem (consulta por CPF):
 -- uma única transação Pix pode quitar VÁRIAS cobranças ao mesmo tempo (ex:
 -- aluno com 2 mensalidades vencidas paga tudo de uma vez). cobranca_ids guarda
--- o array JSON dos IDs das cobrancas cobertas por este pagamento; quando o
+-- o array JSON dos IDs das cobrancas cobertas por este pagamento, e quando o
 -- provedor confirma, cada cobranca listada é marcada como paga (ver
 -- terminal.routes.js). liberar_acesso indica se, ao confirmar, deve tentar
--- abrir a catraca também (true no totem físico; false num futuro portal
+-- abrir a catraca também (true no totem físico, false num futuro portal
 -- remoto, que nunca deve liberar catraca).
 CREATE TABLE IF NOT EXISTS pagamentos_totem (
   id TEXT PRIMARY KEY,

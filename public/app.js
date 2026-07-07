@@ -764,15 +764,30 @@ async function carregarPerfilAluno() {
       tbodyAval.appendChild(tr);
     });
 
-    document.getElementById('perfil-lista-matriculas').innerHTML = matriculas.length
-      ? matriculas.map((m) => `
+    const tbodyMatriculas = document.getElementById('perfil-lista-matriculas');
+    tbodyMatriculas.innerHTML = matriculas.length ? '' : '<tr><td colspan="5">Nenhuma matrícula.</td></tr>';
+    matriculas.forEach((m) => {
+      const tr = el(`
         <tr>
           <td>${m.plano_nome}</td>
           <td>${m.data_inicio}</td>
           <td>${m.data_fim || '—'}</td>
           <td><span class="badge ${m.status}">${m.status}</span></td>
-        </tr>`).join('')
-      : '<tr><td colspan="4">Nenhuma matrícula.</td></tr>';
+          <td>${m.status === 'ativa' ? '<button class="btn-linha perigo" data-acao="cancelar-matricula">Cancelar</button>' : '—'}</td>
+        </tr>`);
+      const botaoCancelar = tr.querySelector('[data-acao="cancelar-matricula"]');
+      if (botaoCancelar) {
+        botaoCancelar.addEventListener('click', async () => {
+          if (!confirmar(`Cancelar a matrícula de "${aluno.nome}" no plano "${m.plano_nome}"? Isso interrompe a geração automática das próximas mensalidades.`)) return;
+          try {
+            await api(`/api/planos/matriculas/${m.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'cancelada' }) });
+            mostrarToast('Matrícula cancelada.');
+            carregarPerfilAluno();
+          } catch (err) { mostrarToast(err.message, true); }
+        });
+      }
+      tbodyMatriculas.appendChild(tr);
+    });
 
     await popularSelectPlanosDoPerfil();
     if (!document.getElementById('perfil-matricula-data').value) {
@@ -1049,6 +1064,7 @@ async function carregarFinanceiroPerfil() {
 
 document.getElementById('btn-toggle-conta-perfil').addEventListener('click', () => {
   document.getElementById('form-conta-perfil').classList.toggle('oculto');
+  popularSelectPlanoParaConta(document.getElementById('conta-perfil-plano'));
 });
 document.getElementById('btn-cancelar-conta-perfil').addEventListener('click', () => {
   document.getElementById('form-conta-perfil').classList.add('oculto');
@@ -1375,6 +1391,33 @@ document.getElementById('plano-desconto-tipo').addEventListener('change', atuali
 function popularSelectPlanos(select, planos) {
   select.innerHTML = planos.map((p) => `<option value="${p.id}">${p.nome} (${formatarMoeda(p.valor_centavos)})</option>`).join('');
 }
+
+// ---------------- Selecionar um plano existente ao incluir conta manual ----------------
+// Em vez de digitar a descrição/valor de cabeça, o admin pode escolher um dos
+// planos cadastrados (ex: "Musculação") e a descrição/valor já vêm preenchidos
+// — "Personalizado" continua disponível pra contas avulsas sem plano.
+
+async function popularSelectPlanoParaConta(select) {
+  try {
+    const planos = await api('/api/planos');
+    select.innerHTML = '<option value="">Personalizado (digitar descrição/valor)</option>'
+      + planos.map((p) => `<option value="${p.id}" data-nome="${p.nome}" data-valor="${p.valor_centavos}">${p.nome} (${formatarMoeda(p.valor_centavos)})</option>`).join('');
+  } catch (err) { mostrarToast(err.message, true); }
+}
+
+function aplicarPlanoNaConta(select, descricaoInput, valorInput) {
+  const opt = select.selectedOptions[0];
+  if (!select.value || !opt) return; // "Personalizado" — não mexe no que já foi digitado
+  descricaoInput.value = `Mensalidade - ${opt.dataset.nome}`;
+  valorInput.value = (Number(opt.dataset.valor) / 100).toFixed(2);
+}
+
+document.getElementById('conta-plano').addEventListener('change', (ev) => {
+  aplicarPlanoNaConta(ev.target, document.getElementById('conta-descricao'), document.getElementById('conta-valor'));
+});
+document.getElementById('conta-perfil-plano').addEventListener('change', (ev) => {
+  aplicarPlanoNaConta(ev.target, document.getElementById('conta-perfil-descricao'), document.getElementById('conta-perfil-valor'));
+});
 
 // ---------------- Matricular em um plano direto pela aba Matrículas do perfil ----------------
 
@@ -1919,6 +1962,7 @@ document.getElementById('busca-conta-nome').addEventListener('input', () => {
 document.getElementById('btn-toggle-conta-manual').addEventListener('click', () => {
   document.getElementById('form-conta-manual').classList.toggle('oculto');
   document.getElementById('form-cobranca').classList.add('oculto');
+  popularSelectPlanoParaConta(document.getElementById('conta-plano'));
 });
 document.getElementById('btn-toggle-cobranca').addEventListener('click', () => {
   document.getElementById('form-cobranca').classList.toggle('oculto');

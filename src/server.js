@@ -21,10 +21,33 @@ const { rodar: rodarBackup } = require('./jobs/backup');
 const agenteGateway = require('./services/agenteGateway.service');
 
 const app = express();
+app.disable('x-powered-by'); // não anuncia "Express" na resposta (mesmo efeito de helmet.hidePoweredBy)
 
-app.use(cors());
+// CORS restrito: só entra em jogo se CORS_ORIGIN estiver configurado (lista
+// separada por vírgula). O painel/portal/totem são servidos por este mesmo
+// servidor (express.static abaixo) — ou seja, são requisições same-origin, que
+// não passam por CORS de jeito nenhum. Isso só é necessário se, no futuro,
+// algum front-end rodar num domínio diferente deste backend.
+const origensPermitidas = (process.env.CORS_ORIGIN || '').split(',').map((o) => o.trim()).filter(Boolean);
+app.use(cors(origensPermitidas.length ? { origin: origensPermitidas } : {}));
+
+// Headers de segurança básicos (equivalentes ao pacote `helmet`, escrito à mão
+// aqui por não haver acesso a instalação de pacotes npm neste ambiente).
+// Deliberadamente SEM Content-Security-Policy: o painel/totem/portal usam
+// bastante estilo inline (style="...") nas páginas .html, e uma CSP mal
+// calibrada quebraria a renderização deles — vale revisitar isso numa
+// passada dedicada, com testes visuais de cada tela, em vez de arriscar
+// agora.
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
+  next();
+});
+
 app.use(morgan('dev'));
-app.use(express.json());
+app.use(express.json({ limit: '1mb' })); // limite de tamanho do corpo (mitiga payloads gigantes)
 
 // Painel administrativo (frontend estático simples) - acessível em "/"
 app.use(express.static(path.join(__dirname, '..', 'public')));

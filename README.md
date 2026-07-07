@@ -1,6 +1,6 @@
 # Academia Gestão — MVP
 
-API de gestão de alunos para academias e estúdios: cadastro de alunos, planos/matrículas, agendamento de aulas com check-in, e cobrança recorrente (Mercado Pago / InfinitePay).
+API de gestão de alunos para academias e estúdios: cadastro de alunos, planos/matrículas, agendamento de aulas com check-in, e cobrança recorrente (Mercado Pago).
 
 Stack: Node.js + Express + libSQL (SQLite local ou Turso na nuvem).
 
@@ -74,21 +74,15 @@ Opção B — manual: New > Web Service, conectar o repo, build command `npm ins
 
 ## 5. Integração de pagamentos
 
-O provedor ativo é controlado por `PAYMENT_PROVIDER` no `.env` (`mercadopago` ou `infinitepay`). Os dois podem coexistir — a rota `POST /api/pagamentos/cobrar` aceita `provedor` por requisição.
+Mercado Pago é o único provedor de pagamento suportado (a integração com a InfinitePay foi removida em 2026-07-07 — o webhook dela confiava cegamente no corpo da requisição pra marcar cobranças como pagas, sem nenhuma verificação, permitindo fraude; ver `analise-seguranca-academia-gestao.md`).
 
 ### Mercado Pago
 
 1. Crie uma aplicação em [mercadopago.com.br/developers](https://www.mercadopago.com.br/developers/pt/docs/checkout-pro/overview) e gere um Access Token.
 2. Preencha `MERCADOPAGO_ACCESS_TOKEN` no `.env`.
 3. Configure a URL de webhook no painel do Mercado Pago apontando para `https://seu-dominio/api/pagamentos/webhook/mercadopago`.
-4. Para cobrança recorrente de verdade (assinaturas), veja [docs de Assinaturas](https://www.mercadopago.com.br/developers/pt/docs/subscriptions/overview) — o scaffold atual usa Checkout Pro (cobrança avulsa por link); o módulo em `src/services/payment/mercadopago.service.js` é o ponto de extensão para trocar por `preapproval` (assinaturas).
-
-### InfinitePay (InfinityPay)
-
-1. Pegue sua InfiniteTag (handle) no app/dashboard da InfinitePay.
-2. Preencha `INFINITEPAY_HANDLE` no `.env` (sem o `$`).
-3. Defina `INFINITEPAY_WEBHOOK_URL` apontando para `https://seu-dominio/api/pagamentos/webhook/infinitepay`.
-4. Documentação oficial: [infinitepay.io/checkout-documentacao](https://www.infinitepay.io/checkout-documentacao).
+4. Copie a "Assinatura secreta" desse mesmo painel de webhooks e preencha `MERCADOPAGO_WEBHOOK_SECRET` no `.env` — sem isso, o servidor ainda processa o webhook (com um aviso no log), mas sem validar que a notificação realmente veio do Mercado Pago.
+5. Para cobrança recorrente de verdade (assinaturas), veja [docs de Assinaturas](https://www.mercadopago.com.br/developers/pt/docs/subscriptions/overview) — o scaffold atual usa Checkout Pro (cobrança avulsa por link); o módulo em `src/services/payment/mercadopago.service.js` é o ponto de extensão para trocar por `preapproval` (assinaturas).
 
 ## 6. Endpoints principais
 
@@ -112,10 +106,9 @@ O provedor ativo é controlado por `PAYMENT_PROVIDER` no `.env` (`mercadopago` o
 | GET/POST | `/api/agendamentos/turmas` | Turmas/horários |
 | GET/POST | `/api/agendamentos` | Lista/marca aula (respeita capacidade máxima) |
 | POST | `/api/agendamentos/checkin` | Check-in (QR code, catraca, app, manual) |
-| POST | `/api/pagamentos/cobrar` | Gera cobrança + link de pagamento (Mercado Pago/InfinitePay) |
+| POST | `/api/pagamentos/cobrar` | Gera cobrança + link de pagamento (Mercado Pago) |
 | GET/POST/PUT/DELETE | `/api/pagamentos/cobrancas` | Contas a receber: busca por aluno/status, cadastro manual, edição, exclusão |
-| POST | `/api/pagamentos/webhook/mercadopago` | Webhook Mercado Pago |
-| POST | `/api/pagamentos/webhook/infinitepay` | Webhook InfinitePay |
+| POST | `/api/pagamentos/webhook/mercadopago` | Webhook Mercado Pago (valida assinatura via `MERCADOPAGO_WEBHOOK_SECRET`, quando configurado) |
 | GET/POST/PATCH/DELETE | `/api/usuarios` | Gestão de usuários do sistema (somente admin) |
 
 Todas as rotas exceto `/health`, `/api/auth/login` e os webhooks exigem header `Authorization: Bearer <token>`. As rotas de `/api/usuarios` exigem, além disso, que o usuário logado tenha `papel = admin`.
@@ -172,13 +165,14 @@ Rotas relevantes (somente admin), em `src/routes/terminal.routes.js`:
 
 ## 10. Totem de auto atendimento (`/terminal.html`)
 
-Tela de identificação para o aluno liberar sua própria entrada, pensada para rodar num tablet/PC ao lado da catraca. Cobre os 4 métodos de identificação já implementados para alunos **existentes**: CPF, QR pessoal lido da tela do celular, reconhecimento facial recorrente, e biometria própria da catraca (ver abaixo). Auto cadastro + pagamento de aluno novo direto pelo totem ainda **não** foi implementado (fica como próxima fase — hoje o totem mostra um aviso "em construção" e direciona para a recepção).
+Tela de identificação para o aluno liberar sua própria entrada, pensada para rodar num tablet/PC ao lado da catraca. Cobre os 4 métodos de identificação já implementados para alunos **existentes**: CPF, QR pessoal lido da tela do celular, reconhecimento facial recorrente, e biometria própria da catraca (ver abaixo). Também cobre auto-cadastro de aluno **novo** (dados + plano + pagamento Pix), com duas opções ao clicar em "Quero me cadastrar": **"Pagar aqui"** (preenche tudo na tela do próprio totem) ou **"Usar seu cel"** (mostra um QR que abre `/cadastro-mobile.html` — o mesmo fluxo, rodando direto no navegador do celular do aluno, sem ocupar o totem físico).
 
 ### Como configurar
 
 1. Defina `TERMINAL_TOKEN` no `.env` do servidor (uma string longa aleatória — é o segredo que autentica o totem, já que o aluno não faz login).
 2. Abra `public/terminal.js` e troque a constante `TERMINAL_TOKEN` no topo do arquivo pelo **mesmo valor**. Esse token fica visível a quem inspecionar o código do totem — por isso o dispositivo precisa ficar fisicamente controlado (ao lado da catraca, sem acesso público ao teclado/console).
-3. Acesse `http://<servidor>:3000/terminal.html` no dispositivo do totem.
+3. Defina também `CADASTRO_PUBLICO_TOKEN` no `.env` (outra string longa aleatória, **diferente** da de `TERMINAL_TOKEN`) e troque a constante equivalente no topo de `public/cadastro-mobile.js`. Esse segredo é o que autentica a página de auto-cadastro pelo celular (opção "Usar seu cel") — como ela é entregue via QR a qualquer visitante (não fica só no totem físico), usa um token à parte, mais restrito: só autoriza as rotas de auto-cadastro, nunca abre a catraca nem expõe dados de outro aluno.
+4. Acesse `http://<servidor>:3000/terminal.html` no dispositivo do totem.
 
 ### Métodos de identificação (aluno já cadastrado)
 

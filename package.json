@@ -14,7 +14,8 @@
     "seed": "node src/db/seed.js",
     "gerar-cobrancas": "node src/jobs/recorrencia.js",
     "backup": "node src/jobs/backup.js",
-    "migrar-secullum": "node scripts/migrar-secullum.js"
+    "migrar-secullum": "node scripts/migrar-secullum.js",
+    "trocar-senha-admin": "node scripts/trocar-senha-admin.js"
   },
   "dependencies": {
     "@libsql/client": "^0.14.0",

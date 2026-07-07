@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const { z } = require('zod');
 const db = require('../db/client');
 const { assinarToken } = require('../utils/jwt');
+const { criarLimitador } = require('../middleware/rateLimit');
 
 const router = express.Router();
 
@@ -11,8 +12,18 @@ const loginSchema = z.object({
   senha: z.string().min(6),
 });
 
+// Trava tentativas de login: 10 por 15 minutos, contadas por IP + identificador
+// (assim um IP compartilhado — ex: rede da academia — não bloqueia login de
+// contas diferentes por causa de uma tentativa errada numa delas).
+const loginLimiter = criarLimitador({
+  janelaMs: 15 * 60 * 1000,
+  maximo: 10,
+  mensagem: 'Muitas tentativas de login. Aguarde 15 minutos e tente novamente.',
+  chavePor: (req) => `${req.ip}:${req.body?.identificador || ''}`,
+});
+
 // POST /api/auth/login
-router.post('/login', async (req, res, next) => {
+router.post('/login', loginLimiter, async (req, res, next) => {
   try {
     const { identificador, senha } = loginSchema.parse(req.body);
 

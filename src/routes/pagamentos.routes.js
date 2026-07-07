@@ -1,17 +1,28 @@
 const express = require('express');
+const crypto = require('crypto');
 const { v4: uuid } = require('uuid');
 const { z } = require('zod');
 const db = require('../db/client');
 const { autenticar, apenasAdmin } = require('../middleware/auth');
 const mercadopago = require('../services/payment/mercadopago.service');
-const infinitepay = require('../services/payment/infinitepay.service');
 const { gerarCobrancasRecorrentes } = require('../services/cobrancas.service');
+const { criarLimitador } = require('../middleware/rateLimit');
 
 const router = express.Router();
 
-// POST /api/pagamentos/cobrar  { aluno_id, matricula_id, valor_centavos, provedor }
-// Cria a cobrança no banco e gera o link de pagamento no provedor escolhido
-// (ou no provedor padrão definido em PAYMENT_PROVIDER).
+// Generoso o bastante pra não interferir com notificações legítimas do
+// Mercado Pago (que pode reenviar em caso de falha), mas evita que o endpoint
+// vire um jeito barato de forçar o servidor a fazer chamadas repetidas pra
+// API do Mercado Pago (consultarPagamento) com IDs arbitrários.
+const limitadorWebhook = criarLimitador({
+  janelaMs: 5 * 60 * 1000,
+  maximo: 120,
+  mensagem: 'Muitas requisições.',
+});
+
+// POST /api/pagamentos/cobrar  { aluno_id, matricula_id, valor_centavos }
+// Cria a cobrança no banco e gera o link de pagamento no Mercado Pago (único
+// provedor suportado — InfinitePay foi removido).
 router.post('/cobrar', autenticar, async (req, res, next) => {
   try {
     const schema = z.object({
@@ -20,30 +31,18 @@ router.post('/cobrar', autenticar, async (req, res, next) => {
       valor_centavos: z.number().int().positive(),
       descricao: z.string().default('Mensalidade'),
       vencimento: z.string().optional().nullable(),
-      provedor: z.enum(['mercadopago', 'infinitepay']).optional(),
     });
     const dados = schema.parse(req.body);
-    const provedor = dados.provedor || process.env.PAYMENT_PROVIDER || 'mercadopago';
+    const provedor = 'mercadopago';
     const id = uuid();
 
-    let linkPagamento;
-    if (provedor === 'mercadopago') {
-      const pref = await mercadopago.criarPreferencia({
-        titulo: dados.descricao,
-        valorCentavos: dados.valor_centavos,
-        referenciaExterna: id,
-        urlRetorno: process.env.APP_URL || 'http://localhost:3000',
-      });
-      linkPagamento = pref.init_point;
-    } else {
-      const link = await infinitepay.criarLinkPagamento({
-        descricao: dados.descricao,
-        valorCentavos: dados.valor_centavos,
-        orderNsu: id,
-        redirectUrl: process.env.APP_URL || 'http://localhost:3000',
-      });
-      linkPagamento = link.url || link.checkout_url;
-    }
+    const pref = await mercadopago.criarPreferencia({
+      titulo: dados.descricao,
+      valorCentavos: dados.valor_centavos,
+      referenciaExterna: id,
+      urlRetorno: process.env.APP_URL || 'http://localhost:3000',
+    });
+    const linkPagamento = pref.init_point;
 
     await db.execute({
       sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, provedor, provedor_referencia, descricao, vencimento)
@@ -471,10 +470,62 @@ router.post('/cobrancas/parceladas', autenticar, async (req, res, next) => {
   }
 });
 
+// Verifica a assinatura HMAC que o Mercado Pago envia no header "x-signature"
+// (docs: https://www.mercadopago.com.br/developers/pt/docs/subscriptions/additional-content/your-integrations/notifications/webhooks).
+// Sem isso, qualquer requisição externa consegue forçar o servidor a fazer uma
+// consulta de pagamento pra um ID arbitrário — baixo impacto isolado (o status
+// só é gravado se a API do Mercado Pago confirmar 'approved' pra aquele ID),
+// mas é a defesa recomendada pela própria documentação, então fecha o vetor.
+//
+// Se MERCADOPAGO_WEBHOOK_SECRET não estiver configurado (.env / painel do
+// Mercado Pago -> Webhooks -> "Assinatura secreta"), a verificação é pulada
+// com um aviso no log em vez de derrubar o webhook — assim o pagamento
+// continua funcionando normalmente até o segredo ser configurado.
+function verificarAssinaturaMercadoPago(req) {
+  const secret = process.env.MERCADOPAGO_WEBHOOK_SECRET;
+  if (!secret) {
+    return { valido: true, aviso: 'MERCADOPAGO_WEBHOOK_SECRET não configurado — assinatura do webhook NÃO está sendo verificada.' };
+  }
+
+  const assinatura = req.headers['x-signature'];
+  const requestId = req.headers['x-request-id'];
+  const dataId = req.query['data.id'] || req.body?.data?.id;
+  if (!assinatura || !dataId) {
+    return { valido: false, aviso: 'Header x-signature ou data.id ausente.' };
+  }
+
+  const partes = {};
+  for (const par of String(assinatura).split(',')) {
+    const [chave, valor] = par.split('=').map((s) => (s || '').trim());
+    if (chave) partes[chave] = valor;
+  }
+  const { ts, v1: v1Recebido } = partes;
+  if (!ts || !v1Recebido) {
+    return { valido: false, aviso: 'Formato de x-signature inesperado (esperado "ts=...,v1=...").' };
+  }
+
+  // Mercado Pago pede o id em minúsculas quando ele é alfanumérico.
+  const idParaManifest = /^[a-zA-Z0-9]+$/.test(String(dataId)) ? String(dataId).toLowerCase() : String(dataId);
+  const manifest = `id:${idParaManifest};${requestId ? `request-id:${requestId};` : ''}ts:${ts};`;
+  const hashCalculado = crypto.createHmac('sha256', secret).update(manifest).digest('hex');
+
+  const bufCalculado = Buffer.from(hashCalculado);
+  const bufRecebido = Buffer.from(String(v1Recebido));
+  const valido = bufCalculado.length === bufRecebido.length && crypto.timingSafeEqual(bufCalculado, bufRecebido);
+  return { valido, aviso: valido ? null : 'Assinatura do webhook inválida — requisição rejeitada.' };
+}
+
 // Webhook do Mercado Pago (configurar a URL no painel do app / preferência)
 // Docs: https://www.mercadopago.com.br/developers/pt/docs/subscriptions/additional-content/your-integrations/notifications/webhooks
-router.post('/webhook/mercadopago', express.json(), async (req, res, next) => {
+router.post('/webhook/mercadopago', limitadorWebhook, express.json(), async (req, res, next) => {
   try {
+    const { valido, aviso } = verificarAssinaturaMercadoPago(req);
+    if (!valido) {
+      console.warn('[webhook/mercadopago] rejeitado:', aviso);
+      return res.sendStatus(401);
+    }
+    if (aviso) console.warn('[webhook/mercadopago]', aviso);
+
     const { type, data } = req.body;
     if (type === 'payment' && data?.id) {
       const pagamento = await mercadopago.consultarPagamento(data.id);
@@ -491,25 +542,6 @@ router.post('/webhook/mercadopago', express.json(), async (req, res, next) => {
     res.sendStatus(200); // Mercado Pago espera 200 rapidamente
   } catch (err) {
     next(err);
-  }
-});
-
-// Webhook da InfinitePay (configurar via INFINITEPAY_WEBHOOK_URL)
-// Docs: https://www.infinitepay.io/checkout-documentacao
-router.post('/webhook/infinitepay', express.json(), async (req, res, next) => {
-  try {
-    const { order_nsu, paid_amount, capture_method } = req.body;
-
-    if (order_nsu) {
-      await db.execute({
-        sql: `UPDATE cobrancas SET status = 'pago', metodo_pagamento = ?, pago_em = datetime('now')
-              WHERE id = ?`,
-        args: [capture_method || null, order_nsu],
-      });
-    }
-    res.sendStatus(200); // responder rápido evita reenvio pela InfinitePay
-  } catch (err) {
-    res.sendStatus(400); // InfinitePay reenvia o webhook em caso de erro 400
   }
 });
 

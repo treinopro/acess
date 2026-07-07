@@ -1,12 +1,12 @@
 const express = require('express');
 const { v4: uuid } = require('uuid');
 const { z } = require('zod');
-const { autenticar, apenasAdmin, autenticarTerminal } = require('../middleware/auth');
+const { autenticar, apenasAdmin, autenticarTerminal, autenticarTerminalOuCadastroPublico } = require('../middleware/auth');
 const catracaGateway = require('../services/catracaGateway.service');
 const acessoTerminal = require('../services/acessoTerminal.service');
 const mercadopago = require('../services/payment/mercadopago.service');
-const infinitepay = require('../services/payment/infinitepay.service');
 const pagamentoContas = require('../services/pagamentoContas.service');
+const { criarLimitador } = require('../middleware/rateLimit');
 const db = require('../db/client');
 
 const router = express.Router();
@@ -41,9 +41,31 @@ const terminal = express.Router();
 // abaixo (ex.: /catraca/testar). Com o middleware por rota, uma requisição
 // para um caminho que não existe neste router simplesmente não bate em nada
 // aqui e segue adiante normalmente.
+//
+// Rate limiting: mesmo autenticado por token, o TERMINAL_TOKEN hoje fica
+// visível a quem inspecionar o front-end do totem — os limites abaixo são
+// generosos o bastante pro fluxo normal de uma academia, mas travam
+// automação/scripts caso um token vaze.
+const limitadorIdentificacao = criarLimitador({
+  janelaMs: 5 * 60 * 1000, maximo: 60,
+  mensagem: 'Muitas tentativas de identificação. Aguarde alguns minutos.',
+});
+const limitadorVinculacao = criarLimitador({
+  janelaMs: 60 * 60 * 1000, maximo: 5,
+  mensagem: 'Muitas tentativas para este CPF. Procure a recepção se o problema persistir.',
+  chavePor: (req) => `${req.ip}:${req.body?.cpf || req.query?.cpf || ''}`,
+});
+const limitadorCadastro = criarLimitador({
+  janelaMs: 60 * 60 * 1000, maximo: 15,
+  mensagem: 'Muitas tentativas de cadastro a partir deste endereço. Aguarde um pouco.',
+});
+const limitadorContas = criarLimitador({
+  janelaMs: 15 * 60 * 1000, maximo: 20,
+  mensagem: 'Muitas requisições. Aguarde alguns minutos.',
+});
 
 // POST /api/terminal/acesso/cpf { cpf }
-terminal.post('/acesso/cpf', autenticarTerminal, async (req, res, next) => {
+terminal.post('/acesso/cpf', limitadorIdentificacao, autenticarTerminal, async (req, res, next) => {
   try {
     const { cpf } = z.object({ cpf: z.string().min(1) }).parse(req.body);
     const aluno = await acessoTerminal.buscarAlunoPorCpf(cpf);
@@ -59,7 +81,7 @@ terminal.post('/acesso/cpf', autenticarTerminal, async (req, res, next) => {
 });
 
 // POST /api/terminal/acesso/codigo { codigo_acesso } — leitura do QR pessoal do celular
-terminal.post('/acesso/codigo', autenticarTerminal, async (req, res, next) => {
+terminal.post('/acesso/codigo', limitadorIdentificacao, autenticarTerminal, async (req, res, next) => {
   try {
     const { codigo_acesso } = z.object({ codigo_acesso: z.string().min(1) }).parse(req.body);
     const aluno = await acessoTerminal.buscarAlunoPorCodigoAcesso(codigo_acesso);
@@ -75,7 +97,7 @@ terminal.post('/acesso/codigo', autenticarTerminal, async (req, res, next) => {
 });
 
 // POST /api/terminal/acesso/facial { descriptor: number[128] } — reconhecimento facial recorrente
-terminal.post('/acesso/facial', autenticarTerminal, async (req, res, next) => {
+terminal.post('/acesso/facial', limitadorIdentificacao, autenticarTerminal, async (req, res, next) => {
   try {
     const { descriptor } = z.object({ descriptor: z.array(z.number()).min(16) }).parse(req.body);
     const match = await acessoTerminal.encontrarMelhorMatchFacial(descriptor);
@@ -86,17 +108,21 @@ terminal.post('/acesso/facial', autenticarTerminal, async (req, res, next) => {
     }
 
     if (!match.dentroDoLimite) {
-      // Diagnóstico temporário durante os testes: mostra a distância e o
-      // candidato mais próximo, mesmo tendo sido recusado, para ajudar a
-      // calibrar FACE_MATCH_THRESHOLD no .env. Considere remover/ocultar
-      // esse nível de detalhe quando for para produção.
+      // Diagnóstico usado para calibrar FACE_MATCH_THRESHOLD no .env — o log
+      // interno (registrarAcesso) sempre guarda a distância exata, mas a
+      // RESPOSTA HTTP só inclui esse detalhe fora de produção. Em produção,
+      // devolver a distância/limite pra quem quer que esteja chamando a rota
+      // (com o TERMINAL_TOKEN, hoje mais exposto por causa da página de
+      // cadastro pelo celular) ajudaria a calibrar tentativas de bypass.
       const motivo = `Rosto não reconhecido (mais próximo: distância ${match.distancia.toFixed(3)}, limite ${match.limite}).`;
       await acessoTerminal.registrarAcesso({ alunoId: null, metodo: 'facial', resultado: 'negado', mensagem: motivo });
-      return res.json({ autorizado: false, motivo, distancia: match.distancia, limite: match.limite });
+      const detalheDiagnostico = process.env.NODE_ENV === 'production' ? {} : { distancia: match.distancia, limite: match.limite };
+      return res.json({ autorizado: false, motivo: process.env.NODE_ENV === 'production' ? 'Rosto não reconhecido.' : motivo, ...detalheDiagnostico });
     }
 
     const resultado = await acessoTerminal.tentarLiberar({ aluno: match.aluno, metodo: 'facial' });
-    res.json({ ...resultado, distancia: match.distancia });
+    const detalheDistancia = process.env.NODE_ENV === 'production' ? {} : { distancia: match.distancia };
+    res.json({ ...resultado, ...detalheDistancia });
   } catch (err) {
     next(err);
   }
@@ -107,7 +133,7 @@ terminal.post('/acesso/facial', autenticarTerminal, async (req, res, next) => {
 // escutar()). Aqui só validamos e devolvemos autorizado/negado — quem manda
 // permitir_entrada/impedir_entrada de volta pra catraca é o agente, pois é
 // ele quem tem o "index" da mensagem original.
-terminal.post('/validar-biometria-catraca', autenticarTerminal, async (req, res, next) => {
+terminal.post('/validar-biometria-catraca', limitadorIdentificacao, autenticarTerminal, async (req, res, next) => {
   try {
     const { biometria_id } = z.object({ biometria_id: z.string().min(1) }).parse(req.body);
     const aluno = await acessoTerminal.buscarAlunoPorBiometriaId(biometria_id);
@@ -132,7 +158,7 @@ terminal.post('/validar-biometria-catraca', autenticarTerminal, async (req, res,
 
 // GET /api/terminal/vincular/codigo?cpf=... — gera (ou recupera) o código de
 // acesso estável do aluno, para gerar o QR/link "meu acesso" pessoal dele.
-terminal.get('/vincular/codigo', autenticarTerminal, async (req, res, next) => {
+terminal.get('/vincular/codigo', limitadorVinculacao, autenticarTerminal, async (req, res, next) => {
   try {
     const { cpf } = z.object({ cpf: z.string().min(1) }).parse(req.query);
     const aluno = await acessoTerminal.buscarAlunoPorCpf(cpf);
@@ -145,13 +171,44 @@ terminal.get('/vincular/codigo', autenticarTerminal, async (req, res, next) => {
 });
 
 // POST /api/terminal/vincular/facial { cpf, descriptor } — cadastra o rosto do
-// aluno para reconhecimento facial recorrente (autoatendimento no totem).
-terminal.post('/vincular/facial', autenticarTerminal, async (req, res, next) => {
+// aluno para reconhecimento facial recorrente (autoatendimento no totem OU,
+// logo após um auto-cadastro, pela página de cadastro pelo celular — por isso
+// aceita os dois tokens).
+//
+// Como só o CPF prova identidade aqui, esta rota conseguia SOBRESCREVER um
+// rosto já cadastrado sem confirmar que era a mesma pessoa. Decisão do dono
+// do sistema (2026-07-07): bloquear por completo a sobrescrita remota — se o
+// aluno já tem um rosto cadastrado, recusa (409). Não afeta o fluxo normal:
+// tanto "Primeira vez no totem" quanto o cadastro facial logo após um
+// auto-cadastro (totem ou celular) só rodam quando o aluno AINDA não tem
+// rosto cadastrado. Trocar um rosto já existente passa a exigir a recepção
+// (painel -> perfil do aluno -> aba "Biometria & acesso").
+terminal.post('/vincular/facial', limitadorVinculacao, autenticarTerminalOuCadastroPublico, async (req, res, next) => {
   try {
     const { cpf, descriptor } = z.object({ cpf: z.string().min(1), descriptor: z.array(z.number()).min(16) }).parse(req.body);
     const aluno = await acessoTerminal.buscarAlunoPorCpf(cpf);
     if (!aluno) return res.status(404).json({ erro: 'CPF não encontrado.' });
+
+    if (aluno.face_descriptor) {
+      await acessoTerminal.registrarAcesso({
+        alunoId: aluno.id,
+        metodo: 'vincular_facial_totem',
+        resultado: 'negado',
+        mensagem: 'Tentativa de sobrescrever reconhecimento facial já cadastrado, pelo totem/celular (CPF) — bloqueada.',
+      });
+      return res.status(409).json({
+        erro: 'Este cadastro já tem um reconhecimento facial vinculado. Para trocar, procure a recepção.',
+      });
+    }
+
     await acessoTerminal.salvarFaceDescriptor(aluno.id, descriptor);
+    await acessoTerminal.registrarAcesso({
+      alunoId: aluno.id,
+      metodo: 'vincular_facial_totem',
+      resultado: 'liberado',
+      mensagem: 'Primeiro cadastro de reconhecimento facial (totem/cadastro pelo celular).',
+    });
+
     res.json({ ok: true, aluno_nome: aluno.nome });
   } catch (err) {
     next(err);
@@ -177,8 +234,9 @@ const autoCadastroSchema = z.object({
   plano_id: z.string().min(1),
 });
 
-// GET /api/terminal/planos — planos ativos, para o totem montar o seletor de plano
-terminal.get('/planos', autenticarTerminal, async (req, res, next) => {
+// GET /api/terminal/planos — planos ativos, para o totem (ou a página de
+// cadastro pelo celular) montar o seletor de plano.
+terminal.get('/planos', autenticarTerminalOuCadastroPublico, async (req, res, next) => {
   try {
     const result = await db.execute(
       'SELECT id, nome, tipo, valor_centavos, duracao_dias FROM planos WHERE ativo = 1 ORDER BY valor_centavos',
@@ -190,7 +248,7 @@ terminal.get('/planos', autenticarTerminal, async (req, res, next) => {
 });
 
 // POST /api/terminal/auto-cadastro { nome, cpf, telefone?, email?, data_nascimento?, plano_id }
-terminal.post('/auto-cadastro', autenticarTerminal, async (req, res, next) => {
+terminal.post('/auto-cadastro', limitadorCadastro, autenticarTerminalOuCadastroPublico, async (req, res, next) => {
   try {
     const dados = autoCadastroSchema.parse(req.body);
 
@@ -207,68 +265,46 @@ terminal.post('/auto-cadastro', autenticarTerminal, async (req, res, next) => {
 
     const cobrancaId = uuid();
     const descricao = `Matrícula - ${p.nome}`;
-    const provedor = process.env.PAYMENT_PROVIDER || 'mercadopago';
+    const provedor = 'mercadopago'; // único provedor suportado (InfinitePay foi removido)
 
     // Gera o pagamento ANTES de escrever qualquer coisa no banco — se o
     // gateway falhar, a requisição falha inteira e nenhum registro órfão fica
     // para trás (mesmo padrão usado em POST /api/pagamentos/cobrar).
-    let linkPagamento = null;
-    let qrCodePix = null; // copia-e-cola (texto)
-    let qrCodePixImagem = null; // base64 (imagem pronta do Mercado Pago)
-    // provedorReferencia: no Mercado Pago guardamos o ID do pagamento (não o
+    //
+    // Pix direto via API de Orders (Checkout Transparente) — sem
+    // redirecionar pra nenhuma tela externa, o QR já sai pronto pra
+    // mostrar no totem. A API exige um e-mail do pagador; como o totem não
+    // pede e-mail, usamos um sintético baseado no CPF quando o aluno não
+    // informou um de verdade.
+    //
+    // A API de Orders SEMPRE exige o Access Token de PRODUÇÃO
+    // ("APP_USR-..."), mesmo pra simular — ela não aceita token "TEST-...".
+    // O "modo teste" é ativado pelo PAGADOR: se MERCADOPAGO_TEST_PAYER_EMAIL
+    // estiver configurado, usamos esse e-mail de teste + o valor mágico
+    // "APRO" em first_name, que faz o Mercado Pago simular a aprovação
+    // automaticamente, sem mexer em dinheiro de verdade. Remova essa
+    // variável (ou apague-a) quando o totem for pra produção de verdade, e
+    // o pagamento passa a valer o dinheiro real dos alunos.
+    const emailTeste = process.env.MERCADOPAGO_TEST_PAYER_EMAIL;
+    const emailPagador = emailTeste || dados.email || `aluno-${dados.cpf.replace(/\D/g, '')}@academia-gestao.com`;
+    const firstNamePagador = emailTeste ? 'APRO' : undefined;
+
+    const order = await mercadopago.criarOrderPix({
+      descricao,
+      valorCentavos: p.valor_centavos,
+      referenciaExterna: cobrancaId,
+      email: emailPagador,
+      firstName: firstNamePagador,
+    });
+    const metodoPix = order.transactions?.payments?.[0]?.payment_method || {};
+    const qrCodePix = metodoPix.qr_code || null; // copia-e-cola (texto)
+    const qrCodePixImagem = metodoPix.qr_code_base64 || null; // base64 (imagem pronta)
+    // provedorReferencia guarda o ID do pagamento no Mercado Pago (não o
     // cobrancaId) para poder consultar o status diretamente na API como
     // reforço ao webhook — webhook sozinho depende de estar bem configurado
     // no painel do Mercado Pago e de o servidor estar publicamente acessível,
     // então o polling do totem confere os dois.
-    let provedorReferencia = cobrancaId;
-    if (provedor === 'mercadopago') {
-      // Pix direto via API de Orders (Checkout Transparente) — sem
-      // redirecionar pra nenhuma tela externa, o QR já sai pronto pra
-      // mostrar no totem. A API exige um e-mail do pagador; como o totem não
-      // pede e-mail, usamos um sintético baseado no CPF quando o aluno não
-      // informou um de verdade.
-      //
-      // A API de Orders SEMPRE exige o Access Token de PRODUÇÃO
-      // ("APP_USR-..."), mesmo pra simular — ela não aceita token "TEST-...".
-      // O "modo teste" é ativado pelo PAGADOR: se MERCADOPAGO_TEST_PAYER_EMAIL
-      // estiver configurado, usamos esse e-mail de teste + o valor mágico
-      // "APRO" em first_name, que faz o Mercado Pago simular a aprovação
-      // automaticamente, sem mexer em dinheiro de verdade. Remova essa
-      // variável (ou apague-a) quando o totem for pra produção de verdade, e
-      // o pagamento passa a valer o dinheiro real dos alunos.
-      const emailTeste = process.env.MERCADOPAGO_TEST_PAYER_EMAIL;
-      const emailPagador = emailTeste || dados.email || `aluno-${dados.cpf.replace(/\D/g, '')}@academia-gestao.com`;
-      const firstNamePagador = emailTeste ? 'APRO' : undefined;
-
-      const order = await mercadopago.criarOrderPix({
-        descricao,
-        valorCentavos: p.valor_centavos,
-        referenciaExterna: cobrancaId,
-        email: emailPagador,
-        firstName: firstNamePagador,
-      });
-      const metodoPix = order.transactions?.payments?.[0]?.payment_method || {};
-      qrCodePix = metodoPix.qr_code || null;
-      qrCodePixImagem = metodoPix.qr_code_base64 || null;
-      provedorReferencia = String(order.id);
-    } else {
-      // Repassa os dados que o aluno já digitou no totem (nome/telefone/email)
-      // para o checkout da InfinitePay pré-preencher esses campos e pular essa
-      // etapa manual na tela de pagamento.
-      const customer = {
-        name: dados.nome,
-        ...(dados.email ? { email: dados.email } : {}),
-        ...(dados.telefone ? { phone_number: dados.telefone } : {}),
-      };
-      const link = await infinitepay.criarLinkPagamento({
-        descricao,
-        valorCentavos: p.valor_centavos,
-        orderNsu: cobrancaId,
-        redirectUrl: process.env.APP_URL || 'http://localhost:3000',
-        customer,
-      });
-      linkPagamento = link.url || link.checkout_url;
-    }
+    const provedorReferencia = String(order.id);
 
     const alunoId = uuid();
     await db.execute({
@@ -295,7 +331,6 @@ terminal.post('/auto-cadastro', autenticarTerminal, async (req, res, next) => {
 
     res.status(201).json({
       cobranca_id: cobrancaId,
-      link_pagamento: linkPagamento,
       qr_code_pix: qrCodePix,
       qr_code_pix_imagem: qrCodePixImagem,
       valor_centavos: p.valor_centavos,
@@ -310,7 +345,7 @@ terminal.post('/auto-cadastro', autenticarTerminal, async (req, res, next) => {
 // aqui enquanto espera o pagamento. Quando a cobrança está paga, ativa a
 // matrícula (só na primeira vez — updates seguintes do WHERE status='pendente'
 // não afetam nada, evitando reabrir a catraca a cada poll) e libera o acesso.
-terminal.get('/auto-cadastro/status/:cobrancaId', autenticarTerminal, async (req, res, next) => {
+terminal.get('/auto-cadastro/status/:cobrancaId', autenticarTerminalOuCadastroPublico, async (req, res, next) => {
   try {
     const cobranca = await db.execute({ sql: 'SELECT * FROM cobrancas WHERE id = ?', args: [req.params.cobrancaId] });
     let c = cobranca.rows[0];
@@ -377,7 +412,7 @@ terminal.get('/auto-cadastro/status/:cobrancaId', autenticarTerminal, async (req
 
 // POST /api/terminal/contas/consultar { cpf } — lista as contas em aberto
 // (pendente/atrasado) do aluno, pra montar a tela de seleção no totem.
-terminal.post('/contas/consultar', autenticarTerminal, async (req, res, next) => {
+terminal.post('/contas/consultar', limitadorContas, autenticarTerminal, async (req, res, next) => {
   try {
     const { cpf } = z.object({ cpf: z.string().min(1) }).parse(req.body);
     const resultado = await pagamentoContas.consultarContasAbertas(cpf);
@@ -392,7 +427,7 @@ terminal.post('/contas/consultar', autenticarTerminal, async (req, res, next) =>
 // Gera UM pagamento Pix agregado cobrindo todas as cobrancas selecionadas.
 // liberar_acesso=true por padrão aqui (totem físico da academia); o portal
 // remoto (portal.routes.js) chama o mesmo serviço sempre com false.
-terminal.post('/contas/pagar', autenticarTerminal, async (req, res, next) => {
+terminal.post('/contas/pagar', limitadorContas, autenticarTerminal, async (req, res, next) => {
   try {
     const schema = z.object({
       cpf: z.string().min(1),

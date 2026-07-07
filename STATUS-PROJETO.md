@@ -1,6 +1,6 @@
 # Status do projeto — Academia Gestão
 
-Última atualização: 06/07/2026 (sessão: agente local da catraca — concluída e validada em produção)
+Última atualização: 07/07/2026 (sessão: correções de segurança — código pronto, **ainda não subido ao GitHub/Northflank**, ver seção abaixo)
 
 ## Resumo
 
@@ -14,6 +14,39 @@ Sistema de gestão de academia (Node.js/Express + libSQL/Turso), publicado na nu
 - Repositório: GitHub `treinopro/acess`, branch `principal`/`main` (upload manual de arquivos, sem git push configurado)
 - Hospedagem: Northflank (Buildpack, porta pública 8080), serviço no projeto `acess-academia` / time `acessfits-team`
 - Banco de dados: Turso (libSQL), variáveis `DATABASE_URL`/`DATABASE_AUTH_TOKEN`
+
+---
+
+## ⚠️ PRONTO NO CÓDIGO, PENDENTE DE UPLOAD — correções de segurança (sessão 07/07/2026)
+
+Uma análise de segurança (`analise-seguranca-academia-gestao.md`, na raiz do repo junto com este arquivo) apontou 2 falhas críticas, 3 altas e 4 médias. Todas as que não tiravam funcionalidade foram corrigidas no código local. **Nada disso está em produção ainda** — precisa do mesmo processo de upload manual pro GitHub já usado nas sessões anteriores, mais alguns passos extras (variáveis de ambiente novas) detalhados abaixo.
+
+### O que foi corrigido
+
+1. **InfinitePay removida por completo** — o webhook dela (`POST /webhook/infinitepay`) confiava cegamente no `order_nsu` do corpo da requisição pra marcar cobranças como pagas, sem checar nada — qualquer aluno podia forjar essa chamada e "pagar" a própria mensalidade de graça. Como o provedor não estava em uso, a integração inteira foi removida (rotas, serviço, seletor no painel) em vez de corrigida.
+2. **Webhook do Mercado Pago agora valida a assinatura** (`x-signature`) usando `MERCADOPAGO_WEBHOOK_SECRET` — que, pelas notas desta sessão anterior, já está configurado no Northflank. Se estiver mesmo, a validação já vale a partir do próximo deploy.
+3. **`JWT_SECRET` sem valor padrão no código** — antes, se a variável de ambiente falhasse por qualquer motivo, o servidor assinava tokens com um segredo previsível fixo no código-fonte. Agora o servidor recusa subir sem `JWT_SECRET` definido. O valor local (`.env` deste PC) foi trocado; **o valor no Northflank continua sendo o antigo placeholder público (`troque-este-segredo-em-producao`) e precisa ser trocado lá também** — é a correção mais urgente de todas (quem tiver visto o repositório sabe esse valor e pode forjar login de admin).
+4. **Rate limiting** adicionado (implementação própria, sem pacote novo, já que não há acesso a `npm install` neste ambiente) no login, no portal remoto (`/api/portal/*`) e nas rotas do totem/celular (`/api/terminal/*`).
+5. **Segredo novo e separado para a página de cadastro pelo celular**: `cadastro-mobile.js` (a página aberta via QR "Usar seu cel" no totem) usava o mesmo `TERMINAL_TOKEN` do totem físico — só que, diferente do totem, essa página é entregue a qualquer visitante que escaneie o QR, então esse token ficava bem mais exposto (e ele também protege a abertura da catraca). Criada uma variável nova, `CADASTRO_PUBLICO_TOKEN`, com acesso restrito só às rotas de auto-cadastro — **precisa ser criada no Northflank também, senão a opção "Usar seu cel" quebra em produção** (dá erro 500 "não configurado no servidor").
+6. **Sobrescrita de reconhecimento facial por CPF** (`/vincular/facial`, no portal e no totem): quem soubesse o CPF de um aluno conseguia vincular o PRÓPRIO rosto ao cadastro dele, sem confirmação — um jeito de entrar na academia se passando por outra pessoa. Mitigado primeiro com rate limiting agressivo por CPF (5 tentativas/hora) e auditoria; **decisão do usuário (07/07/2026): bloquear por completo** — agora, se o aluno já tem um rosto cadastrado, o portal e o totem/celular recusam (409 "procure a recepção") em vez de sobrescrever. Trocar um rosto já existente passa a exigir a recepção (painel → perfil do aluno → aba "Biometria & acesso" → remover e recadastrar pela câmera do PC). Não afeta o primeiro cadastro (totem, celular ou portal) nem o cadastro facial logo após um auto-cadastro — só bloqueia quando JÁ existe um rosto salvo.
+7. Headers de segurança HTTP (sem CSP — quebraria o CSS inline das páginas), CORS restringível por `CORS_ORIGIN` (aberto por padrão até essa variável ser definida), comparação do `TERMINAL_TOKEN` em tempo constante, e a distância/limite do reconhecimento facial deixam de aparecer na resposta da API quando `NODE_ENV=production`.
+8. **Script pra trocar a senha do admin** (`scripts/trocar-senha-admin.js`, novo — ver "Pendências" abaixo): o usuário pediu pra resolver a pendência da senha padrão `admin123` nesta mesma sessão. Não há acesso a shell/execução de código neste ambiente, então foi criado um script pronto (padrão dos outros scripts do projeto) em vez de trocar a senha diretamente — falta só rodar.
+
+### Arquivos alterados/criados nesta sessão (AINDA NÃO enviados ao GitHub)
+
+Modificados: `src/routes/pagamentos.routes.js`, `src/routes/terminal.routes.js`, `src/routes/portal.routes.js`, `src/routes/auth.routes.js`, `src/middleware/auth.js`, `src/utils/jwt.js`, `src/server.js`, `public/app.js`, `public/index.html`, `public/terminal.js`, `public/terminal.html`, `public/cadastro-mobile.js`, `public/cadastro-mobile.html`, `.env.example`, `render.yaml`, `README.md`, `package.json`, `src/db/schema.sql` (só comentário).
+
+Novos: `src/middleware/rateLimit.js`, `scripts/trocar-senha-admin.js`.
+
+Neutralizado (não apaga sozinho — apague manualmente): `src/services/payment/infinitepay.service.js` virou um stub vazio comentado, porque este ambiente não tem uma ferramenta de exclusão de arquivo. Pode ser apagado com segurança.
+
+### Variáveis de ambiente novas/alteradas a configurar no Northflank
+
+- `JWT_SECRET` — **trocar pelo valor novo** (gerar com algo como `openssl rand -hex 64`; não usar o mesmo valor que ficou no `.env` local deste PC, gere um diferente pra produção). Login de todos os admins vai pedir senha de novo depois dessa troca — esperado.
+- `CADASTRO_PUBLICO_TOKEN` — **variável nova**, precisa ser criada (string longa aleatória, diferente do `TERMINAL_TOKEN`) e o mesmo valor colado em `public/cadastro-mobile.js` antes do upload.
+- `MERCADOPAGO_WEBHOOK_SECRET` — confirmar que o valor no Northflank é o mesmo que está configurado no painel de Webhooks do Mercado Pago (a sessão anterior registrou como "configurado", mas vale confirmar já que agora ele passou a ser realmente usado pelo código).
+- `CORS_ORIGIN` — opcional, deixar em branco (comportamento não muda).
+- Remover (não são mais usadas): `PAYMENT_PROVIDER`, `INFINITEPAY_HANDLE`, `INFINITEPAY_WEBHOOK_URL`.
 
 ---
 
@@ -100,9 +133,10 @@ Todos os arquivos abaixo foram reenviados ao GitHub e confirmados funcionando em
 
 ## Variáveis de ambiente relevantes (Northflank e `.env` local)
 
-- `PAYMENT_PROVIDER=mercadopago`
+(Ver também a seção "correções de segurança — sessão 07/07/2026" acima: `PAYMENT_PROVIDER` e as variáveis da InfinitePay foram removidas; `JWT_SECRET` e `CADASTRO_PUBLICO_TOKEN` precisam ser configuradas/trocadas no Northflank.)
+
 - `MERCADOPAGO_ACCESS_TOKEN` — token de PRODUÇÃO (`APP_USR-...`); API de Orders não aceita token de teste.
-- `MERCADOPAGO_WEBHOOK_SECRET` — configurado.
+- `MERCADOPAGO_WEBHOOK_SECRET` — configurado; agora efetivamente usado (validação de assinatura do webhook).
 - `MERCADOPAGO_TEST_PAYER_EMAIL` — não usar (deixar apagado).
 - `TERMINAL_TOKEN` — segredo do totem. **Trocado nesta sessão** (o valor antigo hardcoded em `terminal.js` foi substituído por um novo, sincronizado entre `academia-gestao/.env`, `public/terminal.js` e `agente-local/.env`). Confirme que o Northflank também tem esse mesmo valor novo — senão o totem para de autenticar.
 - `HENRY_CATRACA_IP=192.168.0.79` / `HENRY_CATRACA_PORT=3000` — IP/porta padrão da catraca.
@@ -111,10 +145,12 @@ Todos os arquivos abaixo foram reenviados ao GitHub e confirmados funcionando em
 
 ## Pendências
 
-1. **Trocar senha padrão do admin** (`admin123`) — adiado explicitamente pelo usuário. Fazer quando o usuário pedir.
-2. Testar a liberação de acesso via agente contra mais cenários reais de uso (dias/horários variados, quedas de internet do PC do agente).
-3. Se quiser reativar simulação de pagamento de teste no futuro, investigar mais a fundo com o suporte do Mercado Pago (duas tentativas anteriores não funcionaram).
-4. Biometria própria da catraca (`BIOMETRIA_CATRACA_ATIVA`) segue desativada e não validada contra hardware real.
+1. **Trocar senha padrão do admin** (`admin123`) — usuário pediu pra resolver na sessão de segurança (07/07/2026). Script pronto em `scripts/trocar-senha-admin.js` (`npm run trocar-senha-admin`), mas **ainda não foi executado** (este ambiente não tem shell) — falta rodar (localmente, que aponta pro mesmo Turso de produção, ou via Shell do Northflank) e guardar a senha nova que o script imprime.
+2. ~~Decidir sobre bloquear por completo a sobrescrita remota de reconhecimento facial~~ — **decidido e implementado** (07/07/2026): bloqueado por completo, ver seção acima.
+3. **Subir as correções de segurança desta sessão pro GitHub/Northflank** (lista de arquivos e variáveis de ambiente na seção acima) — nada disso está em produção ainda.
+4. Testar a liberação de acesso via agente contra mais cenários reais de uso (dias/horários variados, quedas de internet do PC do agente).
+5. Se quiser reativar simulação de pagamento de teste no futuro, investigar mais a fundo com o suporte do Mercado Pago (duas tentativas anteriores não funcionaram).
+6. Biometria própria da catraca (`BIOMETRIA_CATRACA_ATIVA`) segue desativada e não validada contra hardware real.
 
 ## Aprendizados importantes (evitar repetir)
 

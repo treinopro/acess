@@ -528,11 +528,7 @@ document.getElementById('btn-cadastro-continuar').addEventListener('click', asyn
         }
       };
     } else {
-      // InfinitePay: link de checkout — o QR aponta pra URL, o aluno escaneia
-      // com a câmera normal do celular (não é um QR Pix em si).
-      // eslint-disable-next-line no-new
-      new QRCode(alvo, { text: resp.link_pagamento, width: 220, height: 220, colorDark: '#0f172a', colorLight: '#ffffff' });
-      instrucaoEl.textContent = 'Escaneie com a câmera do seu celular para pagar. A tela avança sozinha assim que o pagamento for confirmado.';
+      instrucaoEl.textContent = 'Não foi possível gerar o pagamento. Procure a recepção.';
       btnCopiarPix.classList.add('oculto');
     }
 

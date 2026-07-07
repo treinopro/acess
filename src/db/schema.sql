@@ -146,7 +146,7 @@ CREATE TABLE IF NOT EXISTS cobrancas (
   matricula_id TEXT REFERENCES matriculas(id),
   valor_centavos INTEGER NOT NULL,
   status TEXT NOT NULL DEFAULT 'pendente', -- pendente | pago | atrasado | cancelado | estornado
-  provedor TEXT NOT NULL, -- mercadopago | infinitepay
+  provedor TEXT NOT NULL, -- mercadopago (único suportado; "manual" também aparece p/ contas sem gateway) | infinitepay/valores antigos podem existir em cobrancas históricas
   provedor_referencia TEXT, -- id/slug da cobranca no provedor
   metodo_pagamento TEXT, -- pix | credit_card | boleto
   descricao TEXT,

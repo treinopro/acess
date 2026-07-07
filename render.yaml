@@ -19,9 +19,11 @@ services:
         sync: false   # cole aqui a URL libsql:// do seu banco Turso
       - key: DATABASE_AUTH_TOKEN
         sync: false   # cole aqui o token gerado pelo Turso CLI
-      - key: PAYMENT_PROVIDER
-        value: mercadopago
       - key: MERCADOPAGO_ACCESS_TOKEN
         sync: false
-      - key: INFINITEPAY_HANDLE
+      - key: MERCADOPAGO_WEBHOOK_SECRET
         sync: false
+      - key: TERMINAL_TOKEN
+        generateValue: true
+      - key: CADASTRO_PUBLICO_TOKEN
+        generateValue: true

@@ -2421,15 +2421,14 @@ document.getElementById('form-cobranca').addEventListener('submit', async (ev) =
     aluno_id: document.getElementById('cobranca-aluno').value,
     descricao: document.getElementById('cobranca-descricao').value.trim() || 'Mensalidade',
     valor_centavos: Math.round(parseFloat(document.getElementById('cobranca-valor').value) * 100),
-    provedor: document.getElementById('cobranca-provedor').value,
   };
   const resultadoEl = document.getElementById('cobranca-resultado');
   try {
     const resp = await api('/api/pagamentos/cobrar', { method: 'POST', body: JSON.stringify(dados) });
     resultadoEl.classList.remove('oculto');
     resultadoEl.innerHTML = resp.link_pagamento
-      ? `Cobrança criada via <strong>${resp.provedor}</strong>. Link: <a href="${resp.link_pagamento}" target="_blank" rel="noopener">${resp.link_pagamento}</a>`
-      : `Cobrança criada via <strong>${resp.provedor}</strong>, mas o provedor não retornou um link (verifique as credenciais no .env).`;
+      ? `Cobrança criada. Link: <a href="${resp.link_pagamento}" target="_blank" rel="noopener">${resp.link_pagamento}</a>`
+      : `Cobrança criada, mas o Mercado Pago não retornou um link (verifique as credenciais no .env).`;
     mostrarToast('Cobrança gerada.');
     carregarContas();
       carregarFinanceiroPerfil();

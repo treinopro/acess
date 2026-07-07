@@ -26,8 +26,19 @@ const db = require('../db/client');
 const acessoTerminal = require('../services/acessoTerminal.service');
 const pagamentoContas = require('../services/pagamentoContas.service');
 const mercadopago = require('../services/payment/mercadopago.service');
+const { criarLimitador } = require('../middleware/rateLimit');
 
 const router = express.Router();
+
+// Portal é público e sem login (prova de identidade é só o CPF — ver
+// comentário no topo do arquivo), então é o alvo mais fácil pra automação de
+// CPFs vazados/sequenciais. Limite geral pra todas as rotas do portal, mais
+// restrito ainda em /vincular/facial (ver abaixo) por ser a rota mais sensível.
+router.use(criarLimitador({
+  janelaMs: 15 * 60 * 1000,
+  maximo: 30,
+  mensagem: 'Muitas requisições ao portal a partir deste endereço. Aguarde alguns minutos.',
+}));
 
 // GET /api/portal/planos — planos ativos, para os seletores de cadastro/upgrade.
 router.get('/planos', async (req, res, next) => {
@@ -97,15 +108,56 @@ router.get('/treino', async (req, res, next) => {
   }
 });
 
+// Limite dedicado e mais apertado pra /vincular/facial (além do limite geral
+// do portal acima): é a rota mais sensível — quem souber o CPF de outra
+// pessoa pode tentar vincular o PRÓPRIO rosto ao cadastro dela (ver análise de
+// segurança, item 5). Não impede um ataque direcionado isolado, mas
+// inviabiliza automação em massa contra vários CPFs.
+const limitadorVincularFacial = criarLimitador({
+  janelaMs: 60 * 60 * 1000,
+  maximo: 5,
+  mensagem: 'Muitas tentativas de cadastro facial para este CPF. Procure a recepção se o problema persistir.',
+  chavePor: (req) => `${req.ip}:${req.body?.cpf || ''}`,
+});
+
 // POST /api/portal/vincular/facial { cpf, descriptor } — cadastra o rosto do
 // aluno remotamente (com a câmera do próprio celular/PC), pra reconhecimento
 // facial já funcionar na próxima vez que ele chegar ao totem físico.
-router.post('/vincular/facial', async (req, res, next) => {
+//
+// IMPORTANTE (ver análise de segurança, item 5): como a única prova de
+// identidade aqui é o CPF, esta rota conseguia SOBRESCREVER um rosto já
+// cadastrado sem confirmar que era a mesma pessoa — alguém que soubesse o CPF
+// de um aluno podia vincular o próprio rosto ao cadastro dele. Decisão do
+// dono do sistema (2026-07-07): bloquear por completo a sobrescrita remota.
+// Se o aluno já tem um rosto cadastrado, esta rota recusa (409) — trocar o
+// rosto cadastrado passa a exigir a recepção (painel -> perfil do aluno ->
+// aba "Biometria & acesso" -> remover e recadastrar pela câmera do PC).
+router.post('/vincular/facial', limitadorVincularFacial, async (req, res, next) => {
   try {
     const { cpf, descriptor } = z.object({ cpf: z.string().min(1), descriptor: z.array(z.number()).min(16) }).parse(req.body);
     const aluno = await acessoTerminal.buscarAlunoPorCpf(cpf);
     if (!aluno) return res.status(404).json({ erro: 'CPF não encontrado.' });
+
+    if (aluno.face_descriptor) {
+      await acessoTerminal.registrarAcesso({
+        alunoId: aluno.id,
+        metodo: 'vincular_facial_portal',
+        resultado: 'negado',
+        mensagem: 'Tentativa de sobrescrever reconhecimento facial já cadastrado, pelo portal (CPF) — bloqueada.',
+      });
+      return res.status(409).json({
+        erro: 'Este cadastro já tem um reconhecimento facial vinculado. Para trocar, procure a recepção.',
+      });
+    }
+
     await acessoTerminal.salvarFaceDescriptor(aluno.id, descriptor);
+    await acessoTerminal.registrarAcesso({
+      alunoId: aluno.id,
+      metodo: 'vincular_facial_portal',
+      resultado: 'liberado',
+      mensagem: 'Primeiro cadastro de reconhecimento facial pelo portal (CPF).',
+    });
+
     res.json({ ok: true, aluno_nome: aluno.nome });
   } catch (err) {
     next(err);

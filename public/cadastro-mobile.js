@@ -6,12 +6,14 @@
 // pagamento é confirmado, a matrícula já é ativada e a entrada liberada —
 // a tela final mostra o QR pessoal pra usar na catraca a partir de agora.
 //
-// IMPORTANTE: mesmo TERMINAL_TOKEN do totem (troque junto com o valor em
-// public/terminal.js e no .env do servidor — ver README, seção do totem).
-// Esse token já é público em terminal.js hoje (visível a quem inspeciona o
-// código do totem), então reaproveitá-lo aqui não é uma regressão de
-// segurança nova.
-const TERMINAL_TOKEN = 'w7bN3qXeR9mKpL2vJ8tYd5cA6sZ0hU4gF1oQnE7iBxW';
+// IMPORTANTE: segredo PRÓPRIO desta página (CADASTRO_PUBLICO_TOKEN no .env),
+// diferente do TERMINAL_TOKEN do totem físico. Troque junto com o valor no
+// .env do servidor (ver README, seção do totem). Este token é distribuído a
+// qualquer visitante que escaneie o QR "Usar seu cel" — por isso é mais
+// restrito: só autoriza as rotas de auto-cadastro (planos, criar cadastro,
+// consultar status do pagamento, cadastrar rosto logo após o cadastro), nunca
+// abre a catraca nem expõe o código de acesso de outro aluno.
+const CADASTRO_PUBLICO_TOKEN = 'p9QmZ4kR7vXbN2eK6yL1sD8fJ0wA5hT3cG9uY4rM7oV';
 
 const FACE_MODELS_URL = 'vendor/face-api/weights';
 
@@ -20,7 +22,7 @@ async function api(caminho, opcoes = {}) {
     ...opcoes,
     headers: {
       'Content-Type': 'application/json',
-      'X-Terminal-Token': TERMINAL_TOKEN,
+      'X-Cadastro-Token': CADASTRO_PUBLICO_TOKEN,
       ...(opcoes.headers || {}),
     },
   });
@@ -96,11 +98,8 @@ function mostrarPagamento(resp) {
   const alvo = document.getElementById('qrcode-cadastro-pagamento');
   alvo.innerHTML = '';
   const btnCopiarPix = document.getElementById('btn-copiar-pix');
-  const btnAbrirPagamento = document.getElementById('btn-abrir-pagamento');
   const instrucaoEl = document.getElementById('cadastro-pagamento-instrucao');
   btnCopiarPix.classList.add('oculto');
-  btnAbrirPagamento.classList.add('oculto');
-  btnAbrirPagamento.onclick = null;
 
   if (resp.qr_code_pix_imagem || resp.qr_code_pix) {
     // Mercado Pago (Pix): num celular não dá pra "escanear a própria tela", então
@@ -132,13 +131,8 @@ function mostrarPagamento(resp) {
         }
       };
     }
-  } else if (resp.link_pagamento) {
-    // InfinitePay: já estamos no celular, então em vez de gerar um QR pra uma
-    // URL (que exigiria outra câmera pra ler), abrimos o link de pagamento
-    // direto num botão — é a mesma tela de checkout que o totem mostraria via QR.
-    instrucaoEl.textContent = 'Toque no botão abaixo para pagar. A tela avança sozinha assim que o pagamento for confirmado.';
-    btnAbrirPagamento.classList.remove('oculto');
-    btnAbrirPagamento.onclick = () => window.open(resp.link_pagamento, '_blank');
+  } else {
+    instrucaoEl.textContent = 'Não foi possível gerar o pagamento. Procure a recepção.';
   }
 
   iniciarPollCadastro(resp.cobranca_id);

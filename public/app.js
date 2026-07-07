@@ -350,6 +350,7 @@ async function carregarConfiguracoesForm() {
     document.getElementById('config-licenciado-para').value = config.licenciado_para || '';
     document.getElementById('config-treino-app-url').value = config.treino_app_url || '';
     document.getElementById('config-whatsapp-contato').value = config.whatsapp_contato || '';
+    document.getElementById('config-link-portal').value = `${window.location.origin}/portal.html`;
     ordemMenuAtual = Array.isArray(config.menu_ordem) && config.menu_ordem.length
       ? [...config.menu_ordem]
       : [...ORDEM_MENU_PADRAO];
@@ -370,6 +371,17 @@ document.getElementById('form-config-app').addEventListener('submit', async (ev)
     mostrarToast('Configurações salvas.');
     carregarConfigApp();
   } catch (err) { mostrarToast(err.message, true); }
+});
+
+document.getElementById('btn-copiar-link-portal').addEventListener('click', async () => {
+  const input = document.getElementById('config-link-portal');
+  try {
+    await navigator.clipboard.writeText(input.value);
+    mostrarToast('Link copiado.');
+  } catch {
+    input.select();
+    mostrarToast('Selecione e copie manualmente (Ctrl+C).', true);
+  }
 });
 
 document.getElementById('btn-baixar-backup').addEventListener('click', async () => {
@@ -1958,7 +1970,32 @@ function atualizarBadgeStatusModal(status) {
   // Conta já quitada não aceita novo pagamento — precisa remover a quitação
   // primeiro (mesma regra aplicada no backend, POST .../pagamentos).
   document.getElementById('btn-add-pagamento').classList.toggle('oculto', status === 'pago');
+  // Forçar pendente<->atrasado sem esperar o vencimento passar — útil pra
+  // testar bloqueio de acesso/totem sem precisar recuar a data do sistema.
+  // Não aparece se a conta já estiver paga/cancelada/estornada.
+  document.getElementById('btn-marcar-atrasada').classList.toggle('oculto', status !== 'pendente');
+  document.getElementById('btn-marcar-pendente').classList.toggle('oculto', status !== 'atrasado');
 }
+
+async function alterarStatusModalConta(novoStatus) {
+  try {
+    const resp = await api(`/api/pagamentos/cobrancas/${modalContaAtual.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ status: novoStatus }),
+    });
+    modalContaAtual.status = novoStatus;
+    atualizarBadgeStatusModal(novoStatus);
+    mostrarToast(novoStatus === 'atrasado' ? 'Conta marcada como atrasada.' : 'Conta marcada como pendente.');
+    carregarContas();
+    carregarFinanceiroPerfil();
+    return resp;
+  } catch (err) {
+    mostrarToast(err.message, true);
+  }
+}
+
+document.getElementById('btn-marcar-atrasada').addEventListener('click', () => alterarStatusModalConta('atrasado'));
+document.getElementById('btn-marcar-pendente').addEventListener('click', () => alterarStatusModalConta('pendente'));
 
 async function carregarPagamentosModal() {
   try {

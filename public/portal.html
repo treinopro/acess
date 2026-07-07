@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Portal do Aluno</title>
+
+<!-- Mesma lib de QR usada no totem, hospedada localmente. face-api.js só é
+     necessário se o aluno optar por cadastrar o rosto por aqui. -->
+<script src="vendor/qrcode.min.js"></script>
+<script src="vendor/face-api/face-api.min.js"></script>
+
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; min-height: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    background: #0f172a; color: #fff;
+  }
+  .pagina { display: none; min-height: 100vh; flex-direction: column; align-items: center; padding: 32px 16px 60px; text-align: center; }
+  .pagina.ativa { display: flex; }
+  .oculto { display: none !important; }
+
+  .logo { font-size: 22px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 6px; color: #10b981; }
+  .subtitulo { color: #94a3b8; font-size: 15px; margin-bottom: 32px; }
+
+  .cartao { background: #1e293b; border-radius: 16px; padding: 22px; width: 100%; max-width: 440px; margin-bottom: 16px; text-align: left; }
+  .cartao h3 { margin: 0 0 12px; font-size: 16px; }
+  .cartao p { margin: 0 0 12px; color: #cbd5e1; font-size: 14px; }
+
+  .botao-grande { padding: 20px; font-size: 18px; border-radius: 14px; border: none; cursor: pointer; font-weight: 600; width: 100%; max-width: 440px; margin-bottom: 14px; }
+  .botao-grande.primario { background: #10b981; color: #06281e; }
+  .botao-grande.secundario { background: #334155; color: #fff; }
+  .botao-grande:active { transform: scale(0.98); }
+  .botao-grande:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .campo { width: 100%; padding: 15px; font-size: 17px; border-radius: 10px; border: none; margin-bottom: 12px; text-align: center; }
+  select.campo { text-align: left; }
+
+  .link-voltar { margin-top: 12px; background: none; border: none; color: #64748b; font-size: 14px; cursor: pointer; text-decoration: underline; }
+  .erro-msg { color: #f87171; font-size: 13px; min-height: 18px; margin-bottom: 8px; }
+
+  .item-conta { display: flex; align-items: center; gap: 12px; background: #0f172a; border-radius: 10px; padding: 14px; margin-bottom: 8px; }
+  .item-conta input { width: 20px; height: 20px; }
+  .item-conta .info { flex: 1; }
+  .item-conta .desc { font-size: 15px; font-weight: 600; }
+  .item-conta .venc { font-size: 12px; color: #94a3b8; }
+  .item-conta .valor { font-size: 15px; font-weight: 700; color: #10b981; }
+  .total-linha { display: flex; justify-content: space-between; font-size: 17px; font-weight: 700; padding: 10px 0; }
+
+  .aviso-caixa { background: #0f172a; border-radius: 10px; padding: 14px; font-size: 13px; color: #cbd5e1; }
+  video { border-radius: 16px; width: 280px; height: 210px; object-fit: cover; background: #000; transform: scaleX(-1); }
+  .status-scan { color: #94a3b8; font-size: 14px; margin-top: 8px; min-height: 20px; }
+
+  .comprovante .linha { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed #334155; }
+  .comprovante .linha:last-child { border-bottom: none; font-weight: 700; }
+  .resultado-icone { font-size: 56px; margin-bottom: 8px; }
+
+  .plano-opcao { display: flex; justify-content: space-between; align-items: center; background: #0f172a; border-radius: 10px; padding: 14px; margin-bottom: 8px; }
+  .plano-opcao button { padding: 8px 14px; border-radius: 8px; border: none; background: #10b981; color: #06281e; font-weight: 600; cursor: pointer; }
+
+  .treino-card { background: #0f172a; border-radius: 10px; padding: 14px; margin-bottom: 10px; }
+  .treino-card h4 { margin: 0 0 6px; }
+  .treino-card .dias { font-size: 12px; color: #94a3b8; margin-bottom: 8px; }
+  .exercicio-linha { font-size: 14px; padding: 6px 0; border-bottom: 1px solid #1e293b; }
+  .exercicio-linha .nome { font-weight: 600; }
+  .exercicio-linha .detalhe { color: #94a3b8; font-size: 12px; }
+</style>
+</head>
+<body>
+
+  <!-- INÍCIO -->
+  <div class="pagina ativa" id="pagina-inicio">
+    <div class="logo" id="portal-logo">ACADEMIA GESTÃO</div>
+    <div class="subtitulo">Portal do aluno — pague suas contas, consulte seu treino ou faça sua matrícula, sem sair de casa.</div>
+    <button class="botao-grande primario" id="btn-ir-hub">Já sou aluno</button>
+    <button class="botao-grande secundario" id="btn-ir-cadastro-portal">Quero me cadastrar</button>
+  </div>
+
+  <!-- HUB DO ALUNO: CPF -> dashboard -->
+  <div class="pagina" id="pagina-hub">
+    <div class="logo">MEU ESPAÇO</div>
+
+    <div class="cartao" id="painel-hub-cpf">
+      <h3>Digite seu CPF</h3>
+      <input class="campo" id="input-cpf-hub" placeholder="Somente números" inputmode="numeric" maxlength="14" />
+      <div class="erro-msg" id="hub-cpf-erro"></div>
+      <button class="botao-grande primario" id="btn-buscar-hub" style="margin-bottom:0">Continuar</button>
+    </div>
+
+    <div id="painel-hub-dashboard" class="oculto" style="width:100%;max-width:440px">
+      <div class="subtitulo" id="hub-saudacao" style="margin-bottom:20px"></div>
+
+      <div class="cartao" id="card-contas">
+        <h3>Contas em aberto</h3>
+        <p id="card-contas-resumo">Consultando...</p>
+        <button class="botao-grande primario" id="btn-abrir-contas" style="margin:0">Ver e pagar</button>
+      </div>
+
+      <div class="cartao" id="card-treino">
+        <h3>Meu treino</h3>
+        <p id="card-treino-resumo">Consultando...</p>
+        <button class="botao-grande secundario" id="btn-abrir-treino" style="margin:0">Ver treino</button>
+      </div>
+
+      <div class="cartao" id="card-plano">
+        <h3>Meu plano</h3>
+        <p id="card-plano-resumo">Consultando...</p>
+        <button class="botao-grande secundario" id="btn-abrir-upgrade" style="margin:0">Trocar / assinar plano</button>
+      </div>
+
+      <div class="cartao oculto" id="card-facial">
+        <h3>Reconhecimento facial</h3>
+        <p>Cadastre seu rosto agora e a catraca da academia já reconhece você na próxima visita.</p>
+        <button class="botao-grande secundario" id="btn-abrir-facial-hub" style="margin:0">Cadastrar meu rosto</button>
+      </div>
+
+      <div class="cartao oculto" id="card-avaliacao">
+        <h3>Avaliação física</h3>
+        <p>Fale com a recepção pelo WhatsApp para agendar (ou renovar) sua avaliação.</p>
+        <a class="botao-grande primario" id="link-agendar-avaliacao" style="margin:0;display:block;text-decoration:none;text-align:center" target="_blank" rel="noopener">Agendar pelo WhatsApp</a>
+      </div>
+    </div>
+
+    <!-- Contas: lista + seleção -->
+    <div class="cartao oculto" id="painel-hub-contas" style="text-align:left">
+      <h3 id="contas-hub-titulo">Contas em aberto</h3>
+      <div id="lista-contas-hub"></div>
+      <div class="total-linha"><span>Total selecionado</span><span id="contas-hub-total">R$ 0,00</span></div>
+      <button class="botao-grande primario" id="btn-pagar-contas-hub" style="margin:0">Pagar com Pix</button>
+    </div>
+
+    <!-- Treino -->
+    <div class="cartao oculto" id="painel-hub-treino" style="text-align:left">
+      <h3>Meu treino</h3>
+      <div id="conteudo-treino-hub"></div>
+    </div>
+
+    <!-- Upgrade de plano -->
+    <div class="cartao oculto" id="painel-hub-upgrade" style="text-align:left">
+      <h3>Planos disponíveis</h3>
+      <div id="lista-planos-upgrade"></div>
+    </div>
+
+    <!-- Pagamento Pix genérico (contas OU upgrade) -->
+    <div class="cartao oculto" id="painel-hub-pix">
+      <h3 id="pix-hub-titulo">Pagamento</h3>
+      <div id="qrcode-pix-hub" style="display:flex;justify-content:center;margin-bottom:12px"></div>
+      <div class="aviso-caixa" id="pix-hub-instrucao">Escaneie com o app do seu banco (Pix) para pagar. Esta tela avança sozinha assim que o pagamento for confirmado.</div>
+      <button class="botao-grande secundario oculto" id="btn-copiar-pix-hub">Copiar código Pix</button>
+      <div class="status-scan" id="pix-hub-status">Aguardando pagamento...</div>
+    </div>
+
+    <!-- Comprovante -->
+    <div class="cartao oculto" id="painel-hub-comprovante">
+      <div class="resultado-icone" style="color:#10b981;text-align:center">✅</div>
+      <div class="subtitulo" id="comprovante-hub-saudacao" style="margin-bottom:12px"></div>
+      <div class="comprovante" id="comprovante-hub-itens"></div>
+      <button class="botao-grande primario" id="btn-comprovante-hub-ok" style="margin-top:16px;margin-bottom:0">Voltar ao início</button>
+    </div>
+
+    <!-- Cadastro facial -->
+    <div class="cartao oculto" id="painel-hub-facial">
+      <h3>Cadastrar reconhecimento facial</h3>
+      <div style="display:flex;justify-content:center;margin-bottom:8px"><video id="video-facial-hub" autoplay muted playsinline></video></div>
+      <div class="status-scan" id="status-facial-hub">Posicione seu rosto no centro da câmera...</div>
+    </div>
+
+    <button class="link-voltar" id="btn-voltar-hub">&larr; Voltar ao início</button>
+  </div>
+
+  <!-- CADASTRO NOVO -->
+  <div class="pagina" id="pagina-cadastro-portal">
+    <div class="logo">QUERO ME CADASTRAR</div>
+
+    <div class="cartao" id="painel-cadastro-portal-form" style="text-align:left">
+      <input class="campo" id="portal-cadastro-nome" placeholder="Nome completo" />
+      <input class="campo" id="portal-cadastro-cpf" placeholder="CPF" inputmode="numeric" maxlength="14" />
+      <input class="campo" id="portal-cadastro-telefone" placeholder="Telefone (opcional)" inputmode="tel" />
+      <input class="campo" id="portal-cadastro-email" placeholder="E-mail (opcional)" inputmode="email" />
+      <select class="campo" id="portal-cadastro-plano"><option value="">Carregando planos...</option></select>
+      <div class="erro-msg" id="portal-cadastro-erro"></div>
+      <button class="botao-grande primario" id="btn-portal-cadastro-continuar" style="margin:0">Continuar para pagamento</button>
+    </div>
+
+    <div class="cartao oculto" id="painel-cadastro-portal-pagamento">
+      <h3 id="portal-cadastro-valor"></h3>
+      <div id="qrcode-cadastro-portal" style="display:flex;justify-content:center;margin-bottom:12px"></div>
+      <div class="aviso-caixa">Escaneie com o app do seu banco (Pix) para pagar. A tela avança sozinha assim que o pagamento for confirmado.</div>
+      <button class="botao-grande secundario oculto" id="btn-copiar-pix-cadastro-portal">Copiar código Pix</button>
+      <div class="status-scan" id="portal-cadastro-status">Aguardando pagamento...</div>
+    </div>
+
+    <div class="cartao oculto" id="painel-cadastro-portal-sucesso">
+      <div class="resultado-icone" style="color:#10b981">✅</div>
+      <div class="subtitulo" id="portal-cadastro-sucesso-msg" style="margin-bottom:8px"></div>
+      <p>Quer que a catraca já reconheça seu rosto na próxima visita?</p>
+      <button class="botao-grande secundario" id="btn-portal-cadastro-facial" style="margin:0 0 8px">Cadastrar reconhecimento facial agora</button>
+      <button class="botao-grande primario" id="btn-portal-cadastro-concluir" style="margin:0">Concluir</button>
+    </div>
+
+    <div class="cartao oculto" id="painel-cadastro-portal-facial">
+      <h3>Cadastrar reconhecimento facial</h3>
+      <div style="display:flex;justify-content:center;margin-bottom:8px"><video id="video-cadastro-portal-facial" autoplay muted playsinline></video></div>
+      <div class="status-scan" id="status-cadastro-portal-facial">Posicione seu rosto no centro da câmera...</div>
+    </div>
+
+    <button class="link-voltar" id="btn-voltar-cadastro-portal">&larr; Voltar ao início</button>
+  </div>
+
+<script src="portal.js"></script>
+</body>
+</html>

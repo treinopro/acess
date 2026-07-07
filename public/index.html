@@ -894,6 +894,18 @@
         </form>
 
         <div class="form-painel">
+          <h3 style="margin-top:0">Link do portal do aluno</h3>
+          <p style="margin-top:0;color:#667085;font-size:13px">
+            Compartilhe este link com os alunos (site, bio do Instagram, WhatsApp) — de lá dá pra pagar contas em
+            atraso, trocar de plano, ver o treino e se cadastrar, sem precisar vir à academia. Nunca libera a catraca.
+          </p>
+          <div style="display:flex;gap:8px;max-width:480px">
+            <input id="config-link-portal" readonly style="flex:1" />
+            <button type="button" class="btn-secundario" id="btn-copiar-link-portal">Copiar</button>
+          </div>
+        </div>
+
+        <div class="form-painel">
           <h3 style="margin-top:0">Ordem dos menus</h3>
           <p style="margin-top:0;color:#667085;font-size:13px">
             Use as setas para mudar a ordem dos itens na barra lateral. A ordem salva aqui vale para todos os
@@ -1037,9 +1049,11 @@
           <div><label>Vencimento</label><input id="mconta-vencimento" type="date" /></div>
           <div>
             <label>Status</label>
-            <div style="display:flex;align-items:center;gap:10px;padding-top:9px">
+            <div style="display:flex;align-items:center;gap:10px;padding-top:9px;flex-wrap:wrap">
               <span class="badge" id="mconta-status-badge">—</span>
               <button type="button" class="btn-linha oculto" id="btn-remover-quitacao">Remover quitação</button>
+              <button type="button" class="btn-linha oculto" id="btn-marcar-atrasada" title="Força o status pra atrasado, sem precisar esperar o vencimento passar — útil pra testar bloqueio de acesso, totem, etc.">Marcar como atrasada</button>
+              <button type="button" class="btn-linha oculto" id="btn-marcar-pendente">Marcar como pendente</button>
             </div>
           </div>
         </div>

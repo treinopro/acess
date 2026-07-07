@@ -262,7 +262,25 @@
 
         <!-- ABA: Matrículas -->
         <div class="perfil-tab-painel oculto" data-tab-painel="matriculas">
-          <h3 style="margin-top:0">Matrículas</h3>
+          <div class="secao-topo">
+            <h3 style="margin:0">Matrículas</h3>
+            <button type="button" class="btn-secundario" id="btn-toggle-matricula-perfil">+ Nova matrícula</button>
+          </div>
+          <form id="form-matricula-perfil" class="form-painel oculto">
+            <div class="grid-2">
+              <div>
+                <label>Plano</label>
+                <select id="perfil-matricula-plano"></select>
+              </div>
+              <div>
+                <label>Data de início</label>
+                <input type="date" id="perfil-matricula-data" />
+              </div>
+            </div>
+            <div class="form-acoes">
+              <button type="submit" class="btn-primario">Matricular</button>
+            </div>
+          </form>
           <table class="tabela">
             <thead><tr><th>Plano</th><th>Início</th><th>Fim</th><th>Status</th></tr></thead>
             <tbody id="perfil-lista-matriculas"></tbody>
@@ -285,6 +303,7 @@
             <div style="display:flex;gap:10px;flex-wrap:wrap">
               <button type="button" class="btn-secundario" id="btn-toggle-conta-perfil">+ Incluir conta</button>
               <button type="button" class="btn-secundario" id="btn-nova-conta-parcelada-perfil">+ Incluir conta parcelada</button>
+              <button type="button" class="btn-secundario" id="btn-ir-matricular-perfil">+ Matricular em um plano</button>
             </div>
           </div>
 

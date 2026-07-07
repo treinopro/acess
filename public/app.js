@@ -23,6 +23,21 @@ function formatarMoeda(centavos) {
   return (Number(centavos || 0) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
+// O SQLite grava `datetime('now')` como "AAAA-MM-DD HH:MM:SS" em UTC, sem 'Z' nem
+// deslocamento — sem essa marcação, o navegador interpreta a string como se já
+// fosse horário local (em vez de UTC), deixando a hora exibida errada (deslocada
+// pelo fuso, ex.: 3h adiantada no Brasil). Strings que já vêm com 'Z'/offset
+// (geradas por `new Date().toISOString()` em outros pontos do backend) passam
+// direto, sem alteração. Usar esta função (em vez de `new Date(...)` puro) em
+// qualquer timestamp com hora vindo do servidor (criado_em, pago_em, último acesso etc.).
+function parseDataHoraServidor(str) {
+  if (!str) return null;
+  const temFusoExplicito = /[zZ]|[+-]\d{2}:?\d{2}$/.test(str);
+  const pareceDataHoraSemFuso = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/.test(str);
+  const normalizado = pareceDataHoraSemFuso && !temFusoExplicito ? `${str.replace(' ', 'T')}Z` : str;
+  return new Date(normalizado);
+}
+
 function el(html) {
   // Usa <template> em vez de <div>: uma <div> descarta elementos de tabela
   // (<tr>, <td>...) quando não há um <table> ancestral, deixando firstChild nulo.
@@ -229,6 +244,7 @@ document.querySelectorAll('.nav-btn').forEach((btn) => {
       abrirJanelaCatraca();
       return;
     }
+    descartarRascunhoSeExistir();
     document.querySelectorAll('.nav-btn').forEach((b) => b.classList.remove('ativo'));
     btn.classList.add('ativo');
     document.querySelectorAll('.secao').forEach((s) => s.classList.add('oculto'));
@@ -331,6 +347,7 @@ document.getElementById('btn-baixar-backup').addEventListener('click', async () 
 
 // Sai do perfil do aluno e volta para a listagem, reativando o item de navegação.
 function voltarParaAlunos() {
+  descartarRascunhoSeExistir();
   if (typeof pararCameraPerfil === 'function') pararCameraPerfil();
   document.getElementById('secao-perfil-aluno').classList.add('oculto');
   document.querySelectorAll('.secao').forEach((s) => s.classList.add('oculto'));
@@ -404,7 +421,7 @@ async function carregarAlunos() {
       const tr = el(`
         <tr>
           <td title="${aluno.id}">${aluno.id.slice(0, 8)}</td>
-          <td>${aluno.nome}</td>
+          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${aluno.nome}</span></td>
           <td>${contato}</td>
           <td><span class="badge ${aluno.status}">${aluno.status}</span></td>
           <td>
@@ -421,6 +438,7 @@ async function carregarAlunos() {
         </tr>
       `);
       tr.querySelector('[data-acao="status"]').value = aluno.status;
+      tr.querySelector('.nome-clicavel').addEventListener('click', () => abrirPerfilAluno(aluno.id));
       tr.querySelector('[data-acao="perfil"]').addEventListener('click', () => abrirPerfilAluno(aluno.id));
       tr.querySelector('[data-acao="editar"]').addEventListener('click', () => abrirFormAluno(aluno));
       tr.querySelector('[data-acao="status"]').addEventListener('change', async (ev) => {
@@ -515,7 +533,21 @@ async function abrirFormAluno(aluno = null) {
   form.scrollIntoView({ behavior: 'smooth' });
 }
 
-document.getElementById('btn-novo-aluno').addEventListener('click', () => abrirFormAluno());
+// "+ Novo aluno" já cria o registro (com nome provisório) e abre direto no perfil
+// completo — as mesmas abas de um aluno existente (Biometria, Financeiro, Avaliações,
+// Matrículas...). Enquanto a aba "Dados pessoais" não for salva pelo menos uma vez,
+// esse registro é só um rascunho: sair sem salvar apaga ele (ver descartarRascunhoSeExistir).
+document.getElementById('btn-novo-aluno').addEventListener('click', async () => {
+  try {
+    const criado = await api('/api/alunos', { method: 'POST', body: JSON.stringify({ nome: 'Novo aluno' }) });
+    rascunhoNovoAlunoId = criado.id;
+    await abrirPerfilAluno(criado.id);
+    const campoNome = document.getElementById('perfil-nome');
+    campoNome.focus();
+    campoNome.select();
+    mostrarToast('Preencha os dados e clique em "Salvar dados". Se sair sem salvar, o cadastro é descartado.');
+  } catch (err) { mostrarToast(err.message, true); }
+});
 document.getElementById('btn-cancelar-aluno').addEventListener('click', () => {
   document.getElementById('form-aluno').classList.add('oculto');
 });
@@ -589,6 +621,34 @@ document.getElementById('form-aluno').addEventListener('submit', async (ev) => {
 // ---------------- PERFIL DO ALUNO ----------------
 
 let perfilAtualId = null;
+
+// Id do aluno "rascunho" criado pelo fluxo de "+ Novo aluno" (ver mais abaixo). Enquanto
+// não for salvo pelo menos uma vez na aba "Dados pessoais", sair do perfil sem salvar
+// apaga esse registro — assim nenhum cadastro vazio/incompleto fica esquecido no banco.
+let rascunhoNovoAlunoId = null;
+
+// Chamada sempre que o usuário sai do perfil (Voltar, trocar de menu, etc.) — se havia um
+// rascunho de aluno novo ainda não salvo, descarta (apaga) e avisa; senão não faz nada.
+async function descartarRascunhoSeExistir() {
+  if (!rascunhoNovoAlunoId) return;
+  const id = rascunhoNovoAlunoId;
+  rascunhoNovoAlunoId = null;
+  try {
+    await api(`/api/alunos/${id}`, { method: 'DELETE' });
+    mostrarToast('Cadastro não concluído — descartado.');
+  } catch (err) {
+    // Se der erro ao apagar (ex.: já tinha sido salvo por outra aba), não trava a navegação.
+  }
+}
+
+// Aviso nativo do navegador ao fechar a aba/janela com um rascunho aberto. Não consegue
+// apagar o registro nesse caso (não dá pra fazer chamada autenticada de forma confiável
+// no evento de descarregar a página) — só avisa, pra reduzir a chance de esquecer aberto.
+window.addEventListener('beforeunload', (ev) => {
+  if (!rascunhoNovoAlunoId) return;
+  ev.preventDefault();
+  ev.returnValue = '';
+});
 
 async function abrirPerfilAluno(alunoId) {
   perfilAtualId = alunoId;
@@ -666,6 +726,11 @@ async function carregarPerfilAluno() {
         </tr>`).join('')
       : '<tr><td colspan="4">Nenhuma matrícula.</td></tr>';
 
+    await popularSelectPlanosDoPerfil();
+    if (!document.getElementById('perfil-matricula-data').value) {
+      document.getElementById('perfil-matricula-data').value = new Date().toISOString().slice(0, 10);
+    }
+
     document.getElementById('perfil-lista-agendamentos').innerHTML = agendamentos.length
       ? agendamentos.map((a) => `
         <tr>
@@ -701,7 +766,7 @@ async function carregarFinanceiroPerfil() {
           <td>${formatarMoeda(c.valor_centavos)}</td>
           <td>${c.vencimento || '—'}</td>
           <td><span class="badge ${c.status}">${c.status}</span></td>
-          <td>${dataPago ? new Date(dataPago).toLocaleDateString('pt-BR') : '—'}</td>
+          <td>${dataPago ? parseDataHoraServidor(dataPago).toLocaleDateString('pt-BR') : '—'}</td>
           <td>${valorPago > 0 ? formatarMoeda(valorPago) : '—'}</td>
           <td>
             <button class="btn-linha" data-acao="editar">Alterar</button>
@@ -767,7 +832,9 @@ document.getElementById('form-perfil-dados').addEventListener('submit', async (e
   };
   try {
     await api(`/api/alunos/${perfilAtualId}`, { method: 'PUT', body: JSON.stringify(dados) });
+    if (rascunhoNovoAlunoId === perfilAtualId) rascunhoNovoAlunoId = null; // confirmado: não é mais rascunho
     mostrarToast('Dados do aluno atualizados.');
+    document.getElementById('perfil-nome-aluno').textContent = `Perfil de ${dados.nome}`;
   } catch (err) { mostrarToast(err.message, true); }
 });
 
@@ -1016,6 +1083,46 @@ function popularSelectPlanos(select, planos) {
   select.innerHTML = planos.map((p) => `<option value="${p.id}">${p.nome} (${formatarMoeda(p.valor_centavos)})</option>`).join('');
 }
 
+// ---------------- Matricular em um plano direto pela aba Matrículas do perfil ----------------
+
+async function popularSelectPlanosDoPerfil() {
+  try {
+    const planos = await api('/api/planos');
+    popularSelectPlanos(document.getElementById('perfil-matricula-plano'), planos);
+  } catch (err) { mostrarToast(err.message, true); }
+}
+
+document.getElementById('btn-toggle-matricula-perfil').addEventListener('click', () => {
+  document.getElementById('form-matricula-perfil').classList.toggle('oculto');
+});
+
+document.getElementById('btn-ir-matricular-perfil').addEventListener('click', () => {
+  trocarAbaPerfil('matriculas');
+  document.getElementById('form-matricula-perfil').classList.remove('oculto');
+  document.getElementById('form-matricula-perfil').scrollIntoView({ behavior: 'smooth' });
+});
+
+document.getElementById('form-matricula-perfil').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const planoId = document.getElementById('perfil-matricula-plano').value;
+  const dataInicio = document.getElementById('perfil-matricula-data').value;
+  if (!planoId) { mostrarToast('Selecione um plano.', true); return; }
+  try {
+    await api('/api/planos/matricular', {
+      method: 'POST',
+      body: JSON.stringify({
+        aluno_id: perfilAtualId,
+        plano_id: planoId,
+        data_inicio: dataInicio || new Date().toISOString().slice(0, 10),
+      }),
+    });
+    mostrarToast('Aluno matriculado. Primeira cobrança gerada em Contas a Receber.');
+    document.getElementById('form-matricula-perfil').classList.add('oculto');
+    await carregarPerfilAluno();
+    if (typeof carregarFinanceiroPerfil === 'function') carregarFinanceiroPerfil();
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
 async function popularSelectAlunos(select, { incluirInativos = false, comPlaceholder = false } = {}) {
   try {
     const query = incluirInativos ? '?incluir_inativos=true' : '?status=ativo';
@@ -1033,7 +1140,7 @@ async function carregarMatriculas() {
     matriculas.forEach((m) => {
       const tr = el(`
         <tr>
-          <td>${m.aluno_nome}</td>
+          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${m.aluno_nome}</span></td>
           <td>${m.plano_nome}</td>
           <td>${m.data_inicio}</td>
           <td>${m.data_fim || '—'}</td>
@@ -1041,6 +1148,7 @@ async function carregarMatriculas() {
           <td>${m.status === 'ativa' ? '<button class="btn-linha perigo" data-acao="cancelar">Cancelar</button>' : '—'}</td>
         </tr>
       `);
+      tr.querySelector('.nome-clicavel').addEventListener('click', () => abrirPerfilAluno(m.aluno_id));
       const botaoCancelar = tr.querySelector('[data-acao="cancelar"]');
       if (botaoCancelar) {
         botaoCancelar.addEventListener('click', async () => {
@@ -1145,7 +1253,7 @@ async function carregarAgendamentos() {
         <tr>
           <td>${a.data_aula}</td>
           <td>${a.turma_nome}</td>
-          <td>${a.aluno_nome}</td>
+          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${a.aluno_nome}</span></td>
           <td><span class="badge ${a.status}">${a.status}</span></td>
           <td>
             <button class="btn-linha" data-acao="checkin">Check-in</button>
@@ -1153,6 +1261,7 @@ async function carregarAgendamentos() {
           </td>
         </tr>
       `);
+      tr.querySelector('.nome-clicavel').addEventListener('click', () => abrirPerfilAluno(a.aluno_id));
       tr.querySelector('[data-acao="checkin"]').addEventListener('click', async () => {
         try {
           await api('/api/agendamentos/checkin', {
@@ -1296,12 +1405,12 @@ async function carregarContas() {
       const dataPago = c.data_pago_calc || (c.status === 'pago' ? c.pago_em : null);
       const tr = el(`
         <tr>
-          <td>${c.aluno_nome}</td>
+          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${c.aluno_nome}</span></td>
           <td>${c.descricao || '—'}</td>
           <td>${formatarMoeda(c.valor_centavos)}</td>
           <td>${c.vencimento || '—'}</td>
           <td><span class="badge ${c.status}">${c.status}</span></td>
-          <td>${dataPago ? new Date(dataPago).toLocaleDateString('pt-BR') : '—'}</td>
+          <td>${dataPago ? parseDataHoraServidor(dataPago).toLocaleDateString('pt-BR') : '—'}</td>
           <td>${valorPago > 0 ? formatarMoeda(valorPago) : '—'}</td>
           <td>
             <button class="btn-linha" data-acao="editar">Alterar</button>
@@ -1310,6 +1419,7 @@ async function carregarContas() {
           </td>
         </tr>
       `);
+      tr.querySelector('.nome-clicavel').addEventListener('click', () => abrirPerfilAluno(c.aluno_id));
       tr.querySelector('[data-acao="editar"]').addEventListener('click', () => abrirModalConta(c));
       tr.querySelector('[data-acao="parcelar"]').addEventListener('click', () => abrirModalParcelamento({ modo: 'existente', conta: c }));
       tr.querySelector('[data-acao="excluir"]').addEventListener('click', async () => {
@@ -1960,13 +2070,17 @@ async function carregarAcessosCatraca() {
     const tbody = document.getElementById('lista-acessos-catraca');
     tbody.innerHTML = lista.length ? '' : '<tr><td colspan="3">Nenhuma tentativa registrada ainda.</td></tr>';
     lista.slice(0, 15).forEach((a) => {
+      const nomeCel = a.aluno_id
+        ? `<span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${a.aluno_nome}</span>`
+        : (a.aluno_nome || '—');
       const tr = el(`
         <tr>
-          <td>${new Date(a.criado_em).toLocaleString('pt-BR')}</td>
-          <td>${a.aluno_nome || '—'}</td>
+          <td>${parseDataHoraServidor(a.criado_em).toLocaleString('pt-BR')}</td>
+          <td>${nomeCel}</td>
           <td title="${a.mensagem || ''}"><span class="badge ${a.resultado === 'liberado' ? 'ativo' : 'inadimplente'}">${a.resultado}</span></td>
         </tr>
       `);
+      tr.querySelector('.nome-clicavel')?.addEventListener('click', () => abrirPerfilAluno(a.aluno_id));
       tbody.appendChild(tr);
     });
   } catch (err) { mostrarToast(err.message, true); }
@@ -2024,17 +2138,19 @@ async function buscarRelatorioFinanceiro() {
       const dataPago = c.data_pago_calc || (c.status === 'pago' ? c.pago_em : null);
       totalValor += c.valor_centavos;
       totalPago += valorPago;
-      tbody.appendChild(el(`
+      const trFin = el(`
         <tr>
-          <td>${c.aluno_nome}</td>
+          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${c.aluno_nome}</span></td>
           <td>${c.descricao || '—'}</td>
           <td>${formatarMoeda(c.valor_centavos)}</td>
           <td>${c.vencimento || '—'}</td>
           <td><span class="badge ${c.status}">${c.status}</span></td>
-          <td>${dataPago ? new Date(dataPago).toLocaleDateString('pt-BR') : '—'}</td>
+          <td>${dataPago ? parseDataHoraServidor(dataPago).toLocaleDateString('pt-BR') : '—'}</td>
           <td>${valorPago > 0 ? formatarMoeda(valorPago) : '—'}</td>
         </tr>
-      `));
+      `);
+      trFin.querySelector('.nome-clicavel').addEventListener('click', () => abrirPerfilAluno(c.aluno_id));
+      tbody.appendChild(trFin);
     });
     document.getElementById('rel-fin-total').textContent = contas.length
       ? `${contas.length} conta(s) — total ${formatarMoeda(totalValor)}, pago ${formatarMoeda(totalPago)}`
@@ -2057,15 +2173,20 @@ async function buscarRelatorioAcessoDiario() {
     const tbody = document.getElementById('rel-diario-lista');
     tbody.innerHTML = lista.length ? '' : '<tr><td colspan="5">Nenhum acesso nessa data.</td></tr>';
     lista.forEach((a) => {
-      tbody.appendChild(el(`
+      const nomeCel = a.aluno_id
+        ? `<span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${a.aluno_nome}</span>`
+        : (a.aluno_nome || '—');
+      const trDiario = el(`
         <tr>
-          <td>${new Date(a.criado_em).toLocaleTimeString('pt-BR')}</td>
-          <td>${a.aluno_nome || '—'}</td>
+          <td>${parseDataHoraServidor(a.criado_em).toLocaleTimeString('pt-BR')}</td>
+          <td>${nomeCel}</td>
           <td>${a.metodo}</td>
           <td><span class="badge ${a.resultado === 'liberado' ? 'ativo' : 'inadimplente'}">${a.resultado}</span></td>
           <td>${a.mensagem || '—'}</td>
         </tr>
-      `));
+      `);
+      trDiario.querySelector('.nome-clicavel')?.addEventListener('click', () => abrirPerfilAluno(a.aluno_id));
+      tbody.appendChild(trDiario);
     });
   } catch (err) { mostrarToast(err.message, true); }
 }
@@ -2091,7 +2212,7 @@ async function buscarRelatorioAcessoPessoal() {
     lista.forEach((a) => {
       tbody.appendChild(el(`
         <tr>
-          <td>${new Date(a.criado_em).toLocaleString('pt-BR')}</td>
+          <td>${parseDataHoraServidor(a.criado_em).toLocaleString('pt-BR')}</td>
           <td>${a.metodo}</td>
           <td><span class="badge ${a.resultado === 'liberado' ? 'ativo' : 'inadimplente'}">${a.resultado}</span></td>
           <td>${a.mensagem || '—'}</td>
@@ -2125,12 +2246,14 @@ async function buscarRelatorioUltimoAcesso() {
     const tbody = document.getElementById('rel-ultimo-lista');
     tbody.innerHTML = lista.length ? '' : '<tr><td colspan="2">Nenhum acesso encontrado.</td></tr>';
     lista.forEach((a) => {
-      tbody.appendChild(el(`
+      const trUltimo = el(`
         <tr>
-          <td>${a.aluno_nome}</td>
-          <td>${new Date(a.ultimo_acesso).toLocaleString('pt-BR')}</td>
+          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${a.aluno_nome}</span></td>
+          <td>${parseDataHoraServidor(a.ultimo_acesso).toLocaleString('pt-BR')}</td>
         </tr>
-      `));
+      `);
+      trUltimo.querySelector('.nome-clicavel').addEventListener('click', () => abrirPerfilAluno(a.aluno_id));
+      tbody.appendChild(trUltimo);
     });
   } catch (err) { mostrarToast(err.message, true); }
 }
@@ -2154,15 +2277,19 @@ async function carregarAcessosRecentes() {
     const tbody = document.getElementById('lista-acessos-recentes');
     tbody.innerHTML = lista.length ? '' : '<tr><td colspan="4">Nenhum acesso registrado ainda.</td></tr>';
     lista.forEach((a) => {
-      const quando = new Date(a.criado_em);
+      const quando = parseDataHoraServidor(a.criado_em);
+      const nomeCel = a.aluno_id
+        ? `<span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${a.aluno_nome}</span>`
+        : (a.aluno_nome || '—');
       const tr = el(`
         <tr>
           <td>${quando.toLocaleDateString('pt-BR')}</td>
           <td>${quando.toLocaleTimeString('pt-BR')}</td>
-          <td>${a.aluno_nome || '—'}</td>
+          <td>${nomeCel}</td>
           <td>${formatarTipoAcesso(a)}</td>
         </tr>
       `);
+      tr.querySelector('.nome-clicavel')?.addEventListener('click', () => abrirPerfilAluno(a.aluno_id));
       tbody.appendChild(tr);
     });
   } catch (err) {

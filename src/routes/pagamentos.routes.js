@@ -2,9 +2,10 @@ const express = require('express');
 const { v4: uuid } = require('uuid');
 const { z } = require('zod');
 const db = require('../db/client');
-const { autenticar } = require('../middleware/auth');
+const { autenticar, apenasAdmin } = require('../middleware/auth');
 const mercadopago = require('../services/payment/mercadopago.service');
 const infinitepay = require('../services/payment/infinitepay.service');
+const { gerarCobrancasRecorrentes } = require('../services/cobrancas.service');
 
 const router = express.Router();
 
@@ -510,6 +511,38 @@ router.get('/inadimplentes', autenticar, async (req, res, next) => {
       ORDER BY c.vencimento
     `);
     res.json(result.rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---------------- Geração manual de contas a receber (estilo Secullum) ----------------
+// O job automático (src/jobs/recorrencia.js) já roda sozinho a cada 24h, mas o
+// admin pode querer forçar agora (ex: acabou de corrigir uma matrícula, ou quer
+// conferir antes de fechar o caixa do dia) — mesma função "Gerar Contas a
+// Receber" que existia no sistema antigo.
+
+// GET /api/pagamentos/gerar-recorrentes/status — data/quantidade da última
+// geração (manual ou automática), pra mostrar ao lado do botão no painel.
+router.get('/gerar-recorrentes/status', autenticar, async (req, res, next) => {
+  try {
+    const result = await db.execute({
+      sql: `SELECT valor FROM configuracoes WHERE chave = 'ultima_geracao_cobrancas'`,
+      args: [],
+    });
+    if (!result.rows[0]) return res.json({ executadoEm: null, geradas: null });
+    res.json(JSON.parse(result.rows[0].valor));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/pagamentos/gerar-recorrentes — dispara a rotina agora (só admin,
+// mesma restrição do resto de "Configurações" no Secullum).
+router.post('/gerar-recorrentes', autenticar, apenasAdmin, async (req, res, next) => {
+  try {
+    const geradas = await gerarCobrancasRecorrentes();
+    res.json({ geradas, executadoEm: new Date().toISOString() });
   } catch (err) {
     next(err);
   }

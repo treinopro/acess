@@ -13,6 +13,7 @@ const agendamentoRoutes = require('./routes/agendamento.routes');
 const pagamentosRoutes = require('./routes/pagamentos.routes');
 const usuariosRoutes = require('./routes/usuarios.routes');
 const terminalRoutes = require('./routes/terminal.routes');
+const treinosRoutes = require('./routes/treinos.routes');
 const { router: configRoutes } = require('./routes/config.routes');
 const { rodar: rodarRecorrencia } = require('./jobs/recorrencia');
 const { rodar: rodarBackup } = require('./jobs/backup');
@@ -36,6 +37,7 @@ app.use('/api/agendamentos', agendamentoRoutes);
 app.use('/api/pagamentos', pagamentosRoutes);
 app.use('/api/usuarios', usuariosRoutes);
 app.use('/api/terminal', terminalRoutes);
+app.use('/api/treinos', treinosRoutes);
 app.use('/api/config', configRoutes);
 
 app.use(errorHandler);

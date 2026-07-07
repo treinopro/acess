@@ -111,6 +111,7 @@ function mostrarApp() {
   document.getElementById('nav-config').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
   document.getElementById('nav-catraca').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
   document.getElementById('btn-acessos-recentes').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
+  document.getElementById('btn-gerar-recorrentes').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
   carregarSecao('alunos');
 }
 
@@ -144,12 +145,13 @@ const LABELS_MENU = {
   planos: 'Planos',
   agenda: 'Turmas & Agenda',
   pagamentos: 'Contas a Receber',
+  'pagamento-rapido': 'Pagamento Rápido',
   relatorios: 'Relatórios',
   usuarios: 'Usuários',
   config: 'Configurações',
   catraca: 'Catraca',
 };
-const ORDEM_MENU_PADRAO = ['alunos', 'planos', 'agenda', 'pagamentos', 'relatorios', 'usuarios', 'config', 'catraca'];
+const ORDEM_MENU_PADRAO = ['alunos', 'planos', 'agenda', 'pagamentos', 'pagamento-rapido', 'relatorios', 'usuarios', 'config', 'catraca'];
 let ordemMenuAtual = [...ORDEM_MENU_PADRAO];
 
 // Reordena os botões <nav> de verdade na barra lateral (move os elementos já
@@ -258,6 +260,7 @@ function carregarSecao(nome) {
   if (nome === 'planos') carregarPlanos();
   if (nome === 'agenda') carregarAgenda();
   if (nome === 'pagamentos') carregarPagamentos();
+  if (nome === 'pagamento-rapido') iniciarPagamentoRapido();
   if (nome === 'usuarios') carregarUsuarios();
   if (nome === 'config') carregarConfiguracoesForm();
   if (nome === 'relatorios') carregarSecaoRelatorios();
@@ -317,6 +320,7 @@ async function carregarConfiguracoesForm() {
     const config = await api('/api/config');
     document.getElementById('config-nome-app').value = config.nome_app || '';
     document.getElementById('config-licenciado-para').value = config.licenciado_para || '';
+    document.getElementById('config-treino-app-url').value = config.treino_app_url || '';
     ordemMenuAtual = Array.isArray(config.menu_ordem) && config.menu_ordem.length
       ? [...config.menu_ordem]
       : [...ORDEM_MENU_PADRAO];
@@ -329,6 +333,7 @@ document.getElementById('form-config-app').addEventListener('submit', async (ev)
   const dados = {
     nome_app: document.getElementById('config-nome-app').value.trim() || 'Academia Gestão',
     licenciado_para: document.getElementById('config-licenciado-para').value.trim(),
+    treino_app_url: document.getElementById('config-treino-app-url').value.trim(),
   };
   try {
     await api('/api/config', { method: 'PUT', body: JSON.stringify(dados) });
@@ -744,10 +749,219 @@ async function carregarPerfilAluno() {
     // A aba Financeiro usa carregarFinanceiroPerfil() (endpoint com valor pago/ações),
     // não o array "cobrancas" simplificado que já vem no /perfil — evita ficarem dessincronizados.
     await carregarFinanceiroPerfil();
+
+    inicializarAbaTreino(aluno.treino_modo || 'nativo');
   } catch (err) {
     mostrarToast(err.message, true);
   }
 }
+
+// ---------------- Aba Treino do perfil ----------------
+
+const DIAS_SEMANA_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+let treinosCache = [];
+let treinoAtivoId = null;
+
+function inicializarAbaTreino(modoAtual) {
+  document.getElementById(modoAtual === 'app_externo' ? 'treino-modo-externo' : 'treino-modo-nativo').checked = true;
+  atualizarPainelModoTreino(modoAtual);
+  if (modoAtual === 'nativo') {
+    carregarTreinosPerfil();
+  } else {
+    atualizarLinkTreinoExterno();
+  }
+}
+
+function atualizarPainelModoTreino(modo) {
+  document.getElementById('treino-painel-nativo').classList.toggle('oculto', modo !== 'nativo');
+  document.getElementById('treino-painel-externo').classList.toggle('oculto', modo !== 'app_externo');
+}
+
+document.querySelectorAll('input[name="treino-modo"]').forEach((radio) => {
+  radio.addEventListener('change', async (ev) => {
+    const modo = ev.target.value;
+    atualizarPainelModoTreino(modo);
+    try {
+      await api(`/api/alunos/${perfilAtualId}`, { method: 'PUT', body: JSON.stringify({ treino_modo: modo }) });
+      if (modo === 'nativo') carregarTreinosPerfil(); else atualizarLinkTreinoExterno();
+    } catch (err) { mostrarToast(err.message, true); }
+  });
+});
+
+async function atualizarLinkTreinoExterno() {
+  try {
+    const config = await api('/api/config');
+    const link = document.getElementById('link-treino-app-externo');
+    const aviso = document.getElementById('aviso-sem-link-app');
+    if (config.treino_app_url) {
+      link.href = config.treino_app_url;
+      link.classList.remove('oculto');
+      aviso.classList.add('oculto');
+    } else {
+      link.classList.add('oculto');
+      aviso.classList.remove('oculto');
+    }
+  } catch (err) { /* silencioso — não é crítico pra tela abrir */ }
+}
+
+async function carregarTreinosPerfil() {
+  try {
+    treinosCache = await api(`/api/treinos?aluno_id=${perfilAtualId}`);
+    renderizarAbasTreino();
+  } catch (err) { mostrarToast(err.message, true); }
+}
+
+function renderizarAbasTreino() {
+  const caixa = document.getElementById('treino-abas');
+  caixa.innerHTML = '';
+  if (!treinosCache.length) {
+    document.getElementById('treino-sem-treinos').classList.remove('oculto');
+    document.getElementById('treino-conteudo-ativo').classList.add('oculto');
+    treinoAtivoId = null;
+    return;
+  }
+  document.getElementById('treino-sem-treinos').classList.add('oculto');
+
+  if (!treinoAtivoId || !treinosCache.some((t) => t.id === treinoAtivoId)) {
+    treinoAtivoId = treinosCache[0].id;
+  }
+
+  treinosCache.forEach((t) => {
+    const btn = el(`<button type="button" class="btn-linha ${t.id === treinoAtivoId ? 'btn-primario' : ''}">${t.nome}</button>`);
+    btn.addEventListener('click', () => { treinoAtivoId = t.id; renderizarAbasTreino(); });
+    caixa.appendChild(btn);
+  });
+
+  renderizarTreinoAtivo();
+}
+
+function renderizarTreinoAtivo() {
+  const treino = treinosCache.find((t) => t.id === treinoAtivoId);
+  document.getElementById('treino-conteudo-ativo').classList.toggle('oculto', !treino);
+  if (!treino) return;
+
+  document.getElementById('treino-nome-ativo').textContent = treino.nome;
+
+  const diasBox = document.getElementById('treino-dias-semana');
+  diasBox.innerHTML = '';
+  DIAS_SEMANA_LABELS.forEach((label, idx) => {
+    const marcado = treino.dias_semana.includes(idx);
+    const wrapper = el(`
+      <label style="display:flex;align-items:center;gap:4px;font-size:13px">
+        <input type="checkbox" style="width:auto" ${marcado ? 'checked' : ''} /> ${label}
+      </label>
+    `);
+    wrapper.querySelector('input').addEventListener('change', async (ev) => {
+      const dias = new Set(treino.dias_semana);
+      if (ev.target.checked) dias.add(idx); else dias.delete(idx);
+      treino.dias_semana = [...dias].sort();
+      try {
+        await api(`/api/treinos/${treino.id}`, { method: 'PUT', body: JSON.stringify({ dias_semana: treino.dias_semana }) });
+      } catch (err) { mostrarToast(err.message, true); }
+    });
+    diasBox.appendChild(wrapper);
+  });
+
+  const tbody = document.getElementById('treino-lista-exercicios');
+  tbody.innerHTML = treino.exercicios.length ? '' : '<tr><td colspan="6">Nenhum exercício cadastrado ainda.</td></tr>';
+  treino.exercicios.forEach((ex) => {
+    const tr = el(`
+      <tr>
+        <td>${ex.exercicio}</td>
+        <td>${ex.series || '—'}</td>
+        <td>${ex.carga || '—'}</td>
+        <td>${ex.intervalo || '—'}</td>
+        <td>${ex.observacao || '—'}</td>
+        <td>
+          <button type="button" class="btn-linha" data-acao="editar">Editar</button>
+          <button type="button" class="btn-linha perigo" data-acao="excluir">Excluir</button>
+        </td>
+      </tr>
+    `);
+    tr.querySelector('[data-acao="editar"]').addEventListener('click', () => abrirFormExercicio(ex));
+    tr.querySelector('[data-acao="excluir"]').addEventListener('click', async () => {
+      if (!confirmar('Excluir este exercício?')) return;
+      try {
+        await api(`/api/treinos/exercicios/${ex.id}`, { method: 'DELETE' });
+        mostrarToast('Exercício excluído.');
+        carregarTreinosPerfil();
+      } catch (err) { mostrarToast(err.message, true); }
+    });
+    tbody.appendChild(tr);
+  });
+}
+
+document.getElementById('btn-novo-treino').addEventListener('click', async () => {
+  const nome = prompt('Nome do treino (ex: Treino A):', `Treino ${String.fromCharCode(65 + treinosCache.length)}`);
+  if (!nome || !nome.trim()) return;
+  try {
+    const novo = await api('/api/treinos', {
+      method: 'POST',
+      body: JSON.stringify({ aluno_id: perfilAtualId, nome: nome.trim(), dias_semana: [] }),
+    });
+    treinoAtivoId = novo.id;
+    await carregarTreinosPerfil();
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+document.getElementById('btn-renomear-treino').addEventListener('click', async () => {
+  const treino = treinosCache.find((t) => t.id === treinoAtivoId);
+  if (!treino) return;
+  const novoNome = prompt('Novo nome do treino:', treino.nome);
+  if (!novoNome || !novoNome.trim()) return;
+  try {
+    await api(`/api/treinos/${treino.id}`, { method: 'PUT', body: JSON.stringify({ nome: novoNome.trim() }) });
+    await carregarTreinosPerfil();
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+document.getElementById('btn-excluir-treino').addEventListener('click', async () => {
+  const treino = treinosCache.find((t) => t.id === treinoAtivoId);
+  if (!treino) return;
+  if (!confirmar(`Excluir o treino "${treino.nome}" e todos os exercícios dele?`)) return;
+  try {
+    await api(`/api/treinos/${treino.id}`, { method: 'DELETE' });
+    treinoAtivoId = null;
+    await carregarTreinosPerfil();
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+function abrirFormExercicio(exercicio) {
+  document.getElementById('exercicio-id').value = exercicio?.id || '';
+  document.getElementById('exercicio-nome').value = exercicio?.exercicio || '';
+  document.getElementById('exercicio-series').value = exercicio?.series || '';
+  document.getElementById('exercicio-carga').value = exercicio?.carga || '';
+  document.getElementById('exercicio-intervalo').value = exercicio?.intervalo || '';
+  document.getElementById('exercicio-observacao').value = exercicio?.observacao || '';
+  document.getElementById('form-exercicio').classList.remove('oculto');
+}
+
+document.getElementById('btn-toggle-exercicio').addEventListener('click', () => abrirFormExercicio(null));
+document.getElementById('btn-cancelar-exercicio').addEventListener('click', () => {
+  document.getElementById('form-exercicio').classList.add('oculto');
+});
+
+document.getElementById('form-exercicio').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const id = document.getElementById('exercicio-id').value;
+  const dados = {
+    exercicio: document.getElementById('exercicio-nome').value.trim(),
+    series: document.getElementById('exercicio-series').value.trim() || null,
+    carga: document.getElementById('exercicio-carga').value.trim() || null,
+    intervalo: document.getElementById('exercicio-intervalo').value.trim() || null,
+    observacao: document.getElementById('exercicio-observacao').value.trim() || null,
+  };
+  try {
+    if (id) {
+      await api(`/api/treinos/exercicios/${id}`, { method: 'PUT', body: JSON.stringify(dados) });
+    } else {
+      await api(`/api/treinos/${treinoAtivoId}/exercicios`, { method: 'POST', body: JSON.stringify(dados) });
+    }
+    mostrarToast('Exercício salvo.');
+    document.getElementById('form-exercicio').classList.add('oculto');
+    await carregarTreinosPerfil();
+  } catch (err) { mostrarToast(err.message, true); }
+});
 
 // ---------------- Aba Financeiro do perfil (espelha Contas a Receber, filtrado no aluno) ----------------
 
@@ -1359,6 +1573,165 @@ async function carregarPagamentos() {
   await popularSelectAlunosComTodos(document.getElementById('filtro-conta-aluno'));
   await carregarContas();
       carregarFinanceiroPerfil();
+  if (estado.usuario?.papel === 'admin') carregarStatusGeracaoCobrancas();
+}
+
+// ---------------- Gerar Contas a Receber (manual, estilo Secullum) ----------------
+
+async function carregarStatusGeracaoCobrancas() {
+  const texto = document.getElementById('txt-ultima-geracao-cobrancas');
+  try {
+    const status = await api('/api/pagamentos/gerar-recorrentes/status');
+    if (!status.executadoEm) {
+      texto.textContent = 'Ainda não rodou nenhuma geração de contas a receber neste sistema.';
+    } else {
+      const data = parseDataHoraServidor(status.executadoEm).toLocaleString('pt-BR');
+      texto.textContent = `Última geração de contas a receber: ${data} (${status.geradas} cobrança(s) gerada(s) nessa execução). Roda sozinho a cada 24h; o botão só força rodar agora.`;
+    }
+    texto.classList.remove('oculto');
+  } catch (err) {
+    texto.classList.add('oculto');
+  }
+}
+
+document.getElementById('btn-gerar-recorrentes').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-gerar-recorrentes');
+  btn.disabled = true;
+  const textoOriginal = btn.textContent;
+  btn.textContent = 'Gerando...';
+  try {
+    const resp = await api('/api/pagamentos/gerar-recorrentes', { method: 'POST' });
+    mostrarToast(resp.geradas > 0
+      ? `${resp.geradas} conta(s) a receber gerada(s).`
+      : 'Nenhuma conta nova pra gerar agora — tudo em dia.');
+    await carregarContas();
+    carregarFinanceiroPerfil();
+    await carregarStatusGeracaoCobrancas();
+  } catch (err) {
+    mostrarToast(err.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = textoOriginal;
+  }
+});
+
+// ---------------- Pagamento Rápido (busca por nome, resolve na hora) ----------------
+
+let prDebounceTimer = null;
+let prAlunoSelecionadoId = null;
+
+function iniciarPagamentoRapido() {
+  const campo = document.getElementById('pr-busca-nome');
+  campo.value = '';
+  campo.focus();
+  document.getElementById('pr-sugestoes').classList.add('oculto');
+  document.getElementById('pr-resultado').classList.add('oculto');
+  prAlunoSelecionadoId = null;
+}
+
+document.getElementById('pr-busca-nome').addEventListener('input', (ev) => {
+  clearTimeout(prDebounceTimer);
+  const termo = ev.target.value.trim();
+  document.getElementById('pr-resultado').classList.add('oculto');
+  if (termo.length < 2) {
+    document.getElementById('pr-sugestoes').classList.add('oculto');
+    return;
+  }
+  prDebounceTimer = setTimeout(() => buscarSugestoesPagamentoRapido(termo), 250);
+});
+
+// Fecha a lista de sugestões ao clicar fora dela.
+document.addEventListener('click', (ev) => {
+  const caixa = document.getElementById('pr-sugestoes');
+  const campo = document.getElementById('pr-busca-nome');
+  if (caixa && !caixa.contains(ev.target) && ev.target !== campo) caixa.classList.add('oculto');
+});
+
+async function buscarSugestoesPagamentoRapido(termo) {
+  try {
+    // incluir_inativos: aluno trancado/inativo pode continuar devendo — a
+    // recepção precisa achar e quitar mesmo assim.
+    const alunos = await api(`/api/alunos?busca=${encodeURIComponent(termo)}&incluir_inativos=true`);
+    const caixa = document.getElementById('pr-sugestoes');
+    if (!alunos.length) {
+      caixa.innerHTML = '<div style="padding:10px;color:#667085;font-size:13px">Nenhum aluno encontrado.</div>';
+      caixa.classList.remove('oculto');
+      return;
+    }
+    caixa.innerHTML = '';
+    alunos.slice(0, 15).forEach((a) => {
+      const item = el(`
+        <div class="pr-sugestao-item" style="padding:10px 12px;cursor:pointer;border-bottom:1px solid #f0f1f3">
+          <div style="font-weight:600">${a.nome}${a.status !== 'ativo' ? ` <span class="badge ${a.status}">${a.status}</span>` : ''}</div>
+          <div style="font-size:12px;color:#667085">${a.telefone || a.cpf || ''}</div>
+        </div>
+      `);
+      item.addEventListener('mouseenter', () => { item.style.background = '#f9fafb'; });
+      item.addEventListener('mouseleave', () => { item.style.background = ''; });
+      item.addEventListener('click', () => selecionarAlunoPagamentoRapido(a));
+      caixa.appendChild(item);
+    });
+    caixa.classList.remove('oculto');
+  } catch (err) {
+    mostrarToast(err.message, true);
+  }
+}
+
+async function selecionarAlunoPagamentoRapido(aluno) {
+  prAlunoSelecionadoId = aluno.id;
+  document.getElementById('pr-busca-nome').value = aluno.nome;
+  document.getElementById('pr-sugestoes').classList.add('oculto');
+  document.getElementById('pr-aluno-nome').textContent = aluno.nome;
+  document.getElementById('pr-resultado').classList.remove('oculto');
+
+  const badgeStatus = document.getElementById('pr-status-acesso');
+  badgeStatus.textContent = '...';
+  badgeStatus.className = 'badge';
+  try {
+    const status = await api(`/api/alunos/${aluno.id}/status-acesso`);
+    badgeStatus.textContent = status.liberado ? 'Acesso liberado' : `Acesso bloqueado — ${status.motivo}`;
+    badgeStatus.className = `badge ${status.liberado ? 'ativo' : 'inadimplente'}`;
+  } catch (err) {
+    badgeStatus.textContent = '—';
+  }
+
+  await carregarContasPagamentoRapido(aluno.id);
+}
+
+async function carregarContasPagamentoRapido(alunoId) {
+  const tbody = document.getElementById('pr-lista-contas');
+  tbody.innerHTML = '<tr><td colspan="5">Carregando...</td></tr>';
+  try {
+    const contas = await api(`/api/pagamentos/cobrancas?aluno_id=${alunoId}`);
+    if (!contas.length) {
+      tbody.innerHTML = '<tr><td colspan="5">Nenhuma conta encontrada pra este aluno.</td></tr>';
+      return;
+    }
+    // Em aberto primeiro (pendente/atrasado), depois o resto por vencimento decrescente.
+    const ordenadas = [...contas].sort((a, b) => {
+      const aAberta = a.status === 'pendente' || a.status === 'atrasado';
+      const bAberta = b.status === 'pendente' || b.status === 'atrasado';
+      if (aAberta !== bAberta) return aAberta ? -1 : 1;
+      return (b.vencimento || '').localeCompare(a.vencimento || '');
+    });
+    tbody.innerHTML = '';
+    ordenadas.forEach((c) => {
+      const aberta = c.status === 'pendente' || c.status === 'atrasado';
+      const tr = el(`
+        <tr>
+          <td>${c.descricao || '—'}</td>
+          <td>${formatarMoeda(c.valor_centavos)}</td>
+          <td>${c.vencimento || '—'}</td>
+          <td><span class="badge ${c.status}">${c.status}</span></td>
+          <td><button class="btn-linha ${aberta ? 'btn-primario' : ''}" data-acao="abrir">${aberta ? 'Pagar' : 'Ver'}</button></td>
+        </tr>
+      `);
+      tr.querySelector('[data-acao="abrir"]').addEventListener('click', () => abrirModalConta(c));
+      tbody.appendChild(tr);
+    });
+  } catch (err) {
+    mostrarToast(err.message, true);
+  }
 }
 
 // Select de filtro precisa listar TODOS os alunos (não só ativos), senão não dá
@@ -1498,6 +1871,9 @@ async function abrirModalConta(conta) {
 function fecharModalConta() {
   document.getElementById('modal-conta').classList.add('oculto');
   modalContaAtual = null;
+  // Se a tela de Pagamento Rápido estiver com um aluno selecionado, atualiza a
+  // lista dele também (o modal pode ter sido aberto a partir de lá).
+  if (typeof prAlunoSelecionadoId !== 'undefined' && prAlunoSelecionadoId) carregarContasPagamentoRapido(prAlunoSelecionadoId);
 }
 
 function atualizarBadgeStatusModal(status) {

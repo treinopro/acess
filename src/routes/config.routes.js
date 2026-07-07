@@ -8,12 +8,16 @@ const router = express.Router();
 // Chaves válidas de menu, na ordem padrão de fábrica — usada como fallback
 // quando nenhuma ordem customizada foi salva ainda, e para validar que o
 // admin não mande nada estranho (chave inventada, item repetido/faltando).
-const CHAVES_MENU_PADRAO = ['alunos', 'planos', 'agenda', 'pagamentos', 'relatorios', 'usuarios', 'config', 'catraca'];
+const CHAVES_MENU_PADRAO = ['alunos', 'planos', 'agenda', 'pagamentos', 'pagamento-rapido', 'relatorios', 'usuarios', 'config', 'catraca'];
 
 const PADROES = {
   nome_app: 'Academia Gestão',
   licenciado_para: '',
   menu_ordem: CHAVES_MENU_PADRAO,
+  // Link do app externo de treino, mostrado pro aluno cujo treino_modo =
+  // 'app_externo' (perfil, totem, portal remoto). Vínculo com o app acontece
+  // lá mesmo, por CPF ou e-mail, no primeiro acesso do aluno.
+  treino_app_url: '',
 };
 
 // GET /api/config — pública de propósito: a tela de login precisa mostrar o
@@ -48,6 +52,7 @@ router.put('/', autenticar, apenasAdmin, async (req, res, next) => {
     const schema = z.object({
       nome_app: z.string().trim().min(1).optional(),
       licenciado_para: z.string().trim().optional(),
+      treino_app_url: z.string().trim().optional(),
       // Precisa conter exatamente as mesmas chaves de menu que já existem,
       // só que em outra ordem — evita salvar uma lista quebrada (item
       // duplicado, faltando, ou inventado) que deixaria a barra lateral bugada.

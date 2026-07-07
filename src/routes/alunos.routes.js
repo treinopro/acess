@@ -17,6 +17,8 @@ const alunoSchema = z.object({
   foto_url: z.string().url().optional().nullable(),
   observacoes: z.string().optional().nullable(),
   biometria_id: z.string().optional().nullable(),
+  // 'nativo' = treino cadastrado neste sistema | 'app_externo' = aluno usa outro app de treino.
+  treino_modo: z.enum(['nativo', 'app_externo']).optional().nullable(),
 });
 
 const anamneseSchema = z.object({
@@ -228,6 +230,20 @@ router.get('/:id', async (req, res, next) => {
     });
     if (!result.rows[0]) return res.status(404).json({ erro: 'Aluno não encontrado.' });
     res.json(result.rows[0]);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/alunos/:id/status-acesso — mesma regra usada pra liberar a catraca
+// (verificarAutorizacaoAluno), exposta pro painel mostrar "Liberado/Bloqueado"
+// sem duplicar a lógica (usado na tela de Pagamento Rápido).
+router.get('/:id/status-acesso', async (req, res, next) => {
+  try {
+    const result = await db.execute({ sql: 'SELECT * FROM alunos WHERE id = ?', args: [req.params.id] });
+    if (!result.rows[0]) return res.status(404).json({ erro: 'Aluno não encontrado.' });
+    const { autorizado, motivo } = await acessoTerminal.verificarAutorizacaoAluno(result.rows[0]);
+    res.json({ liberado: autorizado, motivo });
   } catch (err) {
     next(err);
   }

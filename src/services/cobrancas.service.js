@@ -116,6 +116,16 @@ async function gerarCobrancasRecorrentes() {
     geradas += 1;
   }
 
+  // Guarda quando/quantas cobranças a rotina gerou — usado pelo botão manual
+  // "Gerar Contas a Receber" no painel (mesmo campo "Data da última geração"
+  // que existia no Secullum), independente de ter rodado pelo cron, pelo
+  // intervalo de 24h do servidor ou clicado manualmente pelo admin.
+  await db.execute({
+    sql: `INSERT INTO configuracoes (chave, valor) VALUES ('ultima_geracao_cobrancas', ?)
+          ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor`,
+    args: [JSON.stringify({ executadoEm: new Date().toISOString(), geradas })],
+  });
+
   return geradas;
 }
 

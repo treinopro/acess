@@ -19,6 +19,9 @@ const ALTERACOES_INCREMENTAIS = [
   "ALTER TABLE avaliacoes_fisicas ADD COLUMN massa_magra_kg REAL",
   "ALTER TABLE avaliacoes_fisicas ADD COLUMN perfil_morfologico TEXT",
   "ALTER TABLE avaliacoes_fisicas ADD COLUMN dados_extras TEXT",
+  // 'nativo' = treino cadastrado neste sistema (aba Treino no perfil) | 'app_externo'
+  // = aluno acompanha o treino em outro aplicativo (vínculo por CPF/e-mail lá).
+  "ALTER TABLE alunos ADD COLUMN treino_modo TEXT DEFAULT 'nativo'",
 ];
 
 async function migrate() {

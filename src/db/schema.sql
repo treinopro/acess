@@ -180,6 +180,33 @@ CREATE TABLE IF NOT EXISTS configuracoes (
   valor TEXT
 );
 
+-- Módulo de treino: cada aluno pode ter vários treinos (ex: "Treino A", "Treino
+-- B"), cada um associado a um ou mais dias da semana, com uma lista de
+-- exercícios própria. Só é usado quando alunos.treino_modo = 'nativo' — no modo
+-- 'app_externo' o aluno acompanha o treino em outro aplicativo (vínculo feito
+-- por CPF/e-mail no primeiro acesso desse app, fora do nosso banco).
+CREATE TABLE IF NOT EXISTS treinos (
+  id TEXT PRIMARY KEY,
+  aluno_id TEXT NOT NULL REFERENCES alunos(id) ON DELETE CASCADE,
+  nome TEXT NOT NULL, -- ex: "Treino A" (editável/renomeável)
+  dias_semana TEXT, -- JSON array de inteiros 0-6 (0=domingo ... 6=sabado)
+  ordem INTEGER NOT NULL DEFAULT 0,
+  ativo INTEGER NOT NULL DEFAULT 1,
+  criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS treino_exercicios (
+  id TEXT PRIMARY KEY,
+  treino_id TEXT NOT NULL REFERENCES treinos(id) ON DELETE CASCADE,
+  exercicio TEXT NOT NULL,
+  series TEXT, -- texto livre (ex: "4x12", "3 séries até a falha")
+  carga TEXT, -- texto livre (ex: "20kg", "peso corporal")
+  intervalo TEXT, -- ex: "60s", "1min30"
+  observacao TEXT,
+  ordem INTEGER NOT NULL DEFAULT 0,
+  criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_alunos_status ON alunos(status);
 CREATE INDEX IF NOT EXISTS idx_matriculas_aluno ON matriculas(aluno_id);
 CREATE INDEX IF NOT EXISTS idx_agendamentos_turma_data ON agendamentos(turma_id, data_aula);
@@ -191,3 +218,5 @@ CREATE INDEX IF NOT EXISTS idx_acessos_catraca_aluno ON acessos_catraca(aluno_id
 CREATE INDEX IF NOT EXISTS idx_pagamentos_cobranca_cobranca ON pagamentos_cobranca(cobranca_id);
 CREATE INDEX IF NOT EXISTS idx_anamnese_respostas_anamnese ON anamnese_respostas(anamnese_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_usuario ON usuarios(usuario);
+CREATE INDEX IF NOT EXISTS idx_treinos_aluno ON treinos(aluno_id);
+CREATE INDEX IF NOT EXISTS idx_treino_exercicios_treino ON treino_exercicios(treino_id);

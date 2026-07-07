@@ -36,6 +36,7 @@
         <button class="nav-btn" data-secao="planos">Planos</button>
         <button class="nav-btn" data-secao="agenda">Turmas &amp; Agenda</button>
         <button class="nav-btn" data-secao="pagamentos">Contas a Receber</button>
+        <button class="nav-btn" data-secao="pagamento-rapido">Pagamento Rápido</button>
         <button class="nav-btn" data-secao="relatorios">Relatórios</button>
         <button class="nav-btn oculto" id="nav-usuarios" data-secao="usuarios">Usuários</button>
         <button class="nav-btn oculto" id="nav-config" data-secao="config">Configurações</button>
@@ -140,6 +141,7 @@
           <button class="perfil-tab-btn" data-tab="matriculas">Matrículas</button>
           <button class="perfil-tab-btn" data-tab="agendamentos">Agendamentos</button>
           <button class="perfil-tab-btn" data-tab="financeiro">Financeiro</button>
+          <button class="perfil-tab-btn" data-tab="treino">Treino</button>
         </div>
 
         <!-- ABA: Dados pessoais -->
@@ -334,6 +336,76 @@
             <tbody id="perfil-lista-cobrancas"></tbody>
           </table>
         </div>
+
+        <!-- ABA: Treino -->
+        <div class="perfil-tab-painel oculto" data-tab-painel="treino">
+          <div class="form-painel" style="margin-bottom:16px">
+            <label style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+              <input type="radio" name="treino-modo" id="treino-modo-nativo" value="nativo" style="width:auto" /> Treino cadastrado neste sistema
+            </label>
+            <label style="display:flex;align-items:center;gap:8px">
+              <input type="radio" name="treino-modo" id="treino-modo-externo" value="app_externo" style="width:auto" /> Treino em outro aplicativo (link)
+            </label>
+          </div>
+
+          <!-- Modo nativo -->
+          <div id="treino-painel-nativo">
+            <div class="secao-topo" style="align-items:center">
+              <div id="treino-abas" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+              <button type="button" class="btn-secundario" id="btn-novo-treino">+ Novo treino</button>
+            </div>
+
+            <div id="treino-sem-treinos" class="oculto" style="color:#667085;font-size:13px;margin:10px 0">Nenhum treino cadastrado ainda. Clique em "+ Novo treino" pra começar.</div>
+
+            <div id="treino-conteudo-ativo" class="oculto" style="margin-top:12px">
+              <div class="secao-topo" style="align-items:center">
+                <h3 style="margin:0" id="treino-nome-ativo">—</h3>
+                <div style="display:flex;gap:8px">
+                  <button type="button" class="btn-secundario" id="btn-renomear-treino">Renomear</button>
+                  <button type="button" class="btn-secundario perigo" id="btn-excluir-treino">Excluir treino</button>
+                </div>
+              </div>
+
+              <div style="margin:8px 0">
+                <label style="display:block;margin-bottom:4px">Dias da semana</label>
+                <div id="treino-dias-semana" style="display:flex;gap:10px;flex-wrap:wrap"></div>
+              </div>
+
+              <table class="tabela">
+                <thead>
+                  <tr><th>Exercício</th><th>Séries</th><th>Carga</th><th>Intervalo</th><th>Observação</th><th>Ações</th></tr>
+                </thead>
+                <tbody id="treino-lista-exercicios"></tbody>
+              </table>
+
+              <button type="button" class="btn-secundario" id="btn-toggle-exercicio" style="margin-top:10px">+ Adicionar exercício</button>
+              <form id="form-exercicio" class="form-painel oculto" style="margin-top:10px">
+                <input type="hidden" id="exercicio-id" />
+                <div class="grid-2">
+                  <div><label>Exercício *</label><input id="exercicio-nome" required /></div>
+                  <div><label>Séries</label><input id="exercicio-series" placeholder="ex: 4x12" /></div>
+                  <div><label>Carga</label><input id="exercicio-carga" placeholder="ex: 20kg" /></div>
+                  <div><label>Intervalo</label><input id="exercicio-intervalo" placeholder="ex: 60s" /></div>
+                </div>
+                <label>Observação</label>
+                <textarea id="exercicio-observacao" rows="2"></textarea>
+                <div class="form-acoes">
+                  <button type="submit" class="btn-primario">Salvar exercício</button>
+                  <button type="button" class="btn-secundario" id="btn-cancelar-exercicio">Cancelar</button>
+                </div>
+              </form>
+            </div>
+          </div>
+
+          <!-- Modo app externo -->
+          <div id="treino-painel-externo" class="oculto form-painel">
+            <p style="margin-top:0;color:#667085;font-size:13px">Este aluno acompanha o treino em outro aplicativo. O vínculo é feito lá mesmo, por CPF ou e-mail, no primeiro acesso do aluno.</p>
+            <div class="form-acoes">
+              <a id="link-treino-app-externo" href="#" target="_blank" class="btn-primario" style="text-decoration:none;display:inline-block">Abrir app de treino</a>
+            </div>
+            <p id="aviso-sem-link-app" class="oculto" style="color:#b42318;font-size:13px">Nenhum link configurado ainda — defina em Configurações.</p>
+          </div>
+        </div>
       </section>
 
       <!-- PLANOS -->
@@ -469,16 +541,44 @@
         </table>
       </section>
 
+      <!-- PAGAMENTO RÁPIDO (busca por nome, pensado pra recepção resolver rápido) -->
+      <section id="secao-pagamento-rapido" class="secao oculto">
+        <div class="secao-topo">
+          <h2>Pagamento rápido</h2>
+        </div>
+        <p style="margin:0 0 12px;color:#667085;font-size:13px">Digite o nome do aluno pra ver as contas em aberto dele e lançar o pagamento na hora, sem precisar abrir o cadastro completo.</p>
+
+        <div style="position:relative;max-width:420px">
+          <input type="text" id="pr-busca-nome" placeholder="Digite o nome do aluno..." autocomplete="off" style="width:100%" />
+          <div id="pr-sugestoes" class="oculto" style="position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #e4e7ec;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.08);max-height:260px;overflow-y:auto;z-index:20"></div>
+        </div>
+
+        <div id="pr-resultado" class="oculto" style="margin-top:20px">
+          <div class="secao-topo">
+            <h3 style="margin:0" id="pr-aluno-nome">—</h3>
+            <span class="badge" id="pr-status-acesso">—</span>
+          </div>
+          <table class="tabela">
+            <thead>
+              <tr><th>Descrição</th><th>Valor</th><th>Vencimento</th><th>Status</th><th>Ações</th></tr>
+            </thead>
+            <tbody id="pr-lista-contas"></tbody>
+          </table>
+        </div>
+      </section>
+
       <!-- CONTAS A RECEBER -->
       <section id="secao-pagamentos" class="secao oculto">
         <div class="secao-topo">
           <h2>Contas a receber</h2>
-          <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
             <button class="btn-secundario" id="btn-toggle-conta-manual">+ Incluir conta</button>
             <button class="btn-secundario" id="btn-nova-conta-parcelada">+ Incluir conta parcelada</button>
             <button class="btn-primario" id="btn-toggle-cobranca">+ Gerar cobrança (link)</button>
+            <button class="btn-secundario oculto" id="btn-gerar-recorrentes" title="Gera agora as próximas mensalidades de matrículas ativas (o mesmo processo já roda sozinho a cada 24h)">Gerar Contas a Receber</button>
           </div>
         </div>
+        <p class="oculto" id="txt-ultima-geracao-cobrancas" style="margin:-8px 0 12px;color:#667085;font-size:13px"></p>
 
         <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
           <div>
@@ -742,6 +842,14 @@
             O nome aparece na tela de login e na barra lateral. "Licenciado para" some abaixo do nome, em letra
             menor — deixe em branco pra não mostrar nada.
           </p>
+
+          <h3>Treino em app externo</h3>
+          <label>Link do app de treino</label>
+          <input id="config-treino-app-url" placeholder="https://..." />
+          <p style="margin:8px 0 0;color:#667085;font-size:13px">
+            Usado na aba "Treino" do perfil quando o aluno estiver marcado como "treino em outro aplicativo".
+          </p>
+
           <div class="form-acoes">
             <button type="submit" class="btn-primario">Salvar</button>
           </div>

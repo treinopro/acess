@@ -9,6 +9,11 @@ body {
 
 .oculto { display: none !important; }
 
+.aviso-desconto {
+  background: #d1fadf; color: #067647; font-size: 13px; font-weight: 600;
+  border-radius: 8px; padding: 8px 12px; margin: -6px 0 10px;
+}
+
 /* ---------- Login ---------- */
 .tela-login {
   min-height: 100vh;

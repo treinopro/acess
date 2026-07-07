@@ -202,8 +202,42 @@ document.getElementById('btn-ir-vincular').addEventListener('click', () => {
 
 document.getElementById('btn-ir-cadastro').addEventListener('click', () => {
   pararEscaneamentoContinuo();
+  resetCadastroOpcao();
+  mostrarTela('tela-cadastro-opcao');
+});
+
+// ---------------- Escolha de cadastro: usar o celular (QR) ou fazer aqui no totem ----------------
+// "Usar seu cel": gera um QR para a mesma URL pública do cadastro-mobile.html —
+// o aluno preenche os dados e paga direto no celular dele, sem ocupar o totem.
+// "Pagar aqui": segue o fluxo de sempre, preenchido na tela do próprio totem.
+
+function resetCadastroOpcao() {
+  document.getElementById('opcao-cadastro-botoes').classList.remove('oculto');
+  document.getElementById('painel-cadastro-qr-celular').classList.add('oculto');
+}
+
+document.getElementById('btn-cadastro-usar-celular').addEventListener('click', () => {
+  document.getElementById('opcao-cadastro-botoes').classList.add('oculto');
+  document.getElementById('painel-cadastro-qr-celular').classList.remove('oculto');
+  const alvo = document.getElementById('qrcode-cadastro-celular');
+  alvo.innerHTML = '';
+  // eslint-disable-next-line no-new
+  new QRCode(alvo, {
+    text: `${window.location.origin}/cadastro-mobile.html`,
+    width: 200, height: 200, colorDark: '#0f172a', colorLight: '#ffffff',
+  });
+});
+
+document.getElementById('btn-cadastro-celular-voltar').addEventListener('click', resetCadastroOpcao);
+
+document.getElementById('btn-cadastro-pagar-aqui').addEventListener('click', () => {
   resetCadastro();
   mostrarTela('tela-cadastro');
+});
+
+document.getElementById('btn-voltar-cadastro-opcao').addEventListener('click', () => {
+  mostrarTela('tela-inicio');
+  iniciarEscaneamentoContinuo();
 });
 
 document.getElementById('btn-ir-contas').addEventListener('click', () => {

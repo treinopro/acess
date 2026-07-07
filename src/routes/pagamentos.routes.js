@@ -130,9 +130,15 @@ router.get('/cobrancas', autenticar, async (req, res, next) => {
     const result = await db.execute({
       sql: `SELECT c.*, a.nome as aluno_nome,
               (SELECT COALESCE(SUM(p.valor_centavos), 0) FROM pagamentos_cobranca p WHERE p.cobranca_id = c.id) as valor_pago_centavos,
-              (SELECT MAX(p.data) FROM pagamentos_cobranca p WHERE p.cobranca_id = c.id) as data_pago_calc
+              (SELECT MAX(p.data) FROM pagamentos_cobranca p WHERE p.cobranca_id = c.id) as data_pago_calc,
+              pl.desconto_tipo as plano_desconto_tipo,
+              pl.desconto_percentual as plano_desconto_percentual,
+              pl.desconto_valor_centavos as plano_desconto_valor_centavos,
+              pl.desconto_forma_pagamento as plano_desconto_forma_pagamento
             FROM cobrancas c
             JOIN alunos a ON a.id = c.aluno_id
+            LEFT JOIN matriculas m ON m.id = c.matricula_id
+            LEFT JOIN planos pl ON pl.id = m.plano_id
             ${where}
             ORDER BY ${colunaOrdenacao} ${direcao}`,
       args,

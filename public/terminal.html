@@ -156,6 +156,26 @@
     <button class="link-voltar" id="btn-voltar-2">&larr; Voltar</button>
   </div>
 
+  <!-- ESCOLHA DE CADASTRO: usar o próprio celular (QR) ou fazer tudo aqui no totem -->
+  <div class="tela" id="tela-cadastro-opcao">
+    <div class="logo">QUERO ME CADASTRAR</div>
+    <div class="subtitulo">Como você prefere se cadastrar?</div>
+
+    <div class="botoes-menu" id="opcao-cadastro-botoes">
+      <button class="botao-grande primario" id="btn-cadastro-usar-celular">📱 Usar seu cel</button>
+      <button class="botao-grande secundario" id="btn-cadastro-pagar-aqui">Pagar aqui</button>
+    </div>
+
+    <div class="painel-identificar oculto" id="painel-cadastro-qr-celular">
+      <div class="subtitulo" style="margin-bottom:8px">Aponte a câmera do seu celular para o QR abaixo:</div>
+      <div id="qrcode-cadastro-celular" style="display:flex;justify-content:center;margin:12px 0"></div>
+      <div class="aviso-caixa">Vai abrir o cadastro no seu celular — preencha seus dados e pague por lá. Assim que o pagamento for confirmado, sua entrada é liberada automaticamente.</div>
+      <button class="botao-pequeno" id="btn-cadastro-celular-voltar" style="margin-top:16px">&larr; Voltar às opções</button>
+    </div>
+
+    <button class="link-voltar" id="btn-voltar-cadastro-opcao">&larr; Voltar</button>
+  </div>
+
   <!-- CADASTRO NOVO ALUNO: dados+plano -> pagamento (QR) -> sucesso -->
   <div class="tela" id="tela-cadastro">
     <div class="logo">QUERO ME CADASTRAR</div>

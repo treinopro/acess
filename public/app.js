@@ -2118,14 +2118,52 @@ document.getElementById('btn-remover-quitacao').addEventListener('click', async 
 });
 
 // ---------------- Modal "Pagamento" (lançar um recebimento numa conta) ----------------
+// Se o plano vinculado à conta tem desconto configurado para uma forma de
+// pagamento específica (ex: "5% no dinheiro" — ver aba Planos), esse desconto
+// é aplicado automaticamente no campo "Valor" sempre que essa forma é
+// selecionada aqui, sem precisar calcular na mão. Some ao trocar de volta pra
+// outra forma de pagamento.
+
+let pagamentoSaldoCentavos = 0; // saldo em aberto da conta no momento em que o modal foi aberto
+
+function calcularValorComDesconto(saldoCentavos, plano) {
+  if (!plano?.plano_desconto_tipo) return saldoCentavos;
+  const desconto = plano.plano_desconto_tipo === 'percentual'
+    ? Math.round(saldoCentavos * (plano.plano_desconto_percentual / 100))
+    : Math.min(plano.plano_desconto_valor_centavos, saldoCentavos);
+  return Math.max(saldoCentavos - desconto, 0);
+}
+
+function atualizarValorPagamentoComDesconto() {
+  const tipoSelecionado = document.getElementById('pagamento-tipo').value;
+  const avisoEl = document.getElementById('pagamento-desconto-aviso');
+  const plano = modalContaAtual;
+  const descontoAplicavel = plano?.plano_desconto_tipo
+    && plano.plano_desconto_forma_pagamento === tipoSelecionado;
+
+  const valorFinal = descontoAplicavel
+    ? calcularValorComDesconto(pagamentoSaldoCentavos, plano)
+    : pagamentoSaldoCentavos;
+  document.getElementById('pagamento-valor').value = (valorFinal / 100).toFixed(2);
+
+  if (descontoAplicavel) {
+    const rotuloDesconto = plano.plano_desconto_tipo === 'percentual'
+      ? `${plano.plano_desconto_percentual}%`
+      : formatarMoeda(plano.plano_desconto_valor_centavos);
+    avisoEl.textContent = `Desconto de ${rotuloDesconto} aplicado (pagamento em ${ROTULOS_TIPO_PAGAMENTO[tipoSelecionado] || tipoSelecionado}).`;
+    avisoEl.classList.remove('oculto');
+  } else {
+    avisoEl.classList.add('oculto');
+  }
+}
 
 function abrirModalPagamento() {
-  const saldoCentavos = Math.max(modalContaAtual.valor_centavos - modalContaTotalPagoCentavos, 0);
+  pagamentoSaldoCentavos = Math.max(modalContaAtual.valor_centavos - modalContaTotalPagoCentavos, 0);
 
   document.getElementById('pagamento-data').value = hojeLocalISO();
-  document.getElementById('pagamento-valor').value = (saldoCentavos / 100).toFixed(2);
   document.getElementById('pagamento-tipo').value = 'dinheiro';
   document.getElementById('pagamento-conta-corrente').value = 'Caixa da empresa';
+  atualizarValorPagamentoComDesconto();
   document.getElementById('modal-pagamento').classList.remove('oculto');
 }
 
@@ -2136,6 +2174,7 @@ function fecharModalPagamento() {
 document.getElementById('btn-add-pagamento').addEventListener('click', abrirModalPagamento);
 document.getElementById('btn-fechar-modal-pagamento').addEventListener('click', fecharModalPagamento);
 document.getElementById('btn-cancelar-modal-pagamento').addEventListener('click', fecharModalPagamento);
+document.getElementById('pagamento-tipo').addEventListener('change', atualizarValorPagamentoComDesconto);
 
 document.getElementById('form-modal-pagamento').addEventListener('submit', async (ev) => {
   ev.preventDefault();

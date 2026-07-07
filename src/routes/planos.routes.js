@@ -14,6 +14,12 @@ const planoSchema = z.object({
   valor_centavos: z.number().int().positive(),
   duracao_dias: z.number().int().positive().optional().nullable(),
   aulas_incluidas: z.number().int().positive().optional().nullable(),
+  // Desconto opcional (ex: "desconto pagamento em dinheiro") — desconto_tipo
+  // nulo/ausente significa que o plano não tem desconto configurado.
+  desconto_tipo: z.enum(['percentual', 'valor']).optional().nullable(),
+  desconto_percentual: z.number().positive().max(100).optional().nullable(),
+  desconto_valor_centavos: z.number().int().positive().optional().nullable(),
+  desconto_forma_pagamento: z.enum(['dinheiro', 'pix', 'cartao_credito', 'cartao_debito', 'transferencia', 'boleto', 'outro']).optional().nullable(),
 });
 
 // GET /api/planos?todos=1 — por padrão retorna só os ativos; ?todos=1 traz também os desativados
@@ -34,10 +40,13 @@ router.post('/', async (req, res, next) => {
     const dados = planoSchema.parse(req.body);
     const id = uuid();
     await db.execute({
-      sql: `INSERT INTO planos (id, nome, tipo, valor_centavos, duracao_dias, aulas_incluidas)
-            VALUES (?, ?, ?, ?, ?, ?)`,
+      sql: `INSERT INTO planos (id, nome, tipo, valor_centavos, duracao_dias, aulas_incluidas,
+              desconto_tipo, desconto_percentual, desconto_valor_centavos, desconto_forma_pagamento)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [id, dados.nome, dados.tipo, dados.valor_centavos,
-        dados.duracao_dias || null, dados.aulas_incluidas || null],
+        dados.duracao_dias || null, dados.aulas_incluidas || null,
+        dados.desconto_tipo || null, dados.desconto_percentual || null,
+        dados.desconto_valor_centavos || null, dados.desconto_forma_pagamento || null],
     });
     res.status(201).json({ id, ...dados });
   } catch (err) {
@@ -68,10 +77,13 @@ router.put('/:id', async (req, res, next) => {
   try {
     const dados = planoSchema.parse(req.body);
     const result = await db.execute({
-      sql: `UPDATE planos SET nome = ?, tipo = ?, valor_centavos = ?, duracao_dias = ?, aulas_incluidas = ?
+      sql: `UPDATE planos SET nome = ?, tipo = ?, valor_centavos = ?, duracao_dias = ?, aulas_incluidas = ?,
+              desconto_tipo = ?, desconto_percentual = ?, desconto_valor_centavos = ?, desconto_forma_pagamento = ?
             WHERE id = ?`,
       args: [dados.nome, dados.tipo, dados.valor_centavos,
-        dados.duracao_dias || null, dados.aulas_incluidas || null, req.params.id],
+        dados.duracao_dias || null, dados.aulas_incluidas || null,
+        dados.desconto_tipo || null, dados.desconto_percentual || null,
+        dados.desconto_valor_centavos || null, dados.desconto_forma_pagamento || null, req.params.id],
     });
     if (result.rowsAffected === 0) return res.status(404).json({ erro: 'Plano não encontrado.' });
     res.json({ ok: true });

@@ -38,6 +38,34 @@ function parseDataHoraServidor(str) {
   return new Date(normalizado);
 }
 
+// Formata uma data-só (YYYY-MM-DD, sem hora — ex: vencimento, data de pagamento)
+// pro padrão brasileiro SEM passar por Date/fuso-horário: "new Date('YYYY-MM-DD')"
+// é interpretado como meia-noite UTC pelo JS, o que mostra o dia ANTERIOR pra
+// qualquer fuso atrás de UTC (Brasil inteiro) — foi esse o bug de "data de
+// pagamento um dia antes". Se a string tiver hora, cai pro parser que já trata
+// fuso (parseDataHoraServidor). Use esta função pra exibir qualquer campo que
+// seja só data (data, vencimento, data_avaliacao, data_inicio, data_fim...).
+function formatarDataOuDataHora(str) {
+  if (!str) return '—';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+    const [ano, mes, dia] = str.split('-');
+    return `${dia}/${mes}/${ano}`;
+  }
+  return parseDataHoraServidor(str).toLocaleDateString('pt-BR');
+}
+
+// Data local (YYYY-MM-DD) de HOJE, sem passar por toISOString() — esse método
+// converte pra UTC antes de cortar a data, o que mostra o dia SEGUINTE em
+// qualquer horário da noite no Brasil (fuso UTC-3). Use esta função em vez de
+// `new Date().toISOString().slice(0, 10)` pra pré-preencher campos de data.
+function hojeLocalISO() {
+  const d = new Date();
+  const ano = d.getFullYear();
+  const mes = String(d.getMonth() + 1).padStart(2, '0');
+  const dia = String(d.getDate()).padStart(2, '0');
+  return `${ano}-${mes}-${dia}`;
+}
+
 function el(html) {
   // Usa <template> em vez de <div>: uma <div> descarta elementos de tabela
   // (<tr>, <td>...) quando não há um <table> ancestral, deixando firstChild nulo.
@@ -345,7 +373,7 @@ document.getElementById('form-config-app').addEventListener('submit', async (ev)
 document.getElementById('btn-baixar-backup').addEventListener('click', async () => {
   try {
     mostrarToast('Gerando backup...');
-    await baixarArquivoAutenticado('/api/config/backup', `backup-academia-${new Date().toISOString().slice(0, 10)}.json`);
+    await baixarArquivoAutenticado('/api/config/backup', `backup-academia-${hojeLocalISO()}.json`);
     mostrarToast('Backup baixado.');
   } catch (err) { mostrarToast(err.message, true); }
 });
@@ -480,7 +508,7 @@ document.getElementById('mostrar-inativos-alunos').addEventListener('change', ()
 
 document.getElementById('btn-exportar-alunos').addEventListener('click', async () => {
   try {
-    await baixarArquivoAutenticado('/api/alunos/exportar', `alunos-${new Date().toISOString().slice(0, 10)}.csv`);
+    await baixarArquivoAutenticado('/api/alunos/exportar', `alunos-${hojeLocalISO()}.csv`);
   } catch (err) { mostrarToast(err.message, true); }
 });
 
@@ -523,7 +551,7 @@ async function abrirFormAluno(aluno = null) {
   document.getElementById('aluno-cpf').value = aluno?.cpf || '';
   document.getElementById('aluno-nascimento').value = aluno?.data_nascimento || '';
   document.getElementById('aluno-observacoes').value = aluno?.observacoes || '';
-  document.getElementById('aluno-plano-data').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('aluno-plano-data').value = hojeLocalISO();
   await popularSelectPlanoDoFormAluno();
   document.getElementById('aluno-plano').value = '';
 
@@ -587,7 +615,7 @@ document.getElementById('form-aluno').addEventListener('submit', async (ev) => {
       try {
         await api('/api/planos/matricular', {
           method: 'POST',
-          body: JSON.stringify({ aluno_id: alunoId, plano_id: planoId, data_inicio: planoData || new Date().toISOString().slice(0, 10) }),
+          body: JSON.stringify({ aluno_id: alunoId, plano_id: planoId, data_inicio: planoData || hojeLocalISO() }),
         });
         mostrarToast('Aluno matriculado no plano. Primeira cobrança gerada em Contas a Receber.');
       } catch (err) {
@@ -605,7 +633,7 @@ document.getElementById('form-aluno').addEventListener('submit', async (ev) => {
           await api(`/api/alunos/${alunoId}/avaliacoes`, {
             method: 'POST',
             body: JSON.stringify({
-              data_avaliacao: new Date().toISOString().slice(0, 10),
+              data_avaliacao: hojeLocalISO(),
               peso_kg: peso ? Number(peso) : null,
               altura_cm: altura ? Number(altura) : null,
               percentual_gordura: gordura ? Number(gordura) : null,
@@ -734,7 +762,7 @@ async function carregarPerfilAluno() {
 
     await popularSelectPlanosDoPerfil();
     if (!document.getElementById('perfil-matricula-data').value) {
-      document.getElementById('perfil-matricula-data').value = new Date().toISOString().slice(0, 10);
+      document.getElementById('perfil-matricula-data').value = hojeLocalISO();
     }
 
     document.getElementById('perfil-lista-agendamentos').innerHTML = agendamentos.length
@@ -981,7 +1009,7 @@ async function carregarFinanceiroPerfil() {
           <td>${formatarMoeda(c.valor_centavos)}</td>
           <td>${c.vencimento || '—'}</td>
           <td><span class="badge ${c.status}">${c.status}</span></td>
-          <td>${dataPago ? parseDataHoraServidor(dataPago).toLocaleDateString('pt-BR') : '—'}</td>
+          <td>${formatarDataOuDataHora(dataPago)}</td>
           <td>${valorPago > 0 ? formatarMoeda(valorPago) : '—'}</td>
           <td>
             <button class="btn-linha" data-acao="editar">Alterar</button>
@@ -1247,6 +1275,7 @@ async function carregarPlanos() {
           <td>${plano.tipo}</td>
           <td>${formatarMoeda(plano.valor_centavos)}</td>
           <td>${plano.duracao_dias ? plano.duracao_dias + ' dias' : '—'}</td>
+          <td>${formatarDescontoPlano(plano)}</td>
           <td><span class="badge ${plano.ativo ? 'ativo' : 'inativo'}">${plano.ativo ? 'ativo' : 'desativado'}</span></td>
           <td>
             <button class="btn-linha" data-acao="editar">Editar</button>
@@ -1282,6 +1311,20 @@ async function carregarPlanos() {
 
 document.getElementById('chk-planos-todos').addEventListener('change', carregarPlanos);
 
+const ROTULOS_FORMA_PAGAMENTO_PLANO = {
+  dinheiro: 'dinheiro', pix: 'Pix', cartao_credito: 'cartão de crédito', cartao_debito: 'cartão de débito',
+  transferencia: 'transferência', boleto: 'boleto', outro: 'outra forma',
+};
+
+function formatarDescontoPlano(plano) {
+  if (!plano.desconto_tipo) return '—';
+  const forma = ROTULOS_FORMA_PAGAMENTO_PLANO[plano.desconto_forma_pagamento] || plano.desconto_forma_pagamento || '—';
+  const valor = plano.desconto_tipo === 'percentual'
+    ? `${plano.desconto_percentual}%`
+    : formatarMoeda(plano.desconto_valor_centavos);
+  return `${valor} (${forma})`;
+}
+
 function abrirFormPlano(plano = null) {
   const form = document.getElementById('form-plano');
   form.classList.remove('oculto');
@@ -1291,8 +1334,29 @@ function abrirFormPlano(plano = null) {
   document.getElementById('plano-tipo').value = plano?.tipo || 'mensal';
   document.getElementById('plano-valor').value = plano ? (plano.valor_centavos / 100).toFixed(2) : '';
   document.getElementById('plano-duracao').value = plano?.duracao_dias || '';
+
+  const temDesconto = Boolean(plano?.desconto_tipo);
+  document.getElementById('plano-tem-desconto').checked = temDesconto;
+  document.getElementById('plano-bloco-desconto').classList.toggle('oculto', !temDesconto);
+  document.getElementById('plano-desconto-forma').value = plano?.desconto_forma_pagamento || 'dinheiro';
+  document.getElementById('plano-desconto-tipo').value = plano?.desconto_tipo || 'percentual';
+  document.getElementById('plano-desconto-valor').value = temDesconto
+    ? (plano.desconto_tipo === 'percentual' ? plano.desconto_percentual : (plano.desconto_valor_centavos / 100).toFixed(2))
+    : '';
+  atualizarLabelDescontoPlano();
+
   form.scrollIntoView({ behavior: 'smooth' });
 }
+
+function atualizarLabelDescontoPlano() {
+  const tipo = document.getElementById('plano-desconto-tipo').value;
+  document.getElementById('label-plano-desconto-valor').textContent = tipo === 'percentual' ? 'Desconto (%)' : 'Desconto (R$)';
+}
+
+document.getElementById('plano-tem-desconto').addEventListener('change', (ev) => {
+  document.getElementById('plano-bloco-desconto').classList.toggle('oculto', !ev.target.checked);
+});
+document.getElementById('plano-desconto-tipo').addEventListener('change', atualizarLabelDescontoPlano);
 
 function popularSelectPlanos(select, planos) {
   select.innerHTML = planos.map((p) => `<option value="${p.id}">${p.nome} (${formatarMoeda(p.valor_centavos)})</option>`).join('');
@@ -1328,7 +1392,7 @@ document.getElementById('form-matricula-perfil').addEventListener('submit', asyn
       body: JSON.stringify({
         aluno_id: perfilAtualId,
         plano_id: planoId,
-        data_inicio: dataInicio || new Date().toISOString().slice(0, 10),
+        data_inicio: dataInicio || hojeLocalISO(),
       }),
     });
     mostrarToast('Aluno matriculado. Primeira cobrança gerada em Contas a Receber.');
@@ -1388,11 +1452,18 @@ document.getElementById('btn-cancelar-plano').addEventListener('click', () => {
 document.getElementById('form-plano').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const id = document.getElementById('plano-id').value;
+  const temDesconto = document.getElementById('plano-tem-desconto').checked;
+  const tipoDesconto = document.getElementById('plano-desconto-tipo').value;
+  const valorDesconto = parseFloat(document.getElementById('plano-desconto-valor').value);
   const dados = {
     nome: document.getElementById('plano-nome').value.trim(),
     tipo: document.getElementById('plano-tipo').value,
     valor_centavos: Math.round(parseFloat(document.getElementById('plano-valor').value) * 100),
     duracao_dias: document.getElementById('plano-duracao').value ? Number(document.getElementById('plano-duracao').value) : null,
+    desconto_tipo: temDesconto ? tipoDesconto : null,
+    desconto_forma_pagamento: temDesconto ? document.getElementById('plano-desconto-forma').value : null,
+    desconto_percentual: temDesconto && tipoDesconto === 'percentual' && !isNaN(valorDesconto) ? valorDesconto : null,
+    desconto_valor_centavos: temDesconto && tipoDesconto === 'valor' && !isNaN(valorDesconto) ? Math.round(valorDesconto * 100) : null,
   };
   try {
     if (id) {
@@ -1404,6 +1475,7 @@ document.getElementById('form-plano').addEventListener('submit', async (ev) => {
     }
     document.getElementById('form-plano').classList.add('oculto');
     ev.target.reset();
+    document.getElementById('plano-bloco-desconto').classList.add('oculto');
     carregarPlanos();
   } catch (err) { mostrarToast(err.message, true); }
 });
@@ -1784,7 +1856,7 @@ async function carregarContas() {
           <td>${formatarMoeda(c.valor_centavos)}</td>
           <td>${c.vencimento || '—'}</td>
           <td><span class="badge ${c.status}">${c.status}</span></td>
-          <td>${dataPago ? parseDataHoraServidor(dataPago).toLocaleDateString('pt-BR') : '—'}</td>
+          <td>${formatarDataOuDataHora(dataPago)}</td>
           <td>${valorPago > 0 ? formatarMoeda(valorPago) : '—'}</td>
           <td>
             <button class="btn-linha" data-acao="editar">Alterar</button>
@@ -1881,6 +1953,9 @@ function atualizarBadgeStatusModal(status) {
   badge.textContent = status;
   badge.className = `badge ${status}`;
   document.getElementById('btn-remover-quitacao').classList.toggle('oculto', status !== 'pago');
+  // Conta já quitada não aceita novo pagamento — precisa remover a quitação
+  // primeiro (mesma regra aplicada no backend, POST .../pagamentos).
+  document.getElementById('btn-add-pagamento').classList.toggle('oculto', status === 'pago');
 }
 
 async function carregarPagamentosModal() {
@@ -1893,7 +1968,7 @@ async function carregarPagamentosModal() {
       totalPago += p.valor_centavos;
       const tr = el(`
         <tr>
-          <td>${new Date(p.data).toLocaleDateString('pt-BR')}</td>
+          <td>${formatarDataOuDataHora(p.data)}</td>
           <td>${formatarMoeda(p.valor_centavos)}</td>
           <td>${ROTULOS_TIPO_PAGAMENTO[p.tipo] || p.tipo || '—'}</td>
           <td>${p.conta_corrente || '—'}</td>
@@ -1964,7 +2039,7 @@ document.getElementById('btn-remover-quitacao').addEventListener('click', async 
 function abrirModalPagamento() {
   const saldoCentavos = Math.max(modalContaAtual.valor_centavos - modalContaTotalPagoCentavos, 0);
 
-  document.getElementById('pagamento-data').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('pagamento-data').value = hojeLocalISO();
   document.getElementById('pagamento-valor').value = (saldoCentavos / 100).toFixed(2);
   document.getElementById('pagamento-tipo').value = 'dinheiro';
   document.getElementById('pagamento-conta-corrente').value = 'Caixa da empresa';
@@ -2047,7 +2122,7 @@ async function abrirModalParcelamento({ modo, conta, alunoIdPreselect }) {
   document.getElementById('mparc-bloco-novo').classList.toggle('oculto', modo !== 'novo');
   document.getElementById('mparc-bloco-existente').classList.toggle('oculto', modo !== 'existente');
 
-  const hoje = new Date().toISOString().slice(0, 10);
+  const hoje = hojeLocalISO();
   if (modo === 'novo') {
     const selectAluno = document.getElementById('mparc-aluno');
     await popularSelectAlunos(selectAluno);
@@ -2480,7 +2555,7 @@ function trocarAbaRelatorio(nome) {
 async function carregarSecaoRelatorios() {
   await popularSelectAlunosComTodos(document.getElementById('rel-fin-aluno'));
   await popularSelectAlunos(document.getElementById('rel-pessoal-aluno'), { comPlaceholder: true });
-  const hoje = new Date().toISOString().slice(0, 10);
+  const hoje = hojeLocalISO();
   if (!document.getElementById('rel-diario-data').value) document.getElementById('rel-diario-data').value = hoje;
   await buscarRelatorioFinanceiro();
   await buscarRelatorioAcessoDiario();
@@ -2522,7 +2597,7 @@ async function buscarRelatorioFinanceiro() {
           <td>${formatarMoeda(c.valor_centavos)}</td>
           <td>${c.vencimento || '—'}</td>
           <td><span class="badge ${c.status}">${c.status}</span></td>
-          <td>${dataPago ? parseDataHoraServidor(dataPago).toLocaleDateString('pt-BR') : '—'}</td>
+          <td>${formatarDataOuDataHora(dataPago)}</td>
           <td>${valorPago > 0 ? formatarMoeda(valorPago) : '—'}</td>
         </tr>
       `);

@@ -22,6 +22,11 @@ const ALTERACOES_INCREMENTAIS = [
   // 'nativo' = treino cadastrado neste sistema (aba Treino no perfil) | 'app_externo'
   // = aluno acompanha o treino em outro aplicativo (vínculo por CPF/e-mail lá).
   "ALTER TABLE alunos ADD COLUMN treino_modo TEXT DEFAULT 'nativo'",
+  // Desconto opcional por forma de pagamento (ex: "desconto pagamento em dinheiro").
+  "ALTER TABLE planos ADD COLUMN desconto_tipo TEXT",
+  "ALTER TABLE planos ADD COLUMN desconto_percentual REAL",
+  "ALTER TABLE planos ADD COLUMN desconto_valor_centavos INTEGER",
+  "ALTER TABLE planos ADD COLUMN desconto_forma_pagamento TEXT",
 ];
 
 async function migrate() {

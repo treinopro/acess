@@ -91,6 +91,12 @@ CREATE TABLE IF NOT EXISTS planos (
   duracao_dias INTEGER,
   aulas_incluidas INTEGER,
   ativo INTEGER NOT NULL DEFAULT 1,
+  -- Desconto opcional por forma de pagamento (ex: "desconto pagamento em
+  -- dinheiro"). desconto_tipo é NULL quando o plano não tem desconto.
+  desconto_tipo TEXT, -- 'percentual' | 'valor' | NULL
+  desconto_percentual REAL, -- preenchido só quando desconto_tipo = 'percentual'
+  desconto_valor_centavos INTEGER, -- preenchido só quando desconto_tipo = 'valor'
+  desconto_forma_pagamento TEXT, -- dinheiro | pix | cartao_credito | cartao_debito | transferencia | boleto | outro
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

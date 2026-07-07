@@ -245,6 +245,12 @@ router.post('/cobrancas/:id/pagamentos', autenticar, async (req, res, next) => {
   try {
     const cobranca = await buscarCobranca(req.params.id);
     if (!cobranca) return res.status(404).json({ erro: 'Conta não encontrada.' });
+    // Conta já quitada não aceita novo pagamento — evita lançar em dobro por
+    // engano. Se for realmente necessário corrigir, primeiro remove a
+    // quitação (POST .../remover-quitacao) e lança de novo.
+    if (cobranca.status === 'pago') {
+      return res.status(400).json({ erro: 'Esta conta já está quitada. Remova a quitação antes de lançar um novo pagamento.' });
+    }
 
     const schema = z.object({
       data: z.string(),

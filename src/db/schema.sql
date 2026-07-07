@@ -246,3 +246,8 @@ CREATE INDEX IF NOT EXISTS idx_anamnese_respostas_anamnese ON anamnese_respostas
 CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_usuario ON usuarios(usuario);
 CREATE INDEX IF NOT EXISTS idx_treinos_aluno ON treinos(aluno_id);
 CREATE INDEX IF NOT EXISTS idx_treino_exercicios_treino ON treino_exercicios(treino_id);
+-- Trava em nível de banco contra corrida entre execuções sobrepostas de
+-- gerarCobrancasRecorrentes (ex.: dois reinícios do servidor muito próximos)
+-- -- a checagem em código já evita isso no caminho normal, esse índice é o
+-- reforço que faz o segundo INSERT falhar/ser ignorado em vez de duplicar.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cobrancas_recorrencia_matricula_vencimento ON cobrancas(matricula_id, vencimento) WHERE provedor = 'recorrencia';

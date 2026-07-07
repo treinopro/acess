@@ -15,7 +15,8 @@
     "gerar-cobrancas": "node src/jobs/recorrencia.js",
     "backup": "node src/jobs/backup.js",
     "migrar-secullum": "node scripts/migrar-secullum.js",
-    "trocar-senha-admin": "node scripts/trocar-senha-admin.js"
+    "trocar-senha-admin": "node scripts/trocar-senha-admin.js",
+    "importar-biometria": "node scripts/importar-biometria-catraca.js"
   },
   "dependencies": {
     "@libsql/client": "^0.14.0",

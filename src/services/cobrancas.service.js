@@ -45,9 +45,13 @@ function somarMesesComDiaAlvo(dataISO, meses, diaAlvo) {
 
 // Cria a cobrança referente a um ciclo (mensalidade) de uma matrícula.
 async function criarCobrancaDoCiclo({ matriculaId, alunoId, descricao, valorCentavos, vencimento }) {
+  // OR IGNORE: reforça a checagem "jaExiste" já feita em gerarCobrancasRecorrentes
+  // — se duas execuções da rotina ficarem sobrepostas (ex.: dois reinícios do
+  // servidor muito próximos), o índice único idx_cobrancas_recorrencia_matricula_vencimento
+  // (ver schema.sql) faz esse segundo INSERT ser ignorado em vez de duplicar a cobrança.
   const id = uuid();
   await db.execute({
-    sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento)
+    sql: `INSERT OR IGNORE INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento)
           VALUES (?, ?, ?, ?, 'pendente', 'recorrencia', ?, ?)`,
     args: [id, alunoId, matriculaId, valorCentavos, descricao, vencimento],
   });

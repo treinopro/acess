@@ -183,7 +183,11 @@ async function tentarLiberar({ aluno, metodo }) {
 
   if (!autorizado) {
     await registrarAcesso({ alunoId: aluno ? aluno.id : null, metodo, resultado: 'negado', mensagem: motivo });
-    return { autorizado: false, motivo, aluno_nome: aluno ? aluno.nome : null };
+    // cpf/aluno_id vão junto mesmo no negado — a tela do totem usa isso pra
+    // oferecer "Pagar contas em atraso" já com o CPF preenchido, sem o aluno
+    // precisar digitar de novo (só faz sentido quando o motivo é financeiro,
+    // mas não custa nada mandar sempre; o front decide quando mostrar o botão).
+    return { autorizado: false, motivo, aluno_nome: aluno ? aluno.nome : null, aluno_id: aluno ? aluno.id : null, cpf: aluno ? aluno.cpf : null };
   }
 
   try {
@@ -191,11 +195,11 @@ async function tentarLiberar({ aluno, metodo }) {
   } catch (err) {
     const motivoFalha = `Falha ao comunicar com a catraca: ${err.message}`;
     await registrarAcesso({ alunoId: aluno.id, metodo, resultado: 'negado', mensagem: motivoFalha });
-    return { autorizado: false, motivo: motivoFalha, aluno_nome: aluno.nome };
+    return { autorizado: false, motivo: motivoFalha, aluno_nome: aluno.nome, aluno_id: aluno.id, cpf: aluno.cpf };
   }
 
   await registrarAcesso({ alunoId: aluno.id, metodo, resultado: 'liberado', mensagem: null });
-  return { autorizado: true, motivo: null, aluno_nome: aluno.nome };
+  return { autorizado: true, motivo: null, aluno_nome: aluno.nome, aluno_id: aluno.id, cpf: aluno.cpf };
 }
 
 module.exports = {

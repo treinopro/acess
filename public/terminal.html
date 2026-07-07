@@ -66,10 +66,38 @@
   .tela.liberado .resultado-icone { color: #10b981; }
   .tela.negado .resultado-icone { color: #f87171; }
 
+  /* Overlay de resultado DENTRO do video-wrap da tela inicial — a câmera
+     nunca para/some, mesmo ao liberar ou negar acesso. Só aparece por cima
+     do vídeo com a mensagem, e some sozinho voltando ao escaneamento. */
+  .overlay-resultado {
+    position: absolute; inset: 0; border-radius: 16px;
+    display: none; flex-direction: column; align-items: center; justify-content: center;
+    padding: 16px; text-align: center; background: rgba(15, 23, 42, 0.92);
+  }
+  .overlay-resultado.visivel { display: flex; }
+  .overlay-resultado .resultado-icone { font-size: 52px; margin-bottom: 8px; }
+  .overlay-resultado .resultado-titulo { font-size: 19px; margin-bottom: 6px; }
+  .overlay-resultado .resultado-msg { font-size: 13px; max-width: 300px; }
+  .overlay-resultado.liberado .resultado-icone { color: #10b981; }
+  .overlay-resultado.negado .resultado-icone { color: #f87171; }
+  .overlay-resultado .botao-pequeno { margin-top: 12px; }
+
   .link-voltar { margin-top: 32px; background: none; border: none; color: #64748b; font-size: 14px; cursor: pointer; text-decoration: underline; }
 
   #qrcode-vincular { margin: 20px 0; }
   .aviso-caixa { background: #1e293b; border-radius: 10px; padding: 14px; font-size: 14px; color: #cbd5e1; max-width: 380px; }
+
+  .lista-contas { width: 100%; max-width: 420px; text-align: left; margin: 12px 0; max-height: 300px; overflow-y: auto; }
+  .item-conta { display: flex; align-items: center; gap: 12px; background: #1e293b; border-radius: 10px; padding: 14px; margin-bottom: 8px; }
+  .item-conta input { width: 20px; height: 20px; }
+  .item-conta .info { flex: 1; }
+  .item-conta .desc { font-size: 15px; font-weight: 600; }
+  .item-conta .venc { font-size: 12px; color: #94a3b8; }
+  .item-conta .valor { font-size: 15px; font-weight: 700; color: #10b981; }
+  .total-contas { width: 100%; max-width: 420px; display: flex; justify-content: space-between; font-size: 18px; font-weight: 700; padding: 12px 4px; }
+  .comprovante { background: #1e293b; border-radius: 12px; padding: 18px; max-width: 380px; width: 100%; text-align: left; font-size: 14px; }
+  .comprovante .linha { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed #334155; }
+  .comprovante .linha:last-child { border-bottom: none; font-weight: 700; }
 </style>
 </head>
 <body>
@@ -81,6 +109,12 @@
 
     <div class="video-wrap">
       <video id="video-inicio" autoplay muted playsinline></video>
+      <div class="overlay-resultado" id="overlay-resultado">
+        <div class="resultado-icone" id="overlay-icone">⏳</div>
+        <div class="resultado-titulo" id="overlay-titulo">Verificando...</div>
+        <div class="resultado-msg" id="overlay-msg"></div>
+        <button class="botao-pequeno oculto" id="btn-overlay-pagar-contas">Pagar contas em atraso</button>
+      </div>
     </div>
 
     <div class="painel-identificar">
@@ -91,6 +125,7 @@
     <div class="linha-botoes-pequenos">
       <button class="botao-pequeno" id="btn-ir-vincular">Primeira vez no totem</button>
       <button class="botao-pequeno" id="btn-ir-cadastro">Quero me cadastrar</button>
+      <button class="botao-pequeno" id="btn-ir-contas">Pagar contas em atraso</button>
     </div>
   </div>
 
@@ -165,11 +200,44 @@
     <button class="link-voltar" id="btn-voltar-3">&larr; Voltar</button>
   </div>
 
-  <!-- RESULTADO -->
-  <div class="tela" id="tela-resultado">
-    <div class="resultado-icone" id="resultado-icone">⏳</div>
-    <div class="resultado-titulo" id="resultado-titulo">Verificando...</div>
-    <div class="resultado-msg" id="resultado-msg"></div>
+  <!-- PAGAR CONTAS EM ATRASO: consulta por CPF -> seleção -> Pix -> comprovante -->
+  <div class="tela" id="tela-contas">
+    <div class="logo">PAGAR CONTAS EM ATRASO</div>
+
+    <!-- Passo 1: CPF -->
+    <div class="painel-identificar" id="painel-contas-cpf">
+      <div class="subtitulo">Digite seu CPF para ver suas contas em aberto.</div>
+      <input class="campo-cpf" id="input-cpf-contas" placeholder="Digite seu CPF" inputmode="numeric" maxlength="14" />
+      <div class="status-scan" id="contas-cpf-erro"></div>
+      <button class="botao-grande primario" id="btn-buscar-contas" style="width:100%">Continuar</button>
+    </div>
+
+    <!-- Passo 2: seleção das contas -->
+    <div class="painel-identificar oculto" id="painel-contas-lista">
+      <div class="subtitulo" id="contas-lista-saudacao" style="margin-bottom:4px"></div>
+      <div class="lista-contas" id="lista-contas"></div>
+      <div class="total-contas"><span>Total selecionado</span><span id="contas-total-valor">R$ 0,00</span></div>
+      <button class="botao-grande primario" id="btn-gerar-pix-contas" style="width:100%">Pagar com Pix</button>
+    </div>
+
+    <!-- Passo 3: QR Pix + polling -->
+    <div class="painel-identificar oculto" id="painel-contas-pagamento">
+      <div class="subtitulo" id="contas-pagamento-valor" style="margin-bottom:12px"></div>
+      <div id="qrcode-contas-pagamento" style="display:flex;justify-content:center;margin-bottom:12px"></div>
+      <div class="aviso-caixa" id="contas-pagamento-instrucao">Escaneie com o app do seu banco (Pix) para pagar. A tela avança sozinha assim que o pagamento for confirmado.</div>
+      <button class="botao-pequeno oculto" id="btn-copiar-pix-contas" style="width:100%;margin-top:12px">Copiar código Pix</button>
+      <div class="status-scan" id="contas-status-pagamento">Aguardando pagamento...</div>
+    </div>
+
+    <!-- Passo 4: comprovante -->
+    <div class="painel-identificar oculto" id="painel-contas-comprovante">
+      <div class="resultado-icone" style="color:#10b981">✅</div>
+      <div class="subtitulo" id="contas-comprovante-saudacao" style="margin-bottom:12px"></div>
+      <div class="comprovante" id="comprovante-itens"></div>
+      <button class="botao-grande primario" id="btn-contas-concluir" style="width:100%;margin-top:16px">Concluir</button>
+    </div>
+
+    <button class="link-voltar" id="btn-voltar-4">&larr; Voltar</button>
   </div>
 
 <script src="terminal.js"></script>

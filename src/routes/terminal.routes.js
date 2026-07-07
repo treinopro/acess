@@ -367,6 +367,183 @@ terminal.get('/auto-cadastro/status/:cobrancaId', autenticarTerminal, async (req
   }
 });
 
+// ---------------------------------------------------------------------------
+// Pagamento de contas em atraso pelo totem (consulta por CPF). Diferente do
+// auto-cadastro (uma cobrança = um pagamento), aqui o aluno pode ter VÁRIAS
+// contas vencidas e pagar tudo de uma vez com um único Pix — por isso o
+// "pagamento agregado" fica registrado em pagamentos_totem (cobranca_ids como
+// array JSON) em vez de usar cobrancas.provedor_referencia diretamente.
+//
+// liberar_acesso: true no totem físico da academia (some com a cobrança E
+// libera a catraca, já que essa é a mesma dose de responsabilidade de estar
+// fisicamente na academia). Um futuro portal remoto (fora da academia, sem
+// controle de quem está com o celular) deve chamar com liberar_acesso=false —
+// só quita a conta, nunca aciona a catraca remotamente.
+// ---------------------------------------------------------------------------
+
+// POST /api/terminal/contas/consultar { cpf } — lista as contas em aberto
+// (pendente/atrasado) do aluno, pra montar a tela de seleção no totem.
+terminal.post('/contas/consultar', autenticarTerminal, async (req, res, next) => {
+  try {
+    const { cpf } = z.object({ cpf: z.string().min(1) }).parse(req.body);
+    const aluno = await acessoTerminal.buscarAlunoPorCpf(cpf);
+    if (!aluno) return res.status(404).json({ erro: 'CPF não encontrado.' });
+
+    const result = await db.execute({
+      sql: `SELECT id, descricao, valor_centavos, vencimento, status FROM cobrancas
+            WHERE aluno_id = ? AND status IN ('pendente', 'atrasado')
+            ORDER BY vencimento ASC`,
+      args: [aluno.id],
+    });
+
+    res.json({ aluno_id: aluno.id, aluno_nome: aluno.nome, contas: result.rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/terminal/contas/pagar { cpf, cobranca_ids: [...], liberar_acesso? }
+// Gera UM pagamento Pix agregado cobrindo todas as cobrancas selecionadas.
+terminal.post('/contas/pagar', autenticarTerminal, async (req, res, next) => {
+  try {
+    const schema = z.object({
+      cpf: z.string().min(1),
+      cobranca_ids: z.array(z.string()).min(1),
+      liberar_acesso: z.boolean().optional(),
+    });
+    const dados = schema.parse(req.body);
+
+    const aluno = await acessoTerminal.buscarAlunoPorCpf(dados.cpf);
+    if (!aluno) return res.status(404).json({ erro: 'CPF não encontrado.' });
+
+    const placeholders = dados.cobranca_ids.map(() => '?').join(', ');
+    const contas = await db.execute({
+      sql: `SELECT * FROM cobrancas WHERE aluno_id = ? AND id IN (${placeholders}) AND status IN ('pendente', 'atrasado')`,
+      args: [aluno.id, ...dados.cobranca_ids],
+    });
+    if (contas.rows.length === 0) {
+      return res.status(404).json({ erro: 'Nenhuma das contas informadas está em aberto para este CPF.' });
+    }
+    if (contas.rows.length !== dados.cobranca_ids.length) {
+      return res.status(409).json({ erro: 'Uma ou mais contas selecionadas já não estão mais em aberto. Atualize a lista e tente de novo.' });
+    }
+
+    const valorTotalCentavos = contas.rows.reduce((soma, c) => soma + Number(c.valor_centavos), 0);
+    const pagamentoId = uuid();
+    const descricao = contas.rows.length === 1
+      ? contas.rows[0].descricao || 'Conta em atraso'
+      : `${contas.rows.length} contas em atraso`;
+
+    const emailTeste = process.env.MERCADOPAGO_TEST_PAYER_EMAIL;
+    const emailPagador = emailTeste || aluno.email || `aluno-${String(aluno.cpf).replace(/\D/g, '')}@academia-gestao.com`;
+    const firstNamePagador = emailTeste ? 'APRO' : undefined;
+
+    const order = await mercadopago.criarOrderPix({
+      descricao,
+      valorCentavos: valorTotalCentavos,
+      referenciaExterna: pagamentoId,
+      email: emailPagador,
+      firstName: firstNamePagador,
+    });
+    const metodoPix = order.transactions?.payments?.[0]?.payment_method || {};
+
+    await db.execute({
+      sql: `INSERT INTO pagamentos_totem (id, aluno_id, cobranca_ids, valor_centavos, provedor, provedor_referencia, liberar_acesso)
+            VALUES (?, ?, ?, ?, 'mercadopago', ?, ?)`,
+      args: [pagamentoId, aluno.id, JSON.stringify(dados.cobranca_ids), valorTotalCentavos, String(order.id), dados.liberar_acesso === false ? 0 : 1],
+    });
+
+    res.status(201).json({
+      pagamento_id: pagamentoId,
+      qr_code_pix: metodoPix.qr_code || null,
+      qr_code_pix_imagem: metodoPix.qr_code_base64 || null,
+      valor_centavos: valorTotalCentavos,
+      aluno_nome: aluno.nome,
+      contas: contas.rows.map((c) => ({ id: c.id, descricao: c.descricao, valor_centavos: c.valor_centavos, vencimento: c.vencimento })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/terminal/contas/status/:pagamentoId — polling do totem enquanto
+// aguarda o Pix. Quando confirmado, quita todas as cobrancas cobertas (com
+// registro em pagamentos_cobranca, pro histórico/relatórios ficarem
+// consistentes com um pagamento lançado manualmente) e, se liberar_acesso
+// estiver ligado, tenta liberar a catraca também.
+terminal.get('/contas/status/:pagamentoId', autenticarTerminal, async (req, res, next) => {
+  try {
+    const result = await db.execute({ sql: 'SELECT * FROM pagamentos_totem WHERE id = ?', args: [req.params.pagamentoId] });
+    let p = result.rows[0];
+    if (!p) return res.status(404).json({ erro: 'Pagamento não encontrado.' });
+
+    if (p.status !== 'pago') {
+      try {
+        const order = await mercadopago.consultarOrder(p.provedor_referencia);
+        const pagamentoOrder = order.transactions?.payments?.[0] || {};
+        const aprovado = order.status === 'processed' || pagamentoOrder.status === 'approved';
+        if (aprovado) {
+          await db.execute({ sql: `UPDATE pagamentos_totem SET status = 'pago' WHERE id = ?`, args: [p.id] });
+          p = { ...p, status: 'pago' };
+        }
+      } catch (err) {
+        // Falha pontual na consulta não interrompe o polling — o totem tenta de novo.
+      }
+    }
+
+    if (p.status !== 'pago') return res.json({ pago: false });
+
+    const cobrancaIds = JSON.parse(p.cobranca_ids);
+    const hoje = new Date().toISOString().slice(0, 10);
+
+    // Idempotente: só lança pagamentos_cobranca pra quem ainda estiver em
+    // aberto — se o totem repetir o poll depois de já ter quitado (corrida
+    // entre webhook e polling), não duplica o lançamento.
+    const itens = [];
+    for (const cobrancaId of cobrancaIds) {
+      const cobrancaResult = await db.execute({ sql: 'SELECT * FROM cobrancas WHERE id = ?', args: [cobrancaId] });
+      const cobranca = cobrancaResult.rows[0];
+      if (!cobranca) continue;
+      itens.push({ id: cobranca.id, descricao: cobranca.descricao, valor_centavos: cobranca.valor_centavos });
+      if (cobranca.status === 'pago') continue;
+
+      await db.execute({
+        sql: `INSERT INTO pagamentos_cobranca (id, cobranca_id, data, valor_centavos, tipo, conta_corrente)
+              VALUES (?, ?, ?, ?, 'pix', NULL)`,
+        args: [uuid(), cobranca.id, hoje, cobranca.valor_centavos],
+      });
+      await db.execute({
+        sql: `UPDATE cobrancas SET status = 'pago', metodo_pagamento = 'pix', pago_em = datetime('now') WHERE id = ?`,
+        args: [cobranca.id],
+      });
+    }
+
+    const alunoResult = await db.execute({ sql: 'SELECT * FROM alunos WHERE id = ?', args: [p.aluno_id] });
+    const aluno = alunoResult.rows[0];
+    if (!aluno) return res.status(404).json({ erro: 'Aluno não encontrado.' });
+
+    let autorizado = null;
+    let motivo = null;
+    if (p.liberar_acesso) {
+      const resultadoLiberacao = await acessoTerminal.tentarLiberar({ aluno, metodo: 'pagamento_contas' });
+      autorizado = resultadoLiberacao.autorizado;
+      motivo = resultadoLiberacao.motivo;
+    }
+
+    res.json({
+      pago: true,
+      autorizado,
+      motivo,
+      aluno_nome: aluno.nome,
+      valor_centavos: p.valor_centavos,
+      itens,
+      pago_em: new Date().toISOString(),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.use(terminal);
 
 // ---------------------------------------------------------------------------

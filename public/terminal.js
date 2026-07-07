@@ -108,12 +108,27 @@ async function iniciarEscaneamentoContinuo() {
   agendarProximoTick();
 }
 
-function pararEscaneamentoContinuo() {
+// Só pausa o LOOP de detecção (QR/rosto) — a câmera continua ligada e visível.
+// Usada durante o overlay de resultado (liberado/negado), que fica por cima
+// do próprio vídeo em vez de trocar de tela.
+function pausarDeteccaoContinua() {
   escaneamentoAtivo = false;
   if (escaneamentoTimer) {
     clearTimeout(escaneamentoTimer);
     escaneamentoTimer = null;
   }
+}
+
+// Retoma o loop sem reiniciar a câmera (ela nunca foi parada).
+function retomarDeteccaoContinua() {
+  escaneamentoAtivo = true;
+  agendarProximoTick();
+}
+
+// Parada completa (câmera + loop) — usada só ao navegar de verdade para outra
+// tela (vincular, cadastro, pagar contas), que tem seu próprio elemento de vídeo.
+function pararEscaneamentoContinuo() {
+  pausarDeteccaoContinua();
   pararCamera();
 }
 
@@ -173,8 +188,8 @@ async function tickEscaneamento() {
 // de esperar alguém clicar) — assim, se chegar outra pessoa na sequência, o
 // totem já está tentando reconhecer ela.
 async function processarResultadoInicio(chamada) {
-  pararEscaneamentoContinuo();
-  await processarResultado(chamada, { aoVoltar: () => iniciarEscaneamentoContinuo() });
+  pausarDeteccaoContinua();
+  await processarResultado(chamada, { aoVoltar: () => retomarDeteccaoContinua() });
 }
 
 // ---------------- Navegação entre telas ----------------
@@ -191,6 +206,12 @@ document.getElementById('btn-ir-cadastro').addEventListener('click', () => {
   mostrarTela('tela-cadastro');
 });
 
+document.getElementById('btn-ir-contas').addEventListener('click', () => {
+  pararEscaneamentoContinuo();
+  resetContas();
+  mostrarTela('tela-contas');
+});
+
 document.getElementById('btn-voltar-2').addEventListener('click', () => {
   pararCamera();
   mostrarTela('tela-inicio');
@@ -204,42 +225,73 @@ document.getElementById('btn-voltar-3').addEventListener('click', () => {
   iniciarEscaneamentoContinuo();
 });
 
-// ---------------- Resultado (tela final, com auto-retorno) ----------------
+// ---------------- Resultado (overlay sobre a própria câmera, com auto-retorno) ----------------
+// A câmera NUNCA para aqui — o resultado (liberado/negado) aparece como um
+// overlay por cima do vídeo, que continua rodando por trás. Se o motivo da
+// negação for mensalidade em atraso, oferece "Pagar contas em atraso" com o
+// CPF já preenchido, sem fechar sozinho tão rápido (dá tempo da pessoa clicar).
 
 async function processarResultado(chamada, { aoVoltar } = {}) {
-  pararCamera();
-  mostrarTela('tela-resultado');
-  const tela = document.getElementById('tela-resultado');
-  tela.classList.remove('liberado', 'negado');
-  document.getElementById('resultado-icone').textContent = '⏳';
-  document.getElementById('resultado-titulo').textContent = 'Verificando...';
-  document.getElementById('resultado-msg').textContent = '';
+  const overlay = document.getElementById('overlay-resultado');
+  const btnPagarContas = document.getElementById('btn-overlay-pagar-contas');
+
+  overlay.classList.remove('liberado', 'negado');
+  overlay.classList.add('visivel');
+  btnPagarContas.classList.add('oculto');
+  btnPagarContas.onclick = null;
+  document.getElementById('overlay-icone').textContent = '⏳';
+  document.getElementById('overlay-titulo').textContent = 'Verificando...';
+  document.getElementById('overlay-msg').textContent = '';
+
+  let cpfParaContas = null;
 
   try {
     const r = await chamada();
     if (r.autorizado) {
-      tela.classList.add('liberado');
-      document.getElementById('resultado-icone').textContent = '✅';
-      document.getElementById('resultado-titulo').textContent = `Bem-vindo(a), ${r.aluno_nome || ''}!`;
-      document.getElementById('resultado-msg').textContent = 'Acesso liberado. Pode entrar.';
+      overlay.classList.add('liberado');
+      document.getElementById('overlay-icone').textContent = '✅';
+      document.getElementById('overlay-titulo').textContent = `Bem-vindo(a), ${r.aluno_nome || ''}!`;
+      document.getElementById('overlay-msg').textContent = 'Acesso liberado. Pode entrar.';
     } else {
-      tela.classList.add('negado');
-      document.getElementById('resultado-icone').textContent = '⛔';
-      document.getElementById('resultado-titulo').textContent = 'Acesso negado';
-      document.getElementById('resultado-msg').textContent = r.motivo || 'Procure a recepção.';
+      overlay.classList.add('negado');
+      document.getElementById('overlay-icone').textContent = '⛔';
+      document.getElementById('overlay-titulo').textContent = 'Acesso negado';
+      document.getElementById('overlay-msg').textContent = r.motivo || 'Procure a recepção.';
+      if (r.cpf && /atraso/i.test(r.motivo || '')) {
+        cpfParaContas = r.cpf;
+      }
     }
   } catch (err) {
-    tela.classList.add('negado');
-    document.getElementById('resultado-icone').textContent = '⚠️';
-    document.getElementById('resultado-titulo').textContent = 'Não foi possível verificar';
-    document.getElementById('resultado-msg').textContent = err.message;
+    overlay.classList.add('negado');
+    document.getElementById('overlay-icone').textContent = '⚠️';
+    document.getElementById('overlay-titulo').textContent = 'Não foi possível verificar';
+    document.getElementById('overlay-msg').textContent = err.message;
   }
 
-  setTimeout(() => {
+  const fecharOverlay = () => {
+    overlay.classList.remove('visivel');
+    btnPagarContas.classList.add('oculto');
     document.getElementById('input-cpf').value = '';
-    mostrarTela('tela-inicio');
     if (aoVoltar) aoVoltar();
-  }, DURACAO_RESULTADO_MS);
+  };
+
+  if (cpfParaContas) {
+    // Fica visível mais tempo (o triplo) já que agora tem uma ação disponível
+    // — mas ainda fecha sozinho se ninguém interagir, pra não travar a fila.
+    btnPagarContas.classList.remove('oculto');
+    let fechamentoAutomatico;
+    btnPagarContas.onclick = () => {
+      clearTimeout(fechamentoAutomatico);
+      overlay.classList.remove('visivel');
+      btnPagarContas.classList.add('oculto');
+      pararEscaneamentoContinuo();
+      abrirTelaContasComCpf(cpfParaContas);
+    };
+    fechamentoAutomatico = setTimeout(fecharOverlay, DURACAO_RESULTADO_MS * 3);
+    return;
+  }
+
+  setTimeout(fecharOverlay, DURACAO_RESULTADO_MS);
 }
 
 // ---------------- Identificação por CPF (sempre disponível na tela inicial) ----------------
@@ -247,10 +299,10 @@ async function processarResultado(chamada, { aoVoltar } = {}) {
 document.getElementById('btn-confirmar-cpf').addEventListener('click', () => {
   const cpf = document.getElementById('input-cpf').value.trim();
   if (!cpf) return;
-  pararEscaneamentoContinuo();
+  pausarDeteccaoContinua();
   processarResultado(
     () => api('/api/terminal/acesso/cpf', { method: 'POST', body: JSON.stringify({ cpf }) }),
-    { aoVoltar: () => iniciarEscaneamentoContinuo() },
+    { aoVoltar: () => retomarDeteccaoContinua() },
   );
 });
 
@@ -504,6 +556,212 @@ document.getElementById('btn-cadastro-facial').addEventListener('click', async (
 });
 
 document.getElementById('btn-cadastro-concluir').addEventListener('click', () => {
+  mostrarTela('tela-inicio');
+  iniciarEscaneamentoContinuo();
+});
+
+// ---------------- Pagar contas em atraso (consulta por CPF) ----------------
+// Acessível pelo menu principal OU pelo botão que aparece no overlay de
+// "Acesso negado - mensalidades em atraso". Uma única transação Pix pode
+// cobrir várias contas selecionadas de uma vez (ver POST /contas/pagar).
+
+let contasCpfAtual = null;
+let contasSelecionadas = {}; // cobranca_id -> valor_centavos
+let contasPollTimer = null;
+
+function resetContas() {
+  pararPollContas();
+  contasCpfAtual = null;
+  contasSelecionadas = {};
+  document.getElementById('input-cpf-contas').value = '';
+  document.getElementById('contas-cpf-erro').textContent = '';
+  document.getElementById('painel-contas-cpf').classList.remove('oculto');
+  document.getElementById('painel-contas-lista').classList.add('oculto');
+  document.getElementById('painel-contas-pagamento').classList.add('oculto');
+  document.getElementById('painel-contas-comprovante').classList.add('oculto');
+  document.getElementById('btn-copiar-pix-contas').classList.add('oculto');
+}
+
+// Chamada pelo botão "Pagar contas em atraso" do overlay de acesso negado —
+// já entra direto na tela com o CPF preenchido e a busca disparada.
+function abrirTelaContasComCpf(cpf) {
+  resetContas();
+  mostrarTela('tela-contas');
+  document.getElementById('input-cpf-contas').value = cpf;
+  buscarContas();
+}
+
+async function buscarContas() {
+  const cpf = document.getElementById('input-cpf-contas').value.trim();
+  const erroEl = document.getElementById('contas-cpf-erro');
+  erroEl.textContent = '';
+  if (!cpf) return;
+
+  try {
+    const resp = await api('/api/terminal/contas/consultar', { method: 'POST', body: JSON.stringify({ cpf }) });
+    if (!resp.contas.length) {
+      erroEl.textContent = 'Nenhuma conta em aberto encontrada para este CPF.';
+      return;
+    }
+    contasCpfAtual = cpf;
+    document.getElementById('contas-lista-saudacao').textContent = `Olá, ${resp.aluno_nome}! Selecione as contas que deseja pagar:`;
+    renderizarListaContas(resp.contas);
+    document.getElementById('painel-contas-cpf').classList.add('oculto');
+    document.getElementById('painel-contas-lista').classList.remove('oculto');
+  } catch (err) {
+    erroEl.textContent = err.message;
+  }
+}
+
+document.getElementById('btn-buscar-contas').addEventListener('click', buscarContas);
+
+function renderizarListaContas(contas) {
+  contasSelecionadas = {};
+  const alvo = document.getElementById('lista-contas');
+  alvo.innerHTML = contas.map((c) => `
+    <label class="item-conta">
+      <input type="checkbox" data-id="${c.id}" data-valor="${c.valor_centavos}" checked />
+      <div class="info">
+        <div class="desc">${c.descricao || 'Conta'}</div>
+        <div class="venc">${c.vencimento ? `Vencimento: ${c.vencimento.split('-').reverse().join('/')}` : ''}</div>
+      </div>
+      <div class="valor">${formatarMoedaCadastro(c.valor_centavos)}</div>
+    </label>
+  `).join('');
+
+  contas.forEach((c) => { contasSelecionadas[c.id] = c.valor_centavos; });
+
+  alvo.querySelectorAll('input[type=checkbox]').forEach((chk) => {
+    chk.addEventListener('change', () => {
+      if (chk.checked) contasSelecionadas[chk.dataset.id] = Number(chk.dataset.valor);
+      else delete contasSelecionadas[chk.dataset.id];
+      atualizarTotalContas();
+    });
+  });
+
+  atualizarTotalContas();
+}
+
+function atualizarTotalContas() {
+  const total = Object.values(contasSelecionadas).reduce((a, b) => a + b, 0);
+  document.getElementById('contas-total-valor').textContent = formatarMoedaCadastro(total);
+  document.getElementById('btn-gerar-pix-contas').disabled = total <= 0;
+}
+
+document.getElementById('btn-gerar-pix-contas').addEventListener('click', async () => {
+  const ids = Object.keys(contasSelecionadas);
+  if (!ids.length) return;
+
+  try {
+    // liberar_acesso: true porque este é o totem físico da academia — o mesmo
+    // clique que quita a conta também tenta abrir a catraca em seguida.
+    const resp = await api('/api/terminal/contas/pagar', {
+      method: 'POST',
+      body: JSON.stringify({ cpf: contasCpfAtual, cobranca_ids: ids, liberar_acesso: true }),
+    });
+
+    document.getElementById('painel-contas-lista').classList.add('oculto');
+    document.getElementById('painel-contas-pagamento').classList.remove('oculto');
+    document.getElementById('contas-pagamento-valor').textContent = `Valor: ${formatarMoedaCadastro(resp.valor_centavos)}`;
+    document.getElementById('contas-status-pagamento').textContent = 'Aguardando pagamento...';
+
+    const alvo = document.getElementById('qrcode-contas-pagamento');
+    alvo.innerHTML = '';
+    const btnCopiarPix = document.getElementById('btn-copiar-pix-contas');
+
+    if (resp.qr_code_pix_imagem) {
+      const img = document.createElement('img');
+      img.src = `data:image/png;base64,${resp.qr_code_pix_imagem}`;
+      img.style.width = '220px';
+      img.style.height = '220px';
+      img.style.borderRadius = '12px';
+      alvo.appendChild(img);
+    } else if (resp.qr_code_pix) {
+      // eslint-disable-next-line no-new
+      new QRCode(alvo, { text: resp.qr_code_pix, width: 220, height: 220, colorDark: '#0f172a', colorLight: '#ffffff' });
+    }
+
+    if (resp.qr_code_pix) {
+      btnCopiarPix.classList.remove('oculto');
+      btnCopiarPix.onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(resp.qr_code_pix);
+          btnCopiarPix.textContent = 'Código copiado!';
+          setTimeout(() => { btnCopiarPix.textContent = 'Copiar código Pix'; }, 2000);
+        } catch {
+          alert(`Não foi possível copiar automaticamente. Código Pix:\n${resp.qr_code_pix}`);
+        }
+      };
+    } else {
+      btnCopiarPix.classList.add('oculto');
+    }
+
+    iniciarPollContas(resp.pagamento_id);
+  } catch (err) {
+    alert(err.message);
+  }
+});
+
+function iniciarPollContas(pagamentoId) {
+  pararPollContas();
+  const statusEl = document.getElementById('contas-status-pagamento');
+  contasPollTimer = setInterval(async () => {
+    try {
+      const resp = await api(`/api/terminal/contas/status/${pagamentoId}`);
+      if (resp.pago) {
+        pararPollContas();
+        mostrarComprovanteContas(resp);
+      }
+    } catch (err) {
+      statusEl.textContent = `Erro ao consultar pagamento: ${err.message}`;
+    }
+  }, 4000);
+}
+
+function pararPollContas() {
+  if (contasPollTimer) {
+    clearInterval(contasPollTimer);
+    contasPollTimer = null;
+  }
+}
+
+function mostrarComprovanteContas(resp) {
+  document.getElementById('painel-contas-pagamento').classList.add('oculto');
+  document.getElementById('painel-contas-comprovante').classList.remove('oculto');
+
+  const acessoMsg = resp.autorizado === true
+    ? ' Sua entrada já foi liberada.'
+    : resp.autorizado === false
+      ? ` Não foi possível liberar a catraca automaticamente: ${resp.motivo || ''}. Procure a recepção.`
+      : '';
+  document.getElementById('contas-comprovante-saudacao').textContent = `Pagamento aprovado, ${resp.aluno_nome || ''}!${acessoMsg}`;
+
+  // resp.pago_em é um ISO datetime completo (com hora) — usar getters locais
+  // (getDate/getHours/...) em vez de toLocaleDateString evita depender de
+  // configuração de timezone do navegador do totem.
+  const agora = new Date(resp.pago_em);
+  const dataFormatada = `${String(agora.getDate()).padStart(2, '0')}/${String(agora.getMonth() + 1).padStart(2, '0')}/${agora.getFullYear()} `
+    + `${String(agora.getHours()).padStart(2, '0')}:${String(agora.getMinutes()).padStart(2, '0')}`;
+
+  const linhasItens = (resp.itens || []).map((it) => `
+    <div class="linha"><span>${it.descricao || 'Conta'}</span><span>${formatarMoedaCadastro(it.valor_centavos)}</span></div>
+  `).join('');
+
+  document.getElementById('comprovante-itens').innerHTML = `
+    <div class="linha"><span>Data</span><span>${dataFormatada}</span></div>
+    ${linhasItens}
+    <div class="linha"><span>Total pago</span><span>${formatarMoedaCadastro(resp.valor_centavos)}</span></div>
+  `;
+}
+
+document.getElementById('btn-contas-concluir').addEventListener('click', () => {
+  mostrarTela('tela-inicio');
+  iniciarEscaneamentoContinuo();
+});
+
+document.getElementById('btn-voltar-4').addEventListener('click', () => {
+  pararPollContas();
+  pararCamera();
   mostrarTela('tela-inicio');
   iniciarEscaneamentoContinuo();
 });

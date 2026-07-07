@@ -18,6 +18,12 @@ const PADROES = {
   // 'app_externo' (perfil, totem, portal remoto). Vínculo com o app acontece
   // lá mesmo, por CPF ou e-mail, no primeiro acesso do aluno.
   treino_app_url: '',
+  // Número de WhatsApp da recepção (só dígitos, com DDI+DDD, ex: 5599999999999)
+  // usado pelo portal remoto pra montar o link "Agendar avaliação" (wa.me) —
+  // enquanto não existe um disparo automático de WhatsApp (ver configuração
+  // de aviso de cobrança, ainda não implementada), isso já dá um jeito simples
+  // do aluno pedir o agendamento sem precisar ligar.
+  whatsapp_contato: '',
 };
 
 // GET /api/config — pública de propósito: a tela de login precisa mostrar o
@@ -53,6 +59,7 @@ router.put('/', autenticar, apenasAdmin, async (req, res, next) => {
       nome_app: z.string().trim().min(1).optional(),
       licenciado_para: z.string().trim().optional(),
       treino_app_url: z.string().trim().optional(),
+      whatsapp_contato: z.string().trim().optional(),
       // Precisa conter exatamente as mesmas chaves de menu que já existem,
       // só que em outra ordem — evita salvar uma lista quebrada (item
       // duplicado, faltando, ou inventado) que deixaria a barra lateral bugada.

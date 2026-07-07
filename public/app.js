@@ -349,6 +349,7 @@ async function carregarConfiguracoesForm() {
     document.getElementById('config-nome-app').value = config.nome_app || '';
     document.getElementById('config-licenciado-para').value = config.licenciado_para || '';
     document.getElementById('config-treino-app-url').value = config.treino_app_url || '';
+    document.getElementById('config-whatsapp-contato').value = config.whatsapp_contato || '';
     ordemMenuAtual = Array.isArray(config.menu_ordem) && config.menu_ordem.length
       ? [...config.menu_ordem]
       : [...ORDEM_MENU_PADRAO];
@@ -362,6 +363,7 @@ document.getElementById('form-config-app').addEventListener('submit', async (ev)
     nome_app: document.getElementById('config-nome-app').value.trim() || 'Academia Gestão',
     licenciado_para: document.getElementById('config-licenciado-para').value.trim(),
     treino_app_url: document.getElementById('config-treino-app-url').value.trim(),
+    whatsapp_contato: document.getElementById('config-whatsapp-contato').value.trim(),
   };
   try {
     await api('/api/config', { method: 'PUT', body: JSON.stringify(dados) });

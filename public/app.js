@@ -2174,20 +2174,46 @@ async function carregarPagamentosModal() {
 
 document.getElementById('btn-fechar-modal-conta').addEventListener('click', fecharModalConta);
 
-document.getElementById('form-modal-conta').addEventListener('submit', async (ev) => {
-  ev.preventDefault();
-  const id = document.getElementById('mconta-id').value;
-  const dados = {
+// Lê os campos de edição da conta (descrição/valor/vencimento) direto do formulário.
+function dadosEdicaoConta() {
+  return {
     descricao: document.getElementById('mconta-descricao').value.trim(),
     valor_centavos: Math.round(parseFloat(document.getElementById('mconta-valor').value) * 100),
     vencimento: document.getElementById('mconta-vencimento').value || null,
   };
+}
+
+// Verdadeiro se o usuário mudou algo nos campos de edição (ex: valor, pra aplicar um
+// desconto manual) mas ainda não clicou em "Salvar alterações" — usado pra não deixar
+// a pessoa lançar um pagamento contra o valor ANTIGO por esquecer de salvar antes.
+function edicaoContaTemAlteracoesPendentes() {
+  if (!modalContaAtual) return false;
+  const dados = dadosEdicaoConta();
+  return dados.descricao !== (modalContaAtual.descricao || '')
+    || dados.valor_centavos !== modalContaAtual.valor_centavos
+    || (dados.vencimento || null) !== (modalContaAtual.vencimento || null);
+}
+
+// Salva as edições da conta (descrição/valor/vencimento) no backend e atualiza o
+// estado local (modalContaAtual) e a UI do modal, sem necessariamente fechar o modal
+// nem mostrar toast — usado tanto pelo submit do formulário quanto, silenciosamente,
+// antes de abrir o modal de pagamento quando há uma edição de valor não salva.
+async function salvarEdicaoConta({ mostrarFeedback = true } = {}) {
+  const id = document.getElementById('mconta-id').value;
+  const dados = dadosEdicaoConta();
+  await api(`/api/pagamentos/cobrancas/${id}`, { method: 'PUT', body: JSON.stringify(dados) });
+  Object.assign(modalContaAtual, dados);
+  document.getElementById('mconta-valor-total').textContent = formatarMoeda(modalContaAtual.valor_centavos);
+  if (mostrarFeedback) mostrarToast('Conta atualizada.');
+  carregarContas();
+  carregarFinanceiroPerfil();
+}
+
+document.getElementById('form-modal-conta').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
   try {
-    await api(`/api/pagamentos/cobrancas/${id}`, { method: 'PUT', body: JSON.stringify(dados) });
-    mostrarToast('Conta atualizada.');
+    await salvarEdicaoConta();
     fecharModalConta();
-    carregarContas();
-      carregarFinanceiroPerfil();
   } catch (err) { mostrarToast(err.message, true); }
 });
 
@@ -2233,9 +2259,18 @@ function calcularValorComDesconto(saldoCentavos, plano) {
 function atualizarValorPagamentoComDesconto() {
   const tipoSelecionado = document.getElementById('pagamento-tipo').value;
   const avisoEl = document.getElementById('pagamento-desconto-aviso');
+  const campoCheckboxEl = document.getElementById('campo-pagamento-desconto');
+  const checkboxEl = document.getElementById('pagamento-aplicar-desconto');
   const plano = modalContaAtual;
-  const descontoAplicavel = plano?.plano_desconto_tipo
+  const descontoConfigurado = plano?.plano_desconto_tipo
     && plano.plano_desconto_forma_pagamento === tipoSelecionado;
+
+  // A caixinha só aparece quando existe um desconto configurado (na aba Planos) pra
+  // essa forma de pagamento — marcada por padrão (aplica automático, como já era antes),
+  // mas dá pra desmarcar na hora se, por algum motivo, esse pagamento específico não
+  // deve levar o desconto (ex: aluno já usou o desconto em outro lugar).
+  campoCheckboxEl.classList.toggle('oculto', !descontoConfigurado);
+  const descontoAplicavel = descontoConfigurado && checkboxEl.checked;
 
   const valorFinal = descontoAplicavel
     ? calcularValorComDesconto(pagamentoSaldoCentavos, plano)
@@ -2259,6 +2294,7 @@ function abrirModalPagamento() {
   document.getElementById('pagamento-data').value = hojeLocalISO();
   document.getElementById('pagamento-tipo').value = 'dinheiro';
   document.getElementById('pagamento-conta-corrente').value = 'Caixa da empresa';
+  document.getElementById('pagamento-aplicar-desconto').checked = true;
   atualizarValorPagamentoComDesconto();
   document.getElementById('modal-pagamento').classList.remove('oculto');
 }
@@ -2267,10 +2303,25 @@ function fecharModalPagamento() {
   document.getElementById('modal-pagamento').classList.add('oculto');
 }
 
-document.getElementById('btn-add-pagamento').addEventListener('click', abrirModalPagamento);
+document.getElementById('btn-add-pagamento').addEventListener('click', async () => {
+  // Se a pessoa mexeu no valor (ex: pra aplicar um desconto manual) mas esqueceu de
+  // clicar em "Salvar alterações" antes de lançar o pagamento, salva agora — senão o
+  // pagamento seria conferido contra o valor antigo e a conta nunca sairia de "pendente".
+  if (edicaoContaTemAlteracoesPendentes()) {
+    try {
+      await salvarEdicaoConta({ mostrarFeedback: false });
+      mostrarToast('O valor da conta foi salvo automaticamente antes de lançar o pagamento.');
+    } catch (err) {
+      mostrarToast(err.message, true);
+      return;
+    }
+  }
+  abrirModalPagamento();
+});
 document.getElementById('btn-fechar-modal-pagamento').addEventListener('click', fecharModalPagamento);
 document.getElementById('btn-cancelar-modal-pagamento').addEventListener('click', fecharModalPagamento);
 document.getElementById('pagamento-tipo').addEventListener('change', atualizarValorPagamentoComDesconto);
+document.getElementById('pagamento-aplicar-desconto').addEventListener('change', atualizarValorPagamentoComDesconto);
 
 document.getElementById('form-modal-pagamento').addEventListener('submit', async (ev) => {
   ev.preventDefault();

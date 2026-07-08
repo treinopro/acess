@@ -3,13 +3,19 @@
 // segurança quais planos duplicados não têm nenhum aluno matriculado e podem ser
 // excluídos, mantendo só o(s) que realmente estão em uso.
 //
-// Este script é SOMENTE LEITURA — não apaga nada. É só um relatório pra revisão manual.
+// Por padrão (sem --aplicar) é SOMENTE LEITURA — não apaga nada, só mostra o relatório.
+// Só exclui de verdade um plano quando, dentro do grupo de duplicatas, existe EXATAMENTE
+// um com matrícula (esse fica) e o resto tem ZERO matrícula (esses saem). Qualquer grupo
+// ambíguo (nenhum com uso, ou mais de um com uso) nunca é excluído automaticamente —
+// fica de fora do --aplicar, pra revisão manual.
 //
 // Como rodar contra o local.db de teste (a partir da pasta academia-gestao):
-//   node scripts/relatorio-planos-duplicados.js
+//   node scripts/relatorio-planos-duplicados.js            (dry-run)
+//   node scripts/relatorio-planos-duplicados.js --aplicar  (exclui de verdade)
 //
 // Como rodar contra PRODUCAO:
 //   .\scripts\rodar-producao-migracao.ps1 "node scripts/relatorio-planos-duplicados.js --confirmar-producao"
+//   .\scripts\rodar-producao-migracao.ps1 "node scripts/relatorio-planos-duplicados.js --aplicar --confirmar-producao"
 
 require('dotenv').config();
 const { createClient } = require('@libsql/client');
@@ -49,7 +55,12 @@ function chaveGrupo(p) {
   return `${nome}__${p.tipo}__${p.valor_centavos}`;
 }
 
+function lerFlag(nome) {
+  return process.argv.includes(`--${nome}`);
+}
+
 async function main() {
+  const aplicar = lerFlag('aplicar');
   const result = await db.execute(`
     SELECT p.*,
       (SELECT COUNT(*) FROM matriculas m WHERE m.plano_id = p.id) AS total_matriculas,
@@ -118,7 +129,22 @@ async function main() {
   }
   console.log(`\nGrupos que precisam de revisão manual (ambíguos — nenhum uso, ou mais de um com uso): ${precisamRevisaoManual.length}`);
 
-  console.log('\nEste script não apagou nada — é só um relatório. Revise a lista acima antes de decidir o que excluir.');
+  if (!aplicar) {
+    console.log('\nEste script não apagou nada — é só um relatório (dry-run). Revise a lista acima e rode de novo com --aplicar para excluir os planos listados em "IDs sugeridos para exclusão".');
+    return;
+  }
+
+  if (!candidatosExclusao.length) {
+    console.log('\n--aplicar informado, mas não há nenhum candidato seguro pra excluir agora. Nada foi feito.');
+    return;
+  }
+
+  console.log(`\n=== APLICANDO: excluindo ${candidatosExclusao.length} plano(s) duplicado(s) sem matrícula ===`);
+  for (const p of candidatosExclusao) {
+    await db.execute({ sql: 'DELETE FROM planos WHERE id = ?', args: [p.id] });
+    console.log(`  Excluído: ${p.id} ("${p.nome}", ${p.tipo}, ${formatarMoeda(p.valor_centavos)})`);
+  }
+  console.log(`\n${candidatosExclusao.length} plano(s) duplicado(s) excluído(s). Os que têm matrícula real permanecem intactos.`);
 }
 
 main()

@@ -4,6 +4,7 @@ const { z } = require('zod');
 const db = require('../db/client');
 const { autenticar } = require('../middleware/auth');
 const acessoTerminal = require('../services/acessoTerminal.service');
+const catracaGateway = require('../services/catracaGateway.service');
 
 const router = express.Router();
 router.use(autenticar);
@@ -318,6 +319,22 @@ router.delete('/:id/biometria', async (req, res, next) => {
   try {
     await db.execute({ sql: 'UPDATE alunos SET biometria_id = NULL WHERE id = ?', args: [req.params.id] });
     res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/alunos/biometria/capturar-catraca — usado pelo botão "Capturar pela
+// catraca" na aba Biometria & acesso do cadastro do aluno. Pede pro agente local
+// aguardar a PRÓXIMA leitura de digital na catraca (até ~25s) e devolve o id lido,
+// SEM salvar em nenhum aluno ainda — quem salva é o admin, clicando em "Salvar ID
+// biométrico" depois de conferir o valor preenchido automaticamente no campo.
+// Não tem relação com autenticarTerminal/TERMINAL_TOKEN (isso é só pra dispositivos
+// de campo) — aqui quem chama é o próprio painel admin autenticado (JWT).
+router.post('/biometria/capturar-catraca', async (req, res, next) => {
+  try {
+    const resultado = await catracaGateway.capturarProximaBiometria({});
+    res.json(resultado);
   } catch (err) {
     next(err);
   }

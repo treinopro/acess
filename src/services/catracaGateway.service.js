@@ -75,6 +75,25 @@ function statusAgente() {
   return { ...agenteGateway.status(), modo: modoAtual() };
 }
 
+/**
+ * Pede pro agente local aguardar a PRÓXIMA leitura de biometria na catraca e
+ * devolver o id lido, em vez de validar/liberar acesso — usado pelo cadastro
+ * de biometria do aluno no painel ("Capturar pela catraca"). Só existe no
+ * modo "agente": o modo "direto" (servidor na mesma rede da catraca) não tem
+ * a escuta de biometria implementada aqui, só do lado do agente-local (ver
+ * `loopBiometria` em agente-local/agente.js) — então sem agente conectado
+ * não tem como capturar, tem que digitar o id manualmente.
+ */
+async function capturarProximaBiometria({ timeoutMs = 25000 } = {}) {
+  if (!agenteGateway.estaConectado()) {
+    throw new Error('Agente local não está conectado — não é possível capturar pela catraca agora. Digite o ID biométrico manualmente (ex.: lido por um leitor conectado ao PC).');
+  }
+  // Timeout do enviarComando um pouco maior que o do agente, pra dar tempo do
+  // agente responder "tempo esgotado" antes da gente desistir por conta própria.
+  const resultado = await agenteGateway.enviarComando('aguardar_biometria', { timeoutMs }, { timeoutMs: timeoutMs + 5000 });
+  return resultado;
+}
+
 module.exports = {
   modoAtual,
   liberarAcesso,
@@ -82,4 +101,5 @@ module.exports = {
   permitirEntrada,
   impedirEntrada,
   statusAgente,
+  capturarProximaBiometria,
 };

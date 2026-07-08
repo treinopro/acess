@@ -29,29 +29,74 @@
 // dia-alvo de vencimento vem de pessoas_servicos.dia_vencimento (campo por
 // matrícula individual), não mais calculado a partir de data_inicio.
 //
-// Como rodar (a partir da pasta academia-gestao):
+// Como rodar CONTRA O LOCAL.DB DE TESTE (a partir da pasta academia-gestao):
 //   0) node scripts/zerar-dados-alunos.js --aplicar        (limpa a tentativa anterior)
 //   1) node scripts/aplicar-colunas-secullum.js             (garante as colunas novas)
 //   2) node scripts/migrar-secullum-v2.js --dry-run         (só mostra contagens/relatório)
 //   3) node scripts/migrar-secullum-v2.js                    (grava de verdade)
 //
+// Como rodar CONTRA PRODUÇÃO (Turso) — só depois de validado no local.db,
+// com backup feito e decisão tomada com o usuário presente:
+//   .\scripts\rodar-producao-migracao.ps1 "node scripts/migrar-secullum-v2.js --dry-run --confirmar-producao"
+//   (revisar o relatório com calma, só então repetir sem --dry-run)
+// O wrapper .ps1 pede confirmação digitada e define DATABASE_URL/
+// DATABASE_AUTH_TOKEN de produção só para aquela janela do PowerShell (não
+// mexe no .env). A flag --confirmar-producao é uma segunda trava: mesmo que
+// DATABASE_URL de produção esteja setado no ambiente por engano (ex.:
+// sobrou de uma sessão anterior do PowerShell), o script recusa a rodar sem
+// ela — nunca escreve em produção "sem querer".
+//
 // IMPORTANTE: não suba o servidor (npm start / npm run dev) nem rode
-// `npm run gerar-cobrancas` entre o passo 3 e a conferência do relatório —
-// gerarCobrancasRecorrentes roda sozinha no boot do servidor.
+// `npm run gerar-cobrancas` entre o passo 3 (local ou produção) e a
+// conferência do relatório — gerarCobrancasRecorrentes roda sozinha no boot
+// do servidor.
 
 const fs = require('fs');
 const path = require('path');
 const { v4: uuid } = require('uuid');
 const bcrypt = require('bcryptjs');
-// IMPORTANTE: NAO usar '../src/db/client' aqui. Aquele módulo lê
-// DATABASE_URL do .env, e no seu .env atual DATABASE_URL aponta pro Turso
-// de PRODUÇÃO (a linha do local.db está comentada) - ou seja, esta
-// migração escreveria direto no banco ao vivo em vez do local.db de teste.
-// Por isso, igual a zerar-dados-alunos.js e aplicar-colunas-secullum.js,
-// este script agora sempre usa o arquivo local, não importa o que estiver
-// no .env.
+require('dotenv').config();
 const { createClient } = require('@libsql/client');
-const db = createClient({ url: 'file:./local.db' });
+
+// Mesmo padrão de src/db/client.js: por padrão usa local.db. Só troca de
+// banco se DATABASE_URL já estiver definido como variável de ambiente ANTES
+// deste processo iniciar — dotenv nunca sobrescreve uma env var já setada.
+// Isso só acontece de propósito, via scripts/rodar-producao-migracao.ps1;
+// nunca edite o .env na mão pra isso (ver instruções de uso no topo deste
+// arquivo).
+const DATABASE_URL = process.env.DATABASE_URL || 'file:./local.db';
+const USANDO_PRODUCAO = DATABASE_URL !== 'file:./local.db';
+
+// Trava extra, independente da variável de ambiente: contra um banco que
+// não é o local.db de teste, este script só roda com --confirmar-producao
+// explícito na linha de comando. Sem essa flag, recusa e explica por quê —
+// evita repetir o incidente de cobrança fantasma (ver STATUS-PROJETO.md,
+// sessão 08/07/2026), causado por o servidor conectar em produção sem
+// ninguém perceber.
+const CONFIRMAR_PRODUCAO = process.argv.includes('--confirmar-producao');
+if (USANDO_PRODUCAO && !CONFIRMAR_PRODUCAO) {
+  console.error('\n=== BLOQUEADO ===');
+  console.error('DATABASE_URL aponta para um banco que NAO e o local.db de teste:');
+  console.error(`  ${DATABASE_URL}`);
+  console.error('Isso normalmente significa que voce esta prestes a migrar contra PRODUCAO.');
+  console.error('Se for isso mesmo que voce quer (com backup feito e decisao tomada),');
+  console.error('rode de novo com --confirmar-producao.');
+  console.error('Se NAO era a intencao, feche esta janela do PowerShell e abra uma nova');
+  console.error('(essa variavel pode ter sobrado de uma sessao anterior).');
+  process.exit(1);
+}
+
+const db = createClient({
+  url: DATABASE_URL,
+  authToken: process.env.DATABASE_AUTH_TOKEN || undefined,
+});
+
+if (USANDO_PRODUCAO) {
+  console.log('\n=========================================================');
+  console.log(' ATENCAO: conectado em PRODUCAO (Turso), nao e o local.db');
+  console.log(` URL: ${DATABASE_URL}`);
+  console.log('=========================================================\n');
+}
 
 const EXPORT_DIR = path.join(__dirname, '..', '..', 'export');
 const DRY_RUN = process.argv.includes('--dry-run');

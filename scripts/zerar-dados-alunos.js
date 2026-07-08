@@ -6,6 +6,17 @@
 // anamnese_perguntas (catalogo de perguntas) - por pedido explicito, essas
 // tabelas ficam como estao.
 //
+// Usado aqui (08/07/2026) pra resolver de vez o incidente de duplicação: em
+// vez de reconciliar par-a-par o lote antigo (sem secullum_id) com o lote
+// novo da migração v2 (uma operação que ficou travando repetidamente contra
+// o Turso), decidimos apagar TODOS os alunos/matrículas/cobranças/etc. -
+// tanto os antigos duplicados quanto os 1380 corretos já migrados - e rodar
+// migrar-secullum-v2.js --confirmar-producao mais uma vez, do zero, contra
+// o banco já limpo. Decisão explícita do usuário: perder também o punhado
+// de atividade real (54 acessos de catraca, 2 pagamentos de totem, 53
+// cobranças não-legado) é aceitável, porque o site só teve uso de teste
+// dele mesmo até agora, nunca uso operacional real.
+//
 // MODO SEGURO POR PADRAO: dry-run sem --aplicar (só mostra quantas linhas
 // cada tabela tem hoje, não apaga nada).
 //
@@ -13,14 +24,41 @@
 // antes de remigrar (nao precisa rodar antes de zerar - só antes da
 // migracao v2). Este script de zerar funciona independente disso.
 //
-// Como rodar (a partir da pasta academia-gestao):
+// Como rodar contra o local.db de teste (a partir da pasta academia-gestao):
 //   node scripts/zerar-dados-alunos.js            (dry-run - só mostra contagens)
 //   node scripts/zerar-dados-alunos.js --aplicar   (apaga de verdade)
+//
+// Como rodar contra PRODUCAO:
+//   .\scripts\rodar-producao-migracao.ps1 "node scripts/zerar-dados-alunos.js --confirmar-producao"
+//   .\scripts\rodar-producao-migracao.ps1 "node scripts/zerar-dados-alunos.js --aplicar --confirmar-producao"
 
 const { createClient } = require('@libsql/client');
+require('dotenv').config();
+
+const DATABASE_URL = process.env.DATABASE_URL || 'file:./local.db';
+const USANDO_PRODUCAO = DATABASE_URL !== 'file:./local.db';
+const CONFIRMAR_PRODUCAO = process.argv.includes('--confirmar-producao');
+if (USANDO_PRODUCAO && !CONFIRMAR_PRODUCAO) {
+  console.error('\n=== BLOQUEADO ===');
+  console.error('DATABASE_URL aponta para um banco que NAO e o local.db de teste:');
+  console.error(`  ${DATABASE_URL}`);
+  console.error('Rode de novo com --confirmar-producao se for isso mesmo que voce quer.');
+  process.exit(1);
+}
+
+const db = createClient({
+  url: DATABASE_URL,
+  authToken: process.env.DATABASE_AUTH_TOKEN || undefined,
+});
+
+if (USANDO_PRODUCAO) {
+  console.log('\n=========================================================');
+  console.log(' ATENCAO: conectado em PRODUCAO (Turso), nao e o local.db');
+  console.log(` URL: ${DATABASE_URL}`);
+  console.log('=========================================================\n');
+}
 
 const APLICAR = process.argv.includes('--aplicar');
-const db = createClient({ url: 'file:./local.db' });
 
 // Ordem que respeita as foreign keys: tabelas filhas antes das tabelas mae.
 const TABELAS_EM_ORDEM = [
@@ -106,7 +144,7 @@ async function main() {
   }
 
   console.log('\n=== FIM (banco de alunos zerado) ===');
-  console.log('Próximo passo: rodar scripts/aplicar-colunas-secullum.js e depois scripts/migrar-secullum-v2.js --dry-run');
+  console.log('Próximo passo: rodar scripts/migrar-secullum-v2.js --dry-run (ou --confirmar-producao) pra subir os dados limpos.');
 }
 
 main()

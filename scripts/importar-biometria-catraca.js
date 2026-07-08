@@ -10,7 +10,7 @@
 // O identificador (234 no exemplo) e o nome (truncado em ~20 caracteres pelo
 // próprio equipamento) ficam nesse formato.
 //
-// Como rodar (a partir da pasta academia-gestao):
+// Como rodar contra o local.db de teste (a partir da pasta academia-gestao):
 //   1. Copie o arquivo exportado da catraca para scripts/data/cartao.txt
 //      (crie a pasta "data" se não existir).
 //   2. node scripts/importar-biometria-catraca.js
@@ -23,6 +23,10 @@
 //        -> grava biometria_id nos alunos com correspondência única e
 //           confiável. Nunca sobrescreve um biometria_id já preenchido.
 //
+// Como rodar contra PRODUCAO:
+//   .\scripts\rodar-producao-migracao.ps1 "node scripts/importar-biometria-catraca.js --confirmar-producao"
+//   .\scripts\rodar-producao-migracao.ps1 "node scripts/importar-biometria-catraca.js --aplicar --confirmar-producao"
+//
 // Critério de correspondência: nome do aluno normalizado (sem acento,
 // minúsculo) comparado com o nome truncado da catraca — por prefixo quando o
 // nome da catraca tem 20 caracteres (truncado pelo equipamento), ou igual
@@ -34,7 +38,30 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-const db = require('../src/db/client');
+const { createClient } = require('@libsql/client');
+
+const DATABASE_URL = process.env.DATABASE_URL || 'file:./local.db';
+const USANDO_PRODUCAO = DATABASE_URL !== 'file:./local.db';
+const CONFIRMAR_PRODUCAO = process.argv.includes('--confirmar-producao');
+if (USANDO_PRODUCAO && !CONFIRMAR_PRODUCAO) {
+  console.error('\n=== BLOQUEADO ===');
+  console.error('DATABASE_URL aponta para um banco que NAO e o local.db de teste:');
+  console.error(`  ${DATABASE_URL}`);
+  console.error('Rode de novo com --confirmar-producao se for isso mesmo que voce quer.');
+  process.exit(1);
+}
+
+const db = createClient({
+  url: DATABASE_URL,
+  authToken: process.env.DATABASE_AUTH_TOKEN || undefined,
+});
+
+if (USANDO_PRODUCAO) {
+  console.log('\n=========================================================');
+  console.log(' ATENCAO: conectado em PRODUCAO (Turso), nao e o local.db');
+  console.log(` URL: ${DATABASE_URL}`);
+  console.log('=========================================================\n');
+}
 
 const ARQUIVO_CARTAO = path.join(__dirname, 'data', 'cartao.txt');
 

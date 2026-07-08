@@ -1,15 +1,42 @@
 // Conferencia rapida pos-migracao: conta linhas nas tabelas principais e
 // procura sinais de duplicidade (ex: rodar a migracao duas vezes por engano).
+// So faz leitura (SELECT/COUNT) - nunca escreve nada.
 //
-// IMPORTANTE: NAO usar '../src/db/client' aqui. Aquele modulo le
-// DATABASE_URL do .env, que no seu .env atual aponta pro Turso de
-// PRODUCAO (a linha do local.db esta comentada) - ou seja, este script
-// estava conferindo o banco AO VIVO em vez do local.db de teste. So nao
-// causou dano porque so faz leitura (SELECT/COUNT), nunca escreve nada -
-// mas os numeros nunca refletiam as mudancas feitas no local.db. Agora,
-// igual aos outros scripts de migracao/limpeza, sempre usa o arquivo local.
+// Como rodar contra o local.db de teste (a partir da pasta academia-gestao):
+//   node scripts/verificar-migracao.js
+//
+// Como rodar contra PRODUCAO (Turso):
+//   .\scripts\rodar-producao-migracao.ps1 "node scripts/verificar-migracao.js --confirmar-producao"
 const { createClient } = require('@libsql/client');
-const db = createClient({ url: 'file:./local.db' });
+require('dotenv').config();
+
+// Mesmo padrao de seguranca dos outros scripts de migracao: por padrao usa
+// local.db; so troca de banco se DATABASE_URL ja estiver definido no
+// ambiente (via rodar-producao-migracao.ps1), e mesmo assim exige
+// --confirmar-producao explicito - mantido por consistencia, mesmo este
+// script sendo só leitura.
+const DATABASE_URL = process.env.DATABASE_URL || 'file:./local.db';
+const USANDO_PRODUCAO = DATABASE_URL !== 'file:./local.db';
+const CONFIRMAR_PRODUCAO = process.argv.includes('--confirmar-producao');
+if (USANDO_PRODUCAO && !CONFIRMAR_PRODUCAO) {
+  console.error('\n=== BLOQUEADO ===');
+  console.error('DATABASE_URL aponta para um banco que NAO e o local.db de teste:');
+  console.error(`  ${DATABASE_URL}`);
+  console.error('Rode de novo com --confirmar-producao se for isso mesmo que voce quer.');
+  process.exit(1);
+}
+
+const db = createClient({
+  url: DATABASE_URL,
+  authToken: process.env.DATABASE_AUTH_TOKEN || undefined,
+});
+
+if (USANDO_PRODUCAO) {
+  console.log('\n=========================================================');
+  console.log(' ATENCAO: conectado em PRODUCAO (Turso), nao e o local.db');
+  console.log(` URL: ${DATABASE_URL}`);
+  console.log('=========================================================\n');
+}
 
 async function contar(tabela) {
   try {

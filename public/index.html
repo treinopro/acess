@@ -169,14 +169,21 @@
           <h3 style="margin-top:0">Biometria (integração com catraca/leitor externo)</h3>
           <form id="form-biometria" class="form-painel">
             <p style="margin-top:0;color:#667085;font-size:13px">
-              Cadastre o template no leitor biométrico/catraca e cole aqui o ID de referência retornado pelo dispositivo.
+              Duas formas de preencher o ID biométrico: (1) clique em "Capturar pela catraca" e peça pro aluno tocar
+              o dedo no leitor da catraca — o ID lido preenche o campo abaixo automaticamente; ou (2) se você tiver
+              um leitor de digital separado conectado neste computador, cole aqui o ID que o software dele mostrar.
+              Em qualquer um dos dois casos, revise o valor e clique em "Salvar ID biométrico" pra confirmar.
             </p>
             <div class="grid-2">
-              <div><label>ID biométrico</label><input id="perfil-biometria-id" placeholder="ex: BIO-00123" /></div>
+              <div><label>ID biométrico</label><input id="perfil-biometria-id" placeholder="ex: BIO-00123, ou capture pela catraca abaixo" /></div>
             </div>
             <div class="form-acoes">
+              <button type="button" class="btn-secundario" id="btn-capturar-biometria-catraca">📡 Capturar pela catraca</button>
+            </div>
+            <p id="status-captura-biometria" style="font-size:12.5px;color:#667085;margin:6px 0 0;min-height:16px"></p>
+            <div class="form-acoes">
               <button type="submit" class="btn-primario">Salvar ID biométrico</button>
-              <button type="button" class="btn-secundario" id="btn-remover-biometria">Remover cadastro</button>
+              <button type="button" class="btn-secundario perigo" id="btn-remover-biometria">Remover cadastro</button>
             </div>
           </form>
 
@@ -618,7 +625,14 @@
 
         <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
           <div>
-            <label>Vencimento de</label>
+            <label>Filtrar por</label>
+            <select id="conta-filtro-data-campo">
+              <option value="vencimento">Vencimento</option>
+              <option value="pagamento">Data de pagamento</option>
+            </select>
+          </div>
+          <div>
+            <label id="conta-periodo-de-label">Vencimento de</label>
             <input type="date" id="conta-periodo-de" />
           </div>
           <div>
@@ -653,8 +667,14 @@
         <table class="tabela">
           <thead>
             <tr>
-              <th>Aluno</th><th>Descrição</th><th>Valor</th><th>Vencimento</th><th>Status</th>
-              <th>Data Pago</th><th>Valor Pago</th><th>Ações</th>
+              <th class="th-ordenavel" data-sort="aluno" style="cursor:pointer;user-select:none">Aluno <span class="seta-ordenacao" data-seta="aluno"></span></th>
+              <th class="th-ordenavel" data-sort="descricao" style="cursor:pointer;user-select:none">Descrição <span class="seta-ordenacao" data-seta="descricao"></span></th>
+              <th class="th-ordenavel" data-sort="valor" style="cursor:pointer;user-select:none">Valor <span class="seta-ordenacao" data-seta="valor"></span></th>
+              <th class="th-ordenavel" data-sort="vencimento" style="cursor:pointer;user-select:none">Vencimento <span class="seta-ordenacao" data-seta="vencimento"></span></th>
+              <th class="th-ordenavel" data-sort="status" style="cursor:pointer;user-select:none">Status <span class="seta-ordenacao" data-seta="status"></span></th>
+              <th class="th-ordenavel" data-sort="data_pago" style="cursor:pointer;user-select:none">Data Pago <span class="seta-ordenacao" data-seta="data_pago"></span></th>
+              <th class="th-ordenavel" data-sort="valor_pago" style="cursor:pointer;user-select:none">Valor Pago <span class="seta-ordenacao" data-seta="valor_pago"></span></th>
+              <th>Ações</th>
             </tr>
           </thead>
           <tbody id="lista-contas"></tbody>
@@ -946,18 +966,15 @@
       <h3>Liberar Equipamentos</h3>
       <button type="button" class="btn-fechar-painel" id="btn-fechar-janela-catraca" title="Fechar">&times;</button>
     </div>
-    <div class="janela-flutuante-corpo">
+    <div class="janela-flutuante-corpo janela-flutuante-corpo-compacta">
 
-      <p style="font-size:12px;color:#667085;margin:0 0 10px">
-        Conexão com a catraca: <strong id="catraca-status-modo">verificando...</strong>
-      </p>
-
-      <div class="lista-equipamentos">
-        <label class="item-equipamento">
+      <p class="catraca-status-linha">
+        Conexão: <strong id="catraca-status-modo">verificando...</strong>
+        <label class="item-equipamento-inline">
           <input type="checkbox" id="catraca-equip-chk" checked disabled />
-          <span>1 - Catraca principal</span>
+          1 - Catraca principal
         </label>
-      </div>
+      </p>
 
       <div class="catraca-opcao">
         <label>
@@ -979,24 +996,22 @@
         <select id="catraca-liberar-aluno" disabled></select>
       </div>
 
-      <div class="catraca-opcao">
+      <div class="catraca-opcao catraca-opcao-panico">
         <label>
           <input type="radio" name="catraca-modo" value="panico" id="catraca-modo-panico" />
           Liberação contínua (Função Pânico)
         </label>
-      </div>
-      <div class="catraca-opcao">
         <label>
           <input type="radio" name="catraca-modo" value="cancelar-panico" id="catraca-modo-cancelar-panico" />
-          Cancelar Liberação contínua
+          Cancelar
         </label>
       </div>
-      <p style="font-size:12px;color:#98a2b3;margin:2px 0 0">
-        Status da função pânico: <strong id="panico-status-texto">verificando...</strong>. Aviso: é um mecanismo
-        por software (não substitui trava mecânica de emergência exigida por norma de incêndio/saída de emergência).
+      <p class="catraca-aviso-panico">
+        Status da função pânico: <strong id="panico-status-texto">verificando...</strong>. Aviso: mecanismo por
+        software (não substitui trava mecânica de emergência exigida por norma de incêndio/saída de emergência).
       </p>
 
-      <p id="catraca-resultado" style="font-size:13px;margin:10px 0 0"></p>
+      <p id="catraca-resultado" class="catraca-resultado-linha"></p>
 
       <details class="catraca-avancado">
         <summary>Configuração avançada (IP/porta)</summary>
@@ -1004,10 +1019,10 @@
           <div><label>IP da catraca</label><input id="catraca-ip" placeholder="ex: 192.168.0.79" /></div>
           <div><label>Porta</label><input id="catraca-porta" placeholder="3000" /></div>
         </div>
-        <p style="margin:4px 0 0;color:#667085;font-size:12px">
+        <p class="catraca-avancado-nota">
           Deixe em branco para usar o que está configurado em HENRY_CATRACA_IP/PORT no servidor.
         </p>
-        <button type="button" class="btn-secundario" id="btn-testar-catraca" style="margin-top:8px">Testar conexão</button>
+        <button type="button" class="btn-secundario" id="btn-testar-catraca">Testar conexão</button>
       </details>
 
       <div class="form-acoes">
@@ -1015,11 +1030,13 @@
         <button type="button" class="btn-secundario" id="btn-fechar-janela-catraca-2">Fechar</button>
       </div>
 
-      <h3 style="margin-top:20px;font-size:14px">Últimas tentativas de acesso</h3>
-      <table class="tabela">
-        <thead><tr><th>Quando</th><th>Aluno</th><th>Resultado</th></tr></thead>
-        <tbody id="lista-acessos-catraca"></tbody>
-      </table>
+      <h3 class="catraca-historico-titulo">Últimas tentativas de acesso</h3>
+      <div class="catraca-historico-scroll">
+        <table class="tabela">
+          <thead><tr><th>Quando</th><th>Aluno</th><th>Resultado</th></tr></thead>
+          <tbody id="lista-acessos-catraca"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 

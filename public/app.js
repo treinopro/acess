@@ -187,10 +187,15 @@ let ordemMenuAtual = [...ORDEM_MENU_PADRAO];
 function aplicarOrdemMenu(ordem) {
   const nav = document.querySelector('.sidebar nav') || document.querySelector('nav');
   if (!nav || !Array.isArray(ordem) || !ordem.length) return;
-  ordem.forEach((secao) => {
+  // "Catraca" fica sempre por último, não importa a ordem salva pelo admin —
+  // é assim que garantimos que "Acessos recentes"/"Sair" (fixados logo abaixo
+  // do <nav> na barra lateral) sempre apareçam imediatamente abaixo dela.
+  ordem.filter((secao) => secao !== 'catraca').forEach((secao) => {
     const btn = nav.querySelector(`.nav-btn[data-secao="${secao}"]`);
     if (btn) nav.appendChild(btn);
   });
+  const btnCatraca = nav.querySelector('.nav-btn[data-secao="catraca"]');
+  if (btnCatraca) nav.appendChild(btnCatraca);
 }
 
 // Desenha a listinha com setas ▲▼ na tela de Configurações, a partir do
@@ -1139,6 +1144,27 @@ document.getElementById('btn-remover-biometria').addEventListener('click', async
   } catch (err) { mostrarToast(err.message, true); }
 });
 
+// "Capturar pela catraca": pede pro agente local aguardar a próxima leitura de
+// digital na catraca (só funciona se BIOMETRIA_CATRACA_ATIVA=true no agente-local
+// e ele estiver conectado) e preenche o campo com o id lido — não salva sozinho,
+// o admin ainda confirma clicando em "Salvar ID biométrico" depois de conferir.
+document.getElementById('btn-capturar-biometria-catraca').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-capturar-biometria-catraca');
+  const status = document.getElementById('status-captura-biometria');
+  btn.disabled = true;
+  status.textContent = 'Aguardando leitura... peça pro aluno tocar o dedo no leitor da catraca agora (até 25s).';
+  try {
+    const resultado = await api('/api/alunos/biometria/capturar-catraca', { method: 'POST', body: JSON.stringify({}) });
+    document.getElementById('perfil-biometria-id').value = resultado.biometria_id;
+    status.textContent = `Leitura capturada: ${resultado.biometria_id}. Confira e clique em "Salvar ID biométrico".`;
+  } catch (err) {
+    status.textContent = '';
+    mostrarToast(err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 async function copiarParaClipboard(texto) {
   try {
     await navigator.clipboard.writeText(texto);
@@ -1676,6 +1702,10 @@ document.getElementById('form-agendamento').addEventListener('submit', async (ev
 function inicializarPeriodoContas() {
   const campoDe = document.getElementById('conta-periodo-de');
   const campoAte = document.getElementById('conta-periodo-ate');
+  const seletorCampoData = document.getElementById('conta-filtro-data-campo');
+  const salvoCampoData = localStorage.getItem('contaFiltroDataCampo');
+  if (salvoCampoData === 'pagamento' || salvoCampoData === 'vencimento') seletorCampoData.value = salvoCampoData;
+  atualizarLabelPeriodoContas();
   if (campoDe.value || campoAte.value) return; // já tem valor (ex.: veio de uma troca recente), não sobrescreve
 
   const salvoDe = localStorage.getItem('contaPeriodoDe');
@@ -1875,12 +1905,63 @@ async function popularSelectAlunosComTodos(select) {
   } catch (err) { mostrarToast(err.message, true); }
 }
 
+// Estado de ordenação da tabela de Contas a Receber (clique no título da
+// coluna) — mesmo padrão usado em Alunos (ver alternarOrdenacaoAlunos acima).
+const DIRECAO_INICIAL_COLUNA_CONTAS = {
+  aluno: 'asc', descricao: 'asc', valor: 'desc', vencimento: 'asc', status: 'asc', data_pago: 'desc', valor_pago: 'desc',
+};
+let ordenacaoContas = { campo: null, direcao: 'asc' };
+
+function alternarOrdenacaoContas(campo) {
+  if (ordenacaoContas.campo === campo) {
+    ordenacaoContas.direcao = ordenacaoContas.direcao === 'asc' ? 'desc' : 'asc';
+  } else {
+    ordenacaoContas = { campo, direcao: DIRECAO_INICIAL_COLUNA_CONTAS[campo] || 'asc' };
+  }
+  carregarContas();
+}
+
+function ordenarContas(lista) {
+  if (!ordenacaoContas.campo) return lista;
+  const { campo, direcao } = ordenacaoContas;
+  const mult = direcao === 'asc' ? 1 : -1;
+  const valorDe = (c) => {
+    if (campo === 'aluno') return (c.aluno_nome || '').toLowerCase();
+    if (campo === 'descricao') return (c.descricao || '').toLowerCase();
+    if (campo === 'valor') return Number(c.valor_centavos || 0);
+    if (campo === 'vencimento') return c.vencimento || '';
+    if (campo === 'status') return c.status || '';
+    if (campo === 'data_pago') return c.data_pago_calc || (c.status === 'pago' ? c.pago_em : '') || '';
+    if (campo === 'valor_pago') return Number(c.valor_pago_centavos || 0) || (c.status === 'pago' ? c.valor_centavos : 0);
+    return '';
+  };
+  return [...lista].sort((a, b) => {
+    const va = valorDe(a);
+    const vb = valorDe(b);
+    if (va < vb) return -1 * mult;
+    if (va > vb) return 1 * mult;
+    return 0;
+  });
+}
+
+function atualizarSetasOrdenacaoContas() {
+  document.querySelectorAll('#secao-pagamentos .seta-ordenacao').forEach((span) => {
+    const campo = span.dataset.seta;
+    span.textContent = ordenacaoContas.campo !== campo ? '' : (ordenacaoContas.direcao === 'asc' ? '▲' : '▼');
+  });
+}
+
+document.querySelectorAll('#secao-pagamentos .th-ordenavel').forEach((th) => {
+  th.addEventListener('click', () => alternarOrdenacaoContas(th.dataset.sort));
+});
+
 async function carregarContas() {
   try {
     const alunoId = document.getElementById('filtro-conta-aluno').value;
     const status = document.getElementById('filtro-conta-status').value;
     const busca = document.getElementById('busca-conta-nome').value.trim();
     const mostrarInativos = document.getElementById('mostrar-inativos-contas').checked;
+    const campoData = document.getElementById('conta-filtro-data-campo').value || 'vencimento';
     const periodoDe = document.getElementById('conta-periodo-de').value;
     const periodoAte = document.getElementById('conta-periodo-ate').value;
     const params = new URLSearchParams();
@@ -1888,10 +1969,12 @@ async function carregarContas() {
     if (status) params.set('status', status);
     if (busca) params.set('busca', busca);
     if (mostrarInativos) params.set('incluir_inativos', 'true');
-    if (periodoDe) params.set('vencimento_de', periodoDe);
-    if (periodoAte) params.set('vencimento_ate', periodoAte);
+    if (periodoDe) params.set(campoData === 'pagamento' ? 'pagamento_de' : 'vencimento_de', periodoDe);
+    if (periodoAte) params.set(campoData === 'pagamento' ? 'pagamento_ate' : 'vencimento_ate', periodoAte);
 
-    const contas = await api(`/api/pagamentos/cobrancas${params.toString() ? '?' + params.toString() : ''}`);
+    const contasBrutas = await api(`/api/pagamentos/cobrancas${params.toString() ? '?' + params.toString() : ''}`);
+    const contas = ordenarContas(contasBrutas);
+    atualizarSetasOrdenacaoContas();
     const tbody = document.getElementById('lista-contas');
     tbody.innerHTML = '';
 
@@ -1939,9 +2022,22 @@ async function carregarContas() {
   } catch (err) { mostrarToast(err.message, true); }
 }
 
+// Troca o texto do label "Vencimento de"/"até" conforme o filtro escolhido
+// (Vencimento ou Data de pagamento), pra não confundir qual data está sendo filtrada.
+function atualizarLabelPeriodoContas() {
+  const campoData = document.getElementById('conta-filtro-data-campo').value || 'vencimento';
+  document.getElementById('conta-periodo-de-label').textContent =
+    campoData === 'pagamento' ? 'Data de pagamento de' : 'Vencimento de';
+}
+
 document.getElementById('filtro-conta-aluno').addEventListener('change', carregarContas);
 document.getElementById('filtro-conta-status').addEventListener('change', carregarContas);
 document.getElementById('mostrar-inativos-contas').addEventListener('change', carregarContas);
+document.getElementById('conta-filtro-data-campo').addEventListener('change', (ev) => {
+  localStorage.setItem('contaFiltroDataCampo', ev.target.value);
+  atualizarLabelPeriodoContas();
+  carregarContas();
+});
 document.getElementById('conta-periodo-de').addEventListener('change', (ev) => {
   localStorage.setItem('contaPeriodoDe', ev.target.value);
   carregarContas();

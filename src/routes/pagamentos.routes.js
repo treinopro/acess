@@ -98,18 +98,24 @@ router.post('/cobrancas', autenticar, async (req, res, next) => {
   }
 });
 
-// GET /api/pagamentos/cobrancas?aluno_id=&status=&busca=&vencimento_de=&vencimento_ate=&ordenar_por=&decrescente=&incluir_inativos=
+// GET /api/pagamentos/cobrancas?aluno_id=&status=&busca=&vencimento_de=&vencimento_ate=&pagamento_de=&pagamento_ate=&ordenar_por=&decrescente=&incluir_inativos=
 // busca/lista contas a receber (busca = filtro por nome do aluno). Os parâmetros de
 // vencimento/ordenação são usados pelo relatório "Contas a Receber" (Relatórios > Financeiro),
 // mas funcionam em qualquer chamada — inclusive a tela normal de Contas a Receber, que
 // simplesmente não os envia. Por padrão só traz cobranças de alunos com status='ativo';
 // passe incluir_inativos=true (checkbox "mostrar inativos") pra incluir todo mundo. Quando
 // aluno_id é informado (tela do próprio aluno) não filtra por status do aluno.
+// pagamento_de/pagamento_ate filtram pela DATA EM QUE A CONTA FOI PAGA (em vez do
+// vencimento) — usa a mesma data "efetiva" já calculada abaixo como data_pago_calc (o
+// pagamento mais recente em pagamentos_cobranca, com fallback pro campo legado
+// cobrancas.pago_em quando não há linha de pagamento — mesmo fallback que a tela já usa
+// pra exibir a coluna "Data Pago").
 router.get('/cobrancas', autenticar, async (req, res, next) => {
   try {
     const {
       aluno_id: alunoId, status, busca,
       vencimento_de: vencimentoDe, vencimento_ate: vencimentoAte,
+      pagamento_de: pagamentoDe, pagamento_ate: pagamentoAte,
       ordenar_por: ordenarPor, decrescente, incluir_inativos: incluirInativos,
     } = req.query;
     const condicoes = [];
@@ -120,6 +126,9 @@ router.get('/cobrancas', autenticar, async (req, res, next) => {
     if (busca) { condicoes.push('a.nome LIKE ?'); args.push(`%${busca}%`); }
     if (vencimentoDe) { condicoes.push('c.vencimento >= ?'); args.push(vencimentoDe); }
     if (vencimentoAte) { condicoes.push('c.vencimento <= ?'); args.push(vencimentoAte); }
+    const dataPagaEfetiva = `date(COALESCE((SELECT MAX(p.data) FROM pagamentos_cobranca p WHERE p.cobranca_id = c.id), c.pago_em))`;
+    if (pagamentoDe) { condicoes.push(`${dataPagaEfetiva} >= ?`); args.push(pagamentoDe); }
+    if (pagamentoAte) { condicoes.push(`${dataPagaEfetiva} <= ?`); args.push(pagamentoAte); }
     const where = condicoes.length ? `WHERE ${condicoes.join(' AND ')}` : '';
 
     const colunasOrdenacao = { vencimento: 'c.vencimento', valor: 'c.valor_centavos', aluno: 'a.nome', status: 'c.status' };

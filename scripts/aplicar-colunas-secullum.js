@@ -4,14 +4,45 @@
 // existem. Rodar isso ANTES de scripts/migrar-secullum-v2.js.
 //
 // Seguro rodar quantas vezes quiser: cada ALTER TABLE so roda se a coluna
-// ainda nao existir (confere via PRAGMA table_info antes).
+// ainda nao existir (confere via PRAGMA table_info antes). So ADICIONA
+// coluna/indice - nunca apaga nem altera dado existente.
 //
-// Como rodar (a partir da pasta academia-gestao):
+// Como rodar contra o local.db de teste (a partir da pasta academia-gestao):
 //   node scripts/aplicar-colunas-secullum.js
+//
+// Como rodar contra PRODUCAO (Turso):
+//   .\scripts\rodar-producao-migracao.ps1 "node scripts/aplicar-colunas-secullum.js --confirmar-producao"
 
 const { createClient } = require('@libsql/client');
+require('dotenv').config();
 
-const db = createClient({ url: 'file:./local.db' });
+// Mesmo padrao de seguranca do migrar-secullum-v2.js: por padrao usa
+// local.db; so troca de banco se DATABASE_URL ja estiver definido no
+// ambiente (via rodar-producao-migracao.ps1), e mesmo assim exige
+// --confirmar-producao explicito. Ver comentario completo em
+// migrar-secullum-v2.js.
+const DATABASE_URL = process.env.DATABASE_URL || 'file:./local.db';
+const USANDO_PRODUCAO = DATABASE_URL !== 'file:./local.db';
+const CONFIRMAR_PRODUCAO = process.argv.includes('--confirmar-producao');
+if (USANDO_PRODUCAO && !CONFIRMAR_PRODUCAO) {
+  console.error('\n=== BLOQUEADO ===');
+  console.error('DATABASE_URL aponta para um banco que NAO e o local.db de teste:');
+  console.error(`  ${DATABASE_URL}`);
+  console.error('Rode de novo com --confirmar-producao se for isso mesmo que voce quer.');
+  process.exit(1);
+}
+
+const db = createClient({
+  url: DATABASE_URL,
+  authToken: process.env.DATABASE_AUTH_TOKEN || undefined,
+});
+
+if (USANDO_PRODUCAO) {
+  console.log('\n=========================================================');
+  console.log(' ATENCAO: conectado em PRODUCAO (Turso), nao e o local.db');
+  console.log(` URL: ${DATABASE_URL}`);
+  console.log('=========================================================\n');
+}
 
 const COLUNAS = [
   { tabela: 'alunos', coluna: 'secullum_id', definicao: 'TEXT' },

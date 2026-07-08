@@ -50,6 +50,9 @@ body {
 /* ---------- Layout app ---------- */
 .app { display: flex; min-height: 100vh; }
 
+/* Barra lateral fixa: fica parada na tela mesmo quando o conteúdo principal
+   rola para baixo (position: fixed em vez de fluir junto com o .app). O
+   .conteudo compensa o espaço com margin-left (ver regra mais abaixo). */
 .sidebar {
   width: 220px;
   background: #111827;
@@ -58,12 +61,20 @@ body {
   flex-direction: column;
   padding: 20px 0;
   flex-shrink: 0;
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100vh;
+  overflow: hidden;
+  z-index: 100;
 }
 
-.sidebar .logo { font-weight: 700; font-size: 16px; padding: 0 20px 0; }
-.sidebar .licenciado-para { padding: 0 20px 20px; margin: 0; }
+.sidebar .logo { font-weight: 700; font-size: 16px; padding: 0 20px 0; flex-shrink: 0; }
+.sidebar .licenciado-para { padding: 0 20px 20px; margin: 0; flex-shrink: 0; }
 
-.sidebar nav { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+/* Só a lista de navegação rola internamente se não couber na tela — o
+   cabeçalho (logo) e o rodapé (Acessos recentes/Sair) nunca se movem. */
+.sidebar nav { display: flex; flex-direction: column; gap: 4px; flex: 1; overflow-y: auto; min-height: 0; }
 
 .nav-btn {
   background: none; border: none; color: #cbd5e1; text-align: left;
@@ -73,8 +84,8 @@ body {
 .nav-btn.ativo { background: #1f2937; color: #fff; border-left-color: #10b981; font-weight: 600; }
 
 .sidebar-rodape {
-  padding: 16px 20px 0; border-top: 1px solid #1f2937; margin-top: 12px;
-  display: flex; flex-direction: column; gap: 8px;
+  padding: 16px 20px; border-top: 1px solid #1f2937; margin-top: 12px;
+  display: flex; flex-direction: column; gap: 8px; flex-shrink: 0;
 }
 #usuario-nome { font-size: 13px; color: #9ca3af; }
 #btn-sair {
@@ -124,27 +135,46 @@ body {
 .janela-flutuante-corpo { padding: 18px 20px; overflow-y: auto; flex: 1; }
 
 /* Variante compacta (ex.: janela "Liberar Equipamentos" da catraca) — menor e mais enxuta */
-.janela-flutuante-compacta { width: 400px; top: 90px; left: calc(50% - 200px); }
-.janela-flutuante-compacta .janela-flutuante-corpo { padding: 16px 18px; font-size: 13px; }
-.janela-flutuante-compacta .tabela th, .janela-flutuante-compacta .tabela td { padding: 7px 8px; font-size: 12px; }
+.janela-flutuante-compacta { width: 360px; top: 60px; left: calc(50% - 180px); max-height: 88vh; }
+.janela-flutuante-compacta .janela-flutuante-corpo { padding: 12px 16px; font-size: 13px; }
+.janela-flutuante-compacta .tabela th, .janela-flutuante-compacta .tabela td { padding: 6px 8px; font-size: 12px; }
+.janela-flutuante-compacta .btn-primario,
+.janela-flutuante-compacta .btn-secundario { padding: 7px 12px; font-size: 13px; }
 
-.lista-equipamentos {
-  border: 1px solid #d0d5dd; border-radius: 8px; padding: 8px 10px; margin-bottom: 14px; background: #f9fafb;
+/* Corpo da janela da catraca: espaçamento vertical bem mais enxuto entre os
+   blocos do que o padrão .janela-flutuante-corpo (que era pensado pra janelas
+   maiores) — mesma funcionalidade, só menos "ar" entre os elementos. */
+.janela-flutuante-corpo-compacta .catraca-status-linha {
+  font-size: 12px; color: #667085; margin: 0 0 8px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
 }
-.item-equipamento { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: default; }
-.item-equipamento input { width: auto; }
+.item-equipamento-inline {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #667085; cursor: default; margin: 0;
+}
+.item-equipamento-inline input { width: auto; margin: 0; }
 
-.catraca-opcao { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
-.catraca-opcao label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #344054; margin: 0; }
+.catraca-opcao { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
+.catraca-opcao label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #344054; margin: 0; }
 .catraca-opcao label input { width: auto; }
-.catraca-opcao select { flex: 1; min-width: 140px; padding: 6px 8px; border: 1px solid #d0d5dd; border-radius: 6px; font-size: 13px; }
+.catraca-opcao select { flex: 1; min-width: 120px; padding: 5px 7px; border: 1px solid #d0d5dd; border-radius: 6px; font-size: 13px; }
 .catraca-opcao select:disabled { background: #f2f4f7; color: #98a2b3; }
+.catraca-opcao-panico { gap: 16px; }
 
-.catraca-avancado { margin: 14px 0; border-top: 1px solid #eef0f2; padding-top: 10px; }
+.catraca-aviso-panico { font-size: 11.5px; color: #98a2b3; margin: 0 0 6px; line-height: 1.4; }
+.catraca-resultado-linha { font-size: 13px; margin: 6px 0; min-height: 0; }
+.catraca-avancado-nota { margin: 4px 0 0; color: #667085; font-size: 11.5px; }
+.janela-flutuante-corpo-compacta #btn-testar-catraca { margin-top: 8px; }
+.janela-flutuante-corpo-compacta .form-acoes { margin-top: 10px; }
+
+.catraca-avancado { margin: 10px 0; border-top: 1px solid #eef0f2; padding-top: 8px; }
 .catraca-avancado summary { cursor: pointer; font-size: 12.5px; color: #667085; font-weight: 600; }
-.catraca-avancado[open] summary { margin-bottom: 8px; }
+.catraca-avancado[open] summary { margin-bottom: 6px; }
 
-.conteudo { flex: 1; padding: 32px 40px; max-width: 1100px; }
+.catraca-historico-titulo { margin: 14px 0 6px; font-size: 13px; }
+.catraca-historico-scroll { max-height: 160px; overflow-y: auto; border: 1px solid #eef0f2; border-radius: 8px; }
+.catraca-historico-scroll .tabela { border-radius: 0; }
+.catraca-historico-scroll thead th { position: sticky; top: 0; }
+
+.conteudo { flex: 1; padding: 32px 40px; max-width: 1100px; margin-left: 220px; }
 
 .secao-topo { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
 .secao-topo h2 { margin: 0; font-size: 20px; }

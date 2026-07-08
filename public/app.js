@@ -2256,32 +2256,45 @@ function calcularValorComDesconto(saldoCentavos, plano) {
   return Math.max(saldoCentavos - desconto, 0);
 }
 
-function atualizarValorPagamentoComDesconto() {
+// Calcula, a partir do estado atual da tela (forma de pagamento selecionada + caixinha
+// marcada/desmarcada), se o desconto automático vale pra este pagamento e quanto ele
+// representa em centavos. Usado tanto pra atualizar o campo "Valor" quanto, no submit,
+// pra abater o mesmo desconto do valor OFICIAL da conta (senão o pagamento com desconto
+// nunca fecha o valor cheio da conta e ela não sai de "pendente" — o desconto precisa
+// valer nos dois lugares, não só no valor digitado do pagamento).
+function obterInfoDescontoPagamento() {
   const tipoSelecionado = document.getElementById('pagamento-tipo').value;
-  const avisoEl = document.getElementById('pagamento-desconto-aviso');
-  const campoCheckboxEl = document.getElementById('campo-pagamento-desconto');
   const checkboxEl = document.getElementById('pagamento-aplicar-desconto');
   const plano = modalContaAtual;
   const descontoConfigurado = plano?.plano_desconto_tipo
     && plano.plano_desconto_forma_pagamento === tipoSelecionado;
+  const descontoAplicavel = descontoConfigurado && checkboxEl.checked;
+  if (!descontoAplicavel) return { descontoConfigurado, descontoAplicavel: false, descontoCentavos: 0, valorComDesconto: pagamentoSaldoCentavos };
+  const valorComDesconto = calcularValorComDesconto(pagamentoSaldoCentavos, plano);
+  const descontoCentavos = pagamentoSaldoCentavos - valorComDesconto;
+  return { descontoConfigurado, descontoAplicavel: true, descontoCentavos, valorComDesconto };
+}
+
+function atualizarValorPagamentoComDesconto() {
+  const tipoSelecionado = document.getElementById('pagamento-tipo').value;
+  const avisoEl = document.getElementById('pagamento-desconto-aviso');
+  const campoCheckboxEl = document.getElementById('campo-pagamento-desconto');
+  const plano = modalContaAtual;
+  const { descontoConfigurado, descontoAplicavel, valorComDesconto } = obterInfoDescontoPagamento();
 
   // A caixinha só aparece quando existe um desconto configurado (na aba Planos) pra
   // essa forma de pagamento — marcada por padrão (aplica automático, como já era antes),
   // mas dá pra desmarcar na hora se, por algum motivo, esse pagamento específico não
   // deve levar o desconto (ex: aluno já usou o desconto em outro lugar).
   campoCheckboxEl.classList.toggle('oculto', !descontoConfigurado);
-  const descontoAplicavel = descontoConfigurado && checkboxEl.checked;
 
-  const valorFinal = descontoAplicavel
-    ? calcularValorComDesconto(pagamentoSaldoCentavos, plano)
-    : pagamentoSaldoCentavos;
-  document.getElementById('pagamento-valor').value = (valorFinal / 100).toFixed(2);
+  document.getElementById('pagamento-valor').value = (valorComDesconto / 100).toFixed(2);
 
   if (descontoAplicavel) {
     const rotuloDesconto = plano.plano_desconto_tipo === 'percentual'
       ? `${plano.plano_desconto_percentual}%`
       : formatarMoeda(plano.plano_desconto_valor_centavos);
-    avisoEl.textContent = `Desconto de ${rotuloDesconto} aplicado (pagamento em ${ROTULOS_TIPO_PAGAMENTO[tipoSelecionado] || tipoSelecionado}).`;
+    avisoEl.textContent = `Desconto de ${rotuloDesconto} aplicado — o valor da conta também será reduzido (pagamento em ${ROTULOS_TIPO_PAGAMENTO[tipoSelecionado] || tipoSelecionado}).`;
     avisoEl.classList.remove('oculto');
   } else {
     avisoEl.classList.add('oculto');
@@ -2332,6 +2345,22 @@ document.getElementById('form-modal-pagamento').addEventListener('submit', async
     conta_corrente: document.getElementById('pagamento-conta-corrente').value.trim() || null,
   };
   try {
+    // Quando a caixinha "Aplicar desconto automático" está marcada, o desconto precisa
+    // ser abatido do valor OFICIAL da conta também, não só do valor digitado do
+    // pagamento — senão o pagamento (já com desconto) nunca fecha o valor cheio da
+    // conta no backend e ela nunca sai de "pendente".
+    const { descontoAplicavel, descontoCentavos } = obterInfoDescontoPagamento();
+    if (descontoAplicavel && descontoCentavos > 0) {
+      const novoValorConta = Math.max(modalContaAtual.valor_centavos - descontoCentavos, 0);
+      await api(`/api/pagamentos/cobrancas/${modalContaAtual.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ valor_centavos: novoValorConta }),
+      });
+      modalContaAtual.valor_centavos = novoValorConta;
+      document.getElementById('mconta-valor').value = (novoValorConta / 100).toFixed(2);
+      document.getElementById('mconta-valor-total').textContent = formatarMoeda(novoValorConta);
+    }
+
     const resp = await api(`/api/pagamentos/cobrancas/${modalContaAtual.id}/pagamentos`, { method: 'POST', body: JSON.stringify(dados) });
     mostrarToast(resp.cobranca?.status === 'pago' ? 'Pagamento lançado — conta quitada!' : 'Pagamento lançado.');
     if (resp.cobranca) atualizarBadgeStatusModal(resp.cobranca.status);

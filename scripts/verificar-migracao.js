@@ -1,6 +1,15 @@
 // Conferencia rapida pos-migracao: conta linhas nas tabelas principais e
 // procura sinais de duplicidade (ex: rodar a migracao duas vezes por engano).
-const db = require('../src/db/client');
+//
+// IMPORTANTE: NAO usar '../src/db/client' aqui. Aquele modulo le
+// DATABASE_URL do .env, que no seu .env atual aponta pro Turso de
+// PRODUCAO (a linha do local.db esta comentada) - ou seja, este script
+// estava conferindo o banco AO VIVO em vez do local.db de teste. So nao
+// causou dano porque so faz leitura (SELECT/COUNT), nunca escreve nada -
+// mas os numeros nunca refletiam as mudancas feitas no local.db. Agora,
+// igual aos outros scripts de migracao/limpeza, sempre usa o arquivo local.
+const { createClient } = require('@libsql/client');
+const db = createClient({ url: 'file:./local.db' });
 
 async function contar(tabela) {
   try {

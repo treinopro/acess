@@ -24,6 +24,11 @@ CREATE TABLE IF NOT EXISTS alunos (
   biometria_id TEXT, -- referencia/ID do template biometrico cadastrado no leitor externo (catraca/app)
   codigo_acesso TEXT, -- codigo estavel para QR/"cartao de embarque" e fallback manual no totem
   face_descriptor TEXT, -- descritor facial (JSON, 128 floats do face-api.js) para reconhecimento facial recorrente no totem
+  -- Identificador da PESSOA no Secullum Academia.Net (campo "Nº Identificador"
+  -- na tela de Contas a Receber). NULL para alunos cadastrados direto aqui,
+  -- nunca importados. Usado pela migracao pra decidir "ja existe, so
+  -- atualiza" em vez de criar duplicata a cada nova tentativa de migracao.
+  secullum_id TEXT,
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -97,6 +102,10 @@ CREATE TABLE IF NOT EXISTS planos (
   desconto_percentual REAL, -- preenchido só quando desconto_tipo = 'percentual'
   desconto_valor_centavos INTEGER, -- preenchido só quando desconto_tipo = 'valor'
   desconto_forma_pagamento TEXT, -- dinheiro | pix | cartao_credito | cartao_debito | transferencia | boleto | outro
+  -- Identificador do "servico" no Secullum (tabela servicos.id). NULL para
+  -- planos cadastrados direto aqui. Evita duplicar plano a cada nova
+  -- tentativa de migracao.
+  secullum_id TEXT,
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -108,6 +117,10 @@ CREATE TABLE IF NOT EXISTS matriculas (
   data_fim TEXT,
   status TEXT NOT NULL DEFAULT 'ativa', -- ativa | cancelada | trancada | expirada | pendente (auto cadastro no totem, aguardando 1o pagamento)
   renovacao_automatica INTEGER NOT NULL DEFAULT 1,
+  -- Identificador do vinculo pessoa+servico no Secullum (tabela
+  -- pessoas_servicos.id, ou uma chave sintetica pessoa+servico+data_inicio
+  -- quando o export nao tem id). NULL para matriculas criadas direto aqui.
+  secullum_id TEXT,
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -152,6 +165,11 @@ CREATE TABLE IF NOT EXISTS cobrancas (
   descricao TEXT,
   vencimento TEXT,
   pago_em TEXT,
+  -- Numero da conta no Secullum (coluna "Número" na tela Contas a Receber,
+  -- tabela contas_receber.id). NULL para cobrancas lancadas direto aqui.
+  -- Chave usada pela migracao pra nunca duplicar a mesma conta em duas
+  -- tentativas de importacao.
+  secullum_numero TEXT,
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -251,3 +269,12 @@ CREATE INDEX IF NOT EXISTS idx_treino_exercicios_treino ON treino_exercicios(tre
 -- -- a checagem em código já evita isso no caminho normal, esse índice é o
 -- reforço que faz o segundo INSERT falhar/ser ignorado em vez de duplicar.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_cobrancas_recorrencia_matricula_vencimento ON cobrancas(matricula_id, vencimento) WHERE provedor = 'recorrencia';
+-- Chaves de idempotencia da migracao do Secullum: com estes indices, rodar
+-- scripts/migrar-secullum-v2.js mais de uma vez (ex.: apos uma interrupcao)
+-- nunca mais cria linhas duplicadas para a mesma pessoa/plano/matricula/conta
+-- - o script consulta esses indices antes de inserir e reaproveita o id
+-- existente em vez de gerar um novo uuid.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_alunos_secullum_id ON alunos(secullum_id) WHERE secullum_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_planos_secullum_id ON planos(secullum_id) WHERE secullum_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_matriculas_secullum_id ON matriculas(secullum_id) WHERE secullum_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cobrancas_secullum_numero ON cobrancas(secullum_numero) WHERE secullum_numero IS NOT NULL;

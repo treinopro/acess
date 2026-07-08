@@ -1,9 +1,21 @@
-// Mescla alunos duplicados (mesmo nome + mesmo CPF, mas cadastrados sob
-// pessoa_id diferentes no Secullum original - ex: a pessoa saiu e voltou
-// anos depois e o Secullum criou um cadastro novo em vez de reaproveitar o
-// antigo). A migração v2 importa cada um como um aluno separado (correto,
-// já que tecnicamente são registros diferentes no Secullum), mas na prática
-// você quer 1 perfil só por pessoa.
+// Mescla alunos duplicados (mesmo CPF, mas cadastrados sob pessoa_id
+// diferentes no Secullum original - ex: a pessoa saiu e voltou anos depois
+// e o Secullum criou um cadastro novo em vez de reaproveitar o antigo).
+// A migração v2 importa cada um como um aluno separado (correto, já que
+// tecnicamente são registros diferentes no Secullum), mas na prática você
+// quer 1 perfil só por pessoa.
+//
+// Critério de duplicata: MESMO CPF (não exige mais nome idêntico — CPF é
+// documento único por pessoa no Brasil, então duas pessoas diferentes
+// baterem no mesmo CPF de 11 dígitos por acaso é praticamente impossível;
+// o normal é ser a mesma pessoa recadastrada com o nome digitado de forma
+// diferente entre uma vez e outra: acento, maiúscula/minúscula, abreviação,
+// erro de digitação). Antes o script exigia nome E cpf idênticos, o que
+// deixava passar exatamente esses casos. SEMPRE revise o relatório do
+// dry-run antes de aplicar — em caso de nomes bem diferentes entre si (não
+// só variação de grafia), confirme no perfil de cada um (telefone, data de
+// nascimento) antes de mesclar; se não tiver certeza, use --excluir-cpf
+// pra pular aquele grupo específico nesta rodada.
 //
 // Como decide quem fica (o "sobrevivente") e quem é apagado:
 //   Para cada duplicata, conta quantos registros relacionados cada um tem
@@ -17,12 +29,20 @@
 //   único aluno_id.
 //
 // Como rodar (a partir da pasta academia-gestao):
-//   node scripts/mesclar-alunos-duplicados.js            (dry-run - só mostra o plano)
-//   node scripts/mesclar-alunos-duplicados.js --aplicar   (mescla de verdade)
+//   node scripts/mesclar-alunos-duplicados.js                  (dry-run - só mostra o plano)
+//   node scripts/mesclar-alunos-duplicados.js --aplicar         (mescla de verdade)
+//   node scripts/mesclar-alunos-duplicados.js --excluir-cpf=12345678901,98765432100
+//     (em qualquer um dos dois modos acima: pula esses CPFs específicos nesta rodada,
+//      útil quando o dry-run mostra nomes bem diferentes e você quer conferir
+//      manualmente antes de decidir)
 
 const { createClient } = require('@libsql/client');
 
 const APLICAR = process.argv.includes('--aplicar');
+const ARG_EXCLUIR = process.argv.find((a) => a.startsWith('--excluir-cpf='));
+const EXCLUIR_CPFS = new Set(
+  ARG_EXCLUIR ? ARG_EXCLUIR.replace('--excluir-cpf=', '').split(',').map((s) => s.trim()).filter(Boolean) : []
+);
 const db = createClient({ url: 'file:./local.db' });
 
 // Tabelas com aluno_id que precisam ser reapontadas ao mesclar.
@@ -80,15 +100,18 @@ async function main() {
   }
 
   const grupos = await db.execute(`
-    SELECT nome, cpf, COUNT(*) as n
+    SELECT cpf, COUNT(*) as n
     FROM alunos
     WHERE cpf IS NOT NULL AND cpf != ''
-    GROUP BY nome, cpf
+    GROUP BY cpf
     HAVING COUNT(*) > 1
-    ORDER BY nome
+    ORDER BY cpf
   `);
 
-  console.log(`Grupos de aluno duplicado (mesmo nome + CPF): ${grupos.rows.length}\n`);
+  console.log(`Grupos de aluno duplicado (mesmo CPF): ${grupos.rows.length}\n`);
+  if (EXCLUIR_CPFS.size > 0) {
+    console.log(`(ignorando nesta rodada, via --excluir-cpf: ${[...EXCLUIR_CPFS].join(', ')})\n`);
+  }
 
   if (grupos.rows.length === 0) {
     console.log('Nada a mesclar.');
@@ -96,18 +119,28 @@ async function main() {
   }
 
   for (const grupo of grupos.rows) {
+    if (EXCLUIR_CPFS.has(grupo.cpf)) {
+      console.log(`--- CPF ${grupo.cpf} — IGNORADO nesta rodada (--excluir-cpf) ---\n`);
+      continue;
+    }
+
     const membros = await db.execute({
-      sql: `SELECT id, criado_em, secullum_id, status FROM alunos WHERE nome = ? AND cpf = ? ORDER BY criado_em`,
-      args: [grupo.nome, grupo.cpf],
+      sql: `SELECT id, nome, criado_em, secullum_id, status FROM alunos WHERE cpf = ? ORDER BY criado_em`,
+      args: [grupo.cpf],
     });
 
-    console.log(`--- ${grupo.nome} (CPF ${grupo.cpf}) — ${membros.rows.length} cadastros ---`);
+    console.log(`--- CPF ${grupo.cpf} — ${membros.rows.length} cadastros ---`);
+
+    const nomesDistintos = new Set(membros.rows.map((m) => m.nome));
+    if (nomesDistintos.size > 1) {
+      console.log(`  ATENCAO: nomes diferentes entre si neste grupo (${[...nomesDistintos].join(' | ')}) — confira antes de aplicar.`);
+    }
 
     const candidatos = [];
     for (const m of membros.rows) {
       const { total, detalhe } = await contarRelacionados(m.id, tabelasExistentes);
       candidatos.push({ ...m, total, detalhe });
-      console.log(`  id=${m.id} secullum_id=${m.secullum_id} criado_em=${m.criado_em} status=${m.status} -> ${total} registro(s) ligado(s) (${JSON.stringify(detalhe)})`);
+      console.log(`  id=${m.id} nome="${m.nome}" secullum_id=${m.secullum_id} criado_em=${m.criado_em} status=${m.status} -> ${total} registro(s) ligado(s) (${JSON.stringify(detalhe)})`);
     }
 
     // Escolhe o sobrevivente: mais registros relacionados; empate -> mais antigo.
@@ -118,9 +151,9 @@ async function main() {
     const sobrevivente = candidatos[0];
     const duplicados = candidatos.slice(1);
 
-    console.log(`  => SOBREVIVENTE: id=${sobrevivente.id} (${sobrevivente.total} registro(s))`);
+    console.log(`  => SOBREVIVENTE: id=${sobrevivente.id} nome="${sobrevivente.nome}" (${sobrevivente.total} registro(s))`);
     for (const d of duplicados) {
-      console.log(`  => apagar: id=${d.id} (${d.total} registro(s)) depois de reapontar tudo pro sobrevivente`);
+      console.log(`  => apagar: id=${d.id} nome="${d.nome}" (${d.total} registro(s)) depois de reapontar tudo pro sobrevivente`);
     }
     console.log('');
 
@@ -135,7 +168,7 @@ async function main() {
         });
       }
       await db.execute({ sql: `DELETE FROM alunos WHERE id = ?`, args: [d.id] });
-      console.log(`  [OK] ${grupo.nome}: id=${d.id} mesclado em id=${sobrevivente.id} e apagado`);
+      console.log(`  [OK] "${d.nome}": id=${d.id} mesclado em id=${sobrevivente.id} ("${sobrevivente.nome}") e apagado`);
     }
   }
 

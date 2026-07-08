@@ -11,7 +11,8 @@
   1. Continuar validando o `local.db`: conferir 10-15 alunos no painel (incluindo os casos de referência Edna Andrade e Alenia Cabral Silva), conferir totais em Relatórios, revisar os alunos marcados para revisão no relatório da migração.
   2. Depois da validação aprovada, decidir com calma se/quando aplicar a mesma migração v2 na produção de verdade (usando `scripts/rodar-producao.ps1`, nunca `npm start` direto) — não iniciar sem confirmação explícita.
   3. Decidir se aplica a limpeza dos ~50 grupos de cobranças `legado` duplicadas antigas (2020–2025) na produção — achado separado, não relacionado ao incidente de 08/07 (script já existia de sessão anterior, ver "Sessão 07/07/2026 (tarde)").
-  4. Itens mais antigos ainda em aberto da sessão de 07/07 (tarde): `node src/db/migrate.js` (índice de proteção contra duplicata), `git push` das mudanças daquela sessão, confirmar `importar-biometria-catraca.js --aplicar`, decidir os 30 "ambíguos" de biometria/aluno duplicado, religar `BIOMETRIA_CATRACA_ATIVA`. Não foram tocados na sessão de 08/07 — status de cada um continua o mesmo registrado na seção "Sessão 07/07/2026 (tarde)" abaixo.
+  4. Itens mais antigos da sessão de 07/07 (tarde) — atualização na noite de 08/07: `importar-biometria-catraca.js --aplicar` **confirmado rodado** (1181 alunos vinculados no `local.db`); `religar BIOMETRIA_CATRACA_ATIVA` **testado e validado no `local.db`** (ver nova seção "Sessão 08/07/2026 (noite)" logo abaixo — 5 bugs encontrados e corrigidos em `agente-local/agente.js`). Ainda em aberto: `node src/db/migrate.js` (índice de proteção contra duplicata) em produção, `git push` das mudanças da sessão de 07/07 (tarde), decidir os casos ambíguos de aluno duplicado (Mayra/Nayra CPF 13700311494 + ~9 pares "quase-duplicata", listados na nova seção abaixo).
+  5. **Nova pendência (08/07 noite): levar a biometria da própria catraca pra PRODUÇÃO** — hoje só está testada e funcionando no `local.db`. Depende de resolver antes a pendência #2 acima (migração v2 na produção). Plano detalhado passo a passo na seção "⚠️ PLANO — colocar a biometria da catraca pra funcionar em produção" logo abaixo. **Não iniciar sem decisão e presença explícita do usuário.**
 - As correções de segurança da sessão da manhã de 07/07/2026 (ver seção abaixo) **já foram enviadas** via `git push` e as variáveis de ambiente (`JWT_SECRET`, `CADASTRO_PUBLICO_TOKEN`) já foram configuradas no Northflank — não estão mais pendentes de upload, só falta confirmar se `MERCADOPAGO_WEBHOOK_SECRET` bate com o painel do Mercado Pago e se as variáveis antigas da InfinitePay foram removidas do Northflank.
 
 ## Onde está publicado
@@ -73,6 +74,56 @@ Antes de aplicar essa migração na produção de verdade, falta:
 5. Lembrar que `zerar-dados-alunos.js` (parte do fluxo `remigrar-secullum.ps1`) **apaga todos os dados de aluno antes de remigrar** — é destrutivo por natureza; rodar isso contra produção exige acompanhamento humano direto a cada passo, não é tarefa pra delegar/automatizar sem supervisão.
 
 **Não iniciar nenhum desses passos sem decisão e presença explícita do usuário.**
+
+---
+
+## Sessão 08/07/2026 (noite) — teste completo da biometria própria da catraca (local) + plano pra produção
+
+**Contexto**: `BIOMETRIA_CATRACA_ATIVA` foi religado no `agente-local` pra testar de verdade contra o `local.db` (banco de teste), com o Secullum antigo temporariamente desativado (não desinstalado) pra não disputar a única conexão TCP que a catraca Henry aceita. Testes feitos com dedos reais de dois cadastros que já tinham biometria vinda do sistema antigo: Robson Junior Reis Lima (`biometria_id` "1") e Academia Superação (`biometria_id` "115", cadastro de teste do próprio usuário).
+
+### 5 bugs encontrados e corrigidos em `agente-local/agente.js` (e um em `agente-local/.env`)
+
+1. **`.env` do agente com `SERVIDOR_HTTP_URL` duplicado** (`SERVIDOR_HTTP_URL=SERVIDOR_HTTP_URL=http://localhost:3000`), causando `Failed to parse URL`. Corrigido manualmente pelo usuário no arquivo.
+2. **`connect ETIMEDOUT 192.168.0.79:3000`** ao escutar a catraca — causado pelo Secullum antigo segurando a única conexão TCP que o equipamento aceita por vez. Resolvido desativando (fechando) o Secullum durante o teste.
+3. **Extração errada do `biometria_id` do evento bruto**: o código original mandava a string toda do evento (ex.: `"0]00000000000000000001]08/07/2026 09:03:32]1]0]5I"`) pro endpoint de validação, em vez de extrair só o identificador. Corrigido pra pegar o 2º campo (separado por `]`), removendo os zeros à esquerda.
+4. **Catraca travava com a mensagem na tela e não girava** mesmo com a biometria reconhecida — o comando usado (`permitirEntrada`, que espera um "index" de confirmação da própria catraca) não é o formato que esse firmware aceita. Trocado pelo comando `liberarAcesso`, o mesmo que o totem (QR/facial) já usa hoje em produção e comprovadamente funciona.
+5. **Giro mecânico manual da catraca (sem tocar em nenhum dedo) gerava registro de acesso "fantasma"** atribuído a um aluno aleatório (ex.: "Maria Aparecida Silva Oliveira", que nunca tocou o leitor). Causa: a catraca manda outros tipos de evento pela mesma conexão TCP usada pra ler biometria (ex.: evento de giro), e o código tratava qualquer coisa recebida como se fosse leitura de dedo. Corrigido: eventos onde o campo do identificador vem vazio agora são ignorados por completo (não chamam mais o painel).
+
+### Resultado — validado no `local.db`
+Depois das 5 correções, testado contra `local.db` (via `.\rodar-local.ps1`) e confirmado funcionando: toque de dedo real de aluno vinculado abre a catraca de verdade e mostra o nome certo; toque de dedo sem vínculo/inativo nega sem bloquear ninguém (fail-open, como já era); giro manual sem tocar em nada não gera mais registro de acesso indevido.
+
+### Nota sobre uma falsa suspeita desta sessão
+Em determinado momento a IA suspeitou (errado) que o servidor local estivesse conectado em produção em vez de `local.db`, com base numa leitura desatualizada do arquivo `local.db` feita pela ponte remota (mesmo problema de cache já visto antes nesta mesma conversa). O usuário confirmou rodando um script direto no próprio PC que o `local.db` estava correto o tempo todo. **Lição pra próximas sessões**: pra conferir dado crítico do `local.db` ou de produção, preferir sempre um comando rodado pelo próprio usuário no PC dele (ground truth) em vez de confiar cegamente numa cópia "espiada" remotamente.
+
+### Arquivos alterados nesta sessão de noite
+- `agente-local/agente.js` — as 5 correções acima (extração do id, comando de abertura, filtro de evento de giro).
+- `agente-local/.env` — `SERVIDOR_HTTP_URL` corrigido (duplicação removida) e **temporariamente apontando pra `http://localhost:3000`** (endereço de TESTE — precisa voltar pra produção antes de ir ao vivo, ver plano abaixo).
+- `scripts/debug-biometria-local.js` — script avulso de conferência rápida, criado só pra resolver a falsa suspeita acima; pode ser apagado quando quiser, não faz parte do sistema.
+- **Nada disso foi enviado ao GitHub ainda.**
+
+### ⚠️ PLANO — colocar a biometria da catraca pra funcionar em PRODUÇÃO (ainda NÃO iniciado)
+
+**Pré-requisito**: a produção (Turso) ainda não tem os dados desta frente de trabalho — nem os alunos duplicados foram mesclados lá, nem os `biometria_id` foram importados lá. Isso depende de resolver antes a pendência já registrada mais acima ("⚠️ PENDÊNCIA FUTURA — atualizar a produção (Turso) com a migração v2"). Não dá pra pular direto pra biometria em produção sem aquilo resolvido primeiro.
+
+Ordem sugerida — **cada passo com confirmação explícita do usuário antes de avançar pro próximo**:
+
+1. **Mesclar duplicatas de aluno na produção**, mesmo processo que já rodou no `local.db` (6 pares mesclados via `mesclar-alunos-duplicados.js --aplicar`). Adaptar o script pra aceitar produção deliberadamente (hoje ele fixa `local.db` no código de propósito, seguir o mesmo padrão de segurança da pendência de migração já registrada). `--dry-run` primeiro, revisar, backup do Turso antes de aplicar.
+2. **Revisar os casos ambíguos antes de replicar em produção** — resolver no `local.db` primeiro, só depois replicar a mesma decisão em produção:
+   - Dupla Mayra/Nayra, CPF `13700311494` — excluída da mesclagem automática (`--excluir-cpf`), precisa comparar telefone/data de nascimento antes de decidir mesclar ou não.
+   - ~9 pares "quase-duplicata" que sobraram nos "ambíguos" da importação de biometria (nomes muito parecidos, não pegos pelo critério de CPF exato): Iago Fernando Rodrigues Gomes, Gustavo Julio de Oliveira Chaves, Carlos Davi Cabral, Ramon Brandino de Melo Nascimento, Luciana Melo dos Reis, Maria Natividade Gomes, Jhully do Nascimento dos Santos, Anderson da Silva, José Claudio Rodrigues Gomes.
+3. **Importar `biometria_id` na produção** — `importar-biometria-catraca.js` já usa o cliente compartilhado (lê `.env`/`DATABASE_URL`), então basta rodar com produção ativa (via `rodar-producao.ps1` ou equivalente), usando o mesmo `cartao.txt`. `--dry-run` primeiro, revisar vinculados/ambíguos/sem correspondência, só então `--aplicar`.
+4. **Rodar `node src/db/migrate.js` em produção** — cria o índice de proteção contra cobrança duplicada (pendência mais antiga, já registrada, sem relação direta com biometria mas na mesma fila de tarefas de produção — aproveitar a janela).
+5. **Desligar o Secullum de vez** (hoje só foi desativado temporariamente pra testar) — enquanto continuar instalado e puder ser aberto, volta a disputar a conexão TCP com a catraca e o `ETIMEDOUT` de hoje se repete em produção. Decidir com o usuário: desinstalar ou só garantir que nunca mais é aberto.
+6. **Apontar o `agente-local` pra produção de vez**:
+   - `SERVIDOR_HTTP_URL` no `agente-local/.env` volta a ser `https://academia--acess--tpff5w2s24vs.code.run`.
+   - Conferir que `TERMINAL_TOKEN` no `agente-local/.env` bate exatamente com o do Northflank (produção) — hoje os dois ambientes usam o mesmo valor nesse PC, o que ajudou no teste mas precisa ser confirmado antes de ir ao vivo.
+   - `BIOMETRIA_CATRACA_ATIVA=true` permanece.
+   - `pm2 kill` + `pm2 start agente.js --name catraca-agente` pra subir limpo com o `.env` novo.
+7. **Teste ao vivo com supervisão direta**: pelo menos 2-3 alunos reais tocando o dedo, acompanhando `pm2 logs catraca-agente` e "Acessos recentes" do painel de produção ao mesmo tempo, antes de liberar pro uso normal sem supervisão.
+8. **Confirmar que o autostart do PM2 continua ativo** (`pm2-windows-startup`, configurado na sessão de 06/07) — o PC/PM2 foi reiniciado várias vezes durante a depuração de hoje, vale confirmar que ainda sobe sozinho no boot.
+9. **Atualizar este arquivo**: mover esta seção pra um bloco "✅ CONCLUÍDO" e tirar o item 5 da lista de pendências de "ESTADO ATUAL", depois de tudo confirmado funcionando em produção.
+
+**Não iniciar nenhum passo desta lista sem decisão e presença explícita do usuário — envolve dado real de aluno e o único ponto de acesso físico da academia.**
 
 ---
 

@@ -5,6 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Totem — Academia</title>
 
+<!-- Modo tela cheia: se o tablet abrir esta página "Adicionar à tela inicial"
+     (vira um atalho que abre sem barra de endereço nem UI do navegador),
+     usando este manifest só do totem (não afeta portal.html/index.html). -->
+<link rel="manifest" href="manifest-totem.json">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="theme-color" content="#0f172a">
+
 <!-- Bibliotecas client-side hospedadas localmente (public/vendor/) — o totem
      roda numa rede sem saída para internet, então não pode depender de CDN
      externo. Rode o script de download (ver README, seção do totem) uma vez
@@ -51,12 +60,12 @@
     width: 100%; padding: 16px; font-size: 22px; border-radius: 12px; border: none; text-align: center;
     margin-bottom: 16px; letter-spacing: 1px;
   }
-  video, canvas.preview { border-radius: 16px; width: 320px; height: 240px; object-fit: cover; background: #000; }
+  video, img.camera-feed, canvas.preview { border-radius: 16px; width: 320px; height: 240px; object-fit: cover; background: #000; }
   #video-inicio { width: 360px; height: 270px; }
   /* Efeito espelho só na exibição (UX natural, como uma câmera de selfie) —
      não afeta a leitura de QR nem o reconhecimento facial, que processam o
-     quadro bruto da câmera via canvas/vídeo, não a versão espelhada na tela. */
-  video { transform: scaleX(-1); }
+     quadro bruto da câmera via canvas/vídeo/imagem, não a versão espelhada na tela. */
+  video, img.camera-feed { transform: scaleX(-1); }
   .video-wrap { position: relative; margin-bottom: 16px; }
   .status-scan { color: #94a3b8; font-size: 14px; margin-top: 8px; min-height: 20px; }
 
@@ -108,7 +117,7 @@
     <div class="subtitulo" id="status-inicio">Aproxime-se para reconhecimento facial, ou mostre o QR do seu celular...</div>
 
     <div class="video-wrap">
-      <video id="video-inicio" autoplay muted playsinline></video>
+      <img id="video-inicio" class="camera-feed" alt="Câmera do totem" />
       <div class="overlay-resultado" id="overlay-resultado">
         <div class="resultado-icone" id="overlay-icone">⏳</div>
         <div class="resultado-titulo" id="overlay-titulo">Verificando...</div>
@@ -148,7 +157,7 @@
 
     <div class="painel-identificar oculto" id="painel-vincular-facial">
       <div class="video-wrap">
-        <video id="video-vincular-facial" autoplay muted playsinline></video>
+        <img id="video-vincular-facial" class="camera-feed" alt="Câmera do totem" />
       </div>
       <div class="status-scan" id="status-vincular-facial">Posicione seu rosto no centro da câmera...</div>
     </div>
@@ -212,7 +221,7 @@
     <!-- Cadastro facial (reaproveita a mesma lógica do fluxo "vincular") -->
     <div class="painel-identificar oculto" id="painel-cadastro-facial">
       <div class="video-wrap">
-        <video id="video-cadastro-facial" autoplay muted playsinline></video>
+        <img id="video-cadastro-facial" class="camera-feed" alt="Câmera do totem" />
       </div>
       <div class="status-scan" id="status-cadastro-facial">Posicione seu rosto no centro da câmera...</div>
     </div>

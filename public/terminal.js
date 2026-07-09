@@ -20,6 +20,74 @@ const DURACAO_RESULTADO_MS = 3000;
 // Intervalo (ms) entre tentativas de detecção no loop contínuo da tela inicial.
 const INTERVALO_ESCANEAMENTO_MS = 600;
 
+// ---------------- Fonte da câmera: webcam USB (via app "USB Camera" no tablet) ----------------
+// O totem passou a usar uma webcam USB plugada no tablet em vez da câmera
+// embutida, porque o Android do tablet não expõe a webcam USB pra API padrão
+// de câmera do navegador (getUserMedia) — só o app dedicado enxerga o
+// dispositivo USB diretamente. Contornamos isso usando o servidor de rede
+// (modo "IP Camera") desse app, que publica a imagem como um stream MJPEG
+// comum, consumível por uma tag <img> normal.
+//
+// Usamos 127.0.0.1 (localhost) em vez do IP da rede Wi-Fi de propósito: como
+// o navegador que mostra essa página roda no PRÓPRIO tablet que tem a
+// webcam plugada, o loopback funciona sempre, mesmo que o IP do tablet mude
+// ao trocar de rede Wi-Fi na academia. Testado e confirmado funcionando.
+//
+// O app "USB Camera" exige login (usuário/senha) e não tem opção de
+// desativar isso. Tentamos colocar a senha direto na URL, mas o navegador
+// bloqueia esse formato (usuário:senha@host) para recursos carregados
+// sozinhos pela página vindos de outro endereço — e mesmo se não bloqueasse,
+// ainda faltaria CORS pra leitura de pixels (QR/rosto) funcionar.
+//
+// Por isso a porta 8081 (direto do app) NÃO é usada aqui. Em vez disso, um
+// proxy local roda no próprio tablet via Termux (script
+// scripts/totem/proxy_webcam.py, ver README) na porta 9000: ele se autentica
+// com o app por trás dos panos (scripts não têm essas restrições do
+// navegador) e republica o vídeo sem senha e com cabeçalho CORS liberado.
+// Esse proxy precisa estar rodando pro totem funcionar.
+//
+// Pra voltar a usar a câmera embutida do tablet (getUserMedia), basta trocar
+// USAR_WEBCAM_USB para false — nada mais no código precisa mudar.
+const USAR_WEBCAM_USB = true;
+const USB_WEBCAM_URL = 'http://127.0.0.1:9000/video';
+
+// ---------------- Tela cheia (esconde a barra de endereço/UI do navegador) ----------------
+// A API de tela cheia do navegador só pode ser ativada depois de uma
+// interação da pessoa (toque na tela) — é uma regra de segurança, não dá
+// pra forçar isso sozinho assim que a página carrega. Por isso escutamos o
+// primeiro toque/clique em qualquer lugar da tela e aí sim pedimos tela
+// cheia. Se o tablet estiver aberto via ícone salvo na tela inicial (veja
+// manifest-totem.json), já abre praticamente sem UI do navegador.
+//
+// Importante: isso esconde a barra de endereço do navegador, mas não
+// substitui um "modo quiosque" de verdade — quem estiver no tablet ainda
+// consegue sair arrastando a barra do Android ou usando o botão voltar. Pra
+// travar o tablet de vez nessa tela, use o recurso nativo do Android
+// "Fixar app" (Configurações > Segurança > Fixar app) ou um app de quiosque
+// como o "Fully Kiosk Browser".
+function pedirTelaCheia() {
+  const el = document.documentElement;
+  const pedir = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen;
+  if (pedir) pedir.call(el).catch(() => {});
+}
+
+function ativarTelaCheiaNoPrimeiroToque() {
+  const ativar = () => {
+    pedirTelaCheia();
+    document.removeEventListener('click', ativar);
+    document.removeEventListener('touchstart', ativar);
+  };
+  document.addEventListener('click', ativar);
+  document.addEventListener('touchstart', ativar);
+}
+ativarTelaCheiaNoPrimeiroToque();
+
+// Se a tela cheia for encerrada por algum motivo (ex.: gesto do Android),
+// volta a escutar o próximo toque pra pedir de novo.
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement) ativarTelaCheiaNoPrimeiroToque();
+});
+
 async function api(caminho, opcoes = {}) {
   const resp = await fetch(caminho, {
     ...opcoes,
@@ -42,10 +110,39 @@ function mostrarTela(id) {
 // ---------------- Câmera (compartilhada entre todas as telas) ----------------
 
 let streamAtual = null;
+let elementoWebcamUsbAtual = null;
 
 async function iniciarCamera(videoEl) {
   pararCamera();
-  streamAtual = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+
+  if (USAR_WEBCAM_USB) {
+    elementoWebcamUsbAtual = videoEl;
+    // crossOrigin = 'anonymous': pede a imagem em modo CORS. O proxy local
+    // (porta 9000) responde com Access-Control-Allow-Origin liberado, então
+    // isso faz o canvas NÃO ficar "contaminado" — sem isso, drawImage/
+    // getImageData (usados pra ler QR code e rosto) travariam com erro de
+    // segurança mesmo com a imagem aparecendo normal na tela.
+    videoEl.crossOrigin = 'anonymous';
+    await new Promise((resolve, reject) => {
+      videoEl.onload = () => resolve();
+      videoEl.onerror = () => reject(new Error(
+        'Não foi possível conectar à webcam USB. Verifique se o proxy local (Termux, scripts/totem/proxy_webcam.py) e o app "USB Camera" estão rodando no tablet.'
+      ));
+      // cache-bust: garante que cada início de câmera abre uma conexão nova
+      // com o stream, em vez de reaproveitar algo preso de uma tentativa anterior.
+      videoEl.src = `${USB_WEBCAM_URL}?t=${Date.now()}`;
+    });
+    return;
+  }
+
+  // Resolução baixa de propósito: reconhecimento facial e leitura de QR não
+  // precisam de HD (a pessoa fica perto da câmera), e pedir uma resolução
+  // menor reduz bastante o processamento de cada quadro — sem isso, câmeras
+  // que abrem em resolução alta por padrão deixavam a detecção lenta a
+  // ponto de travar o navegador.
+  streamAtual = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+  });
   videoEl.srcObject = streamAtual;
   await videoEl.play();
 }
@@ -55,6 +152,57 @@ function pararCamera() {
     streamAtual.getTracks().forEach((t) => t.stop());
     streamAtual = null;
   }
+  if (elementoWebcamUsbAtual) {
+    elementoWebcamUsbAtual.src = '';
+    elementoWebcamUsbAtual = null;
+  }
+}
+
+// Abstrai as diferenças entre <video> (getUserMedia) e <img> (stream MJPEG da
+// webcam USB) pro resto do código (leitura de QR + reconhecimento facial) não
+// precisar saber qual dos dois modos está ativo.
+function elementoCameraPronto(el) {
+  return USAR_WEBCAM_USB
+    ? (el.complete && el.naturalWidth > 0)
+    : (el.readyState === el.HAVE_ENOUGH_DATA);
+}
+
+function larguraCamera(el) {
+  return USAR_WEBCAM_USB ? el.naturalWidth : el.videoWidth;
+}
+
+function alturaCamera(el) {
+  return USAR_WEBCAM_USB ? el.naturalHeight : el.videoHeight;
+}
+
+// ---------------- Motor de cálculo do TensorFlow.js (usado por dentro do face-api) ----------------
+// O face-api roda a rede neural em cima do TensorFlow.js, que escolhe um
+// "backend" (motor de cálculo) sozinho. Se o navegador do tablet não tiver
+// WebGL disponível/habilitado (comum em tablets mais simples), o TensorFlow.js
+// cai pro backend "cpu" — que faz a conta na CPU, de forma síncrona, e
+// TRAVA a página inteira (cliques, animação, tudo) durante cada detecção.
+// É exatamente o sintoma relatado: a imagem da câmera continua fluida (ela é
+// atualizada pelo próprio navegador, fora do JavaScript), mas a página para
+// de responder bem na hora de tentar reconhecer o rosto.
+//
+// Aqui forçamos o backend "webgl" (usa a GPU do aparelho) explicitamente
+// antes de carregar os modelos — isso deixa cada detecção ordens de
+// magnitude mais rápida quando o aparelho tem WebGL disponível (praticamente
+// todo Android tem). Se por algum motivo não tiver, o TensorFlow.js volta
+// sozinho pro "cpu" (não quebra, só continua lento).
+let motorTensorflowAtivo = 'desconhecido';
+
+async function prepararMotorTensorflow() {
+  try {
+    if (faceapi.tf && typeof faceapi.tf.setBackend === 'function') {
+      await faceapi.tf.setBackend('webgl');
+      await faceapi.tf.ready();
+    }
+  } catch (err) {
+    // Se "webgl" não estiver disponível, deixa o TensorFlow.js decidir
+    // sozinho (cai pro "cpu") — não é um erro fatal, só mais lento.
+  }
+  motorTensorflowAtivo = (faceapi.tf && faceapi.tf.getBackend && faceapi.tf.getBackend()) || 'desconhecido';
 }
 
 // ---------------- Modelos de reconhecimento facial ----------------
@@ -66,6 +214,7 @@ async function carregarModelosFaciais() {
   if (modelosFaciaisCarregados) return;
   if (modelosFaciaisCarregando) return modelosFaciaisCarregando;
   modelosFaciaisCarregando = (async () => {
+    await prepararMotorTensorflow();
     await faceapi.nets.tinyFaceDetector.loadFromUri(FACE_MODELS_URL);
     await faceapi.nets.faceLandmark68Net.loadFromUri(FACE_MODELS_URL);
     await faceapi.nets.faceRecognitionNet.loadFromUri(FACE_MODELS_URL);
@@ -74,19 +223,55 @@ async function carregarModelosFaciais() {
   return modelosFaciaisCarregando;
 }
 
-async function detectarRosto(video) {
+// inputSize menor (padrão do face-api é 416) = a rede analisa uma versão
+// bem menor de cada quadro, o que acelera MUITO a detecção com uma perda de
+// precisão pequena — mais que suficiente pra alguém posicionado perto da
+// câmera, que é o caso do totem. Foi esse ajuste (junto com a resolução
+// menor da câmera) que resolveu o travamento/lentidão do reconhecimento.
+// Reduzido de 224 pra 160 depois de constatar que o travamento acontece
+// justamente durante o processamento (não no vídeo em si) — valor menor
+// diminui ainda mais o tempo que cada detecção trava a página, sobretudo em
+// aparelhos sem aceleração por GPU disponível pro TensorFlow.js.
+const OPCOES_DETECTOR_FACIAL = new faceapi.TinyFaceDetectorOptions({ inputSize: 160 });
+
+async function detectarRosto(fonte) {
   return faceapi
-    .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+    .detectSingleFace(fonte, OPCOES_DETECTOR_FACIAL)
     .withFaceLandmarks()
     .withFaceDescriptor();
+}
+
+// ---------------- Limite de resolução de processamento ----------------
+// A câmera embutida (getUserMedia) já é pedida em 640x480 (ver iniciarCamera),
+// mas a webcam USB (stream MJPEG do app "USB Camera") manda a resolução que
+// o app estiver configurado pra mandar — não existe uma API do navegador pra
+// "pedir" uma resolução menor de um <img>, como dá pra fazer com getUserMedia.
+// Se o quadro vier grande, decodificar QR e rodar a rede neural de rosto em
+// cima dele é o que trava o navegador (foi exatamente o travamento que
+// continuava só no tablet com a webcam USB, mesmo já limitando getUserMedia).
+//
+// Por isso todo processamento (QR + rosto) passa por este canvas único,
+// redimensionado pra no máximo LARGURA_MAX_PROCESSAMENTO de largura antes de
+// analisar — não importa a resolução da fonte original. A imagem exibida na
+// tela pro aluno continua na resolução cheia (o <img>/<video> não é afetado).
+const LARGURA_MAX_PROCESSAMENTO = 480;
+const canvasProcessamento = document.createElement('canvas');
+const ctxProcessamento = canvasProcessamento.getContext('2d', { willReadFrequently: true });
+
+function desenharQuadroProcessamento(el) {
+  const largura = larguraCamera(el);
+  const altura = alturaCamera(el);
+  const escala = Math.min(1, LARGURA_MAX_PROCESSAMENTO / largura);
+  canvasProcessamento.width = Math.max(1, Math.round(largura * escala));
+  canvasProcessamento.height = Math.max(1, Math.round(altura * escala));
+  ctxProcessamento.drawImage(el, 0, 0, canvasProcessamento.width, canvasProcessamento.height);
+  return canvasProcessamento;
 }
 
 // ---------------- Tela inicial: escaneamento contínuo (rosto + QR) ----------------
 
 let escaneamentoAtivo = false;
 let escaneamentoTimer = null;
-const canvasEscaneamento = document.createElement('canvas');
-const ctxEscaneamento = canvasEscaneamento.getContext('2d');
 
 async function iniciarEscaneamentoContinuo() {
   const video = document.getElementById('video-inicio');
@@ -104,7 +289,12 @@ async function iniciarEscaneamentoContinuo() {
   }
 
   if (!escaneamentoAtivo) return; // usuário já navegou pra outra tela enquanto carregava
-  statusEl.textContent = 'Aproxime-se para reconhecimento facial, ou mostre o QR do seu celular...';
+  // "(motor: webgl)" ou "(motor: cpu)" — diagnóstico visível na própria tela do
+  // totem, sem precisar de depuração remota. Se aparecer "cpu" em vez de
+  // "webgl", é sinal de que o navegador do aparelho não tem aceleração por
+  // GPU disponível pro TensorFlow.js, e é isso que causa a travada durante
+  // cada tentativa de reconhecimento facial.
+  statusEl.textContent = `Aproxime-se para reconhecimento facial, ou mostre o QR do seu celular... (motor: ${motorTensorflowAtivo})`;
   agendarProximoTick();
 }
 
@@ -141,17 +331,19 @@ async function tickEscaneamento() {
   if (!escaneamentoAtivo) return;
   const video = document.getElementById('video-inicio');
 
-  if (video.readyState !== video.HAVE_ENOUGH_DATA) {
+  if (!elementoCameraPronto(video)) {
     agendarProximoTick();
     return;
   }
 
+  // Um único quadro reduzido (ver LARGURA_MAX_PROCESSAMENTO) serve tanto pra
+  // achar QR quanto pra reconhecimento facial — evita decodificar/analisar a
+  // resolução nativa da fonte, que é o que travava o tablet com a webcam USB.
+  const quadro = desenharQuadroProcessamento(video);
+
   // 1) tenta achar um QR code no quadro atual (celular do aluno)
-  canvasEscaneamento.width = video.videoWidth;
-  canvasEscaneamento.height = video.videoHeight;
-  ctxEscaneamento.drawImage(video, 0, 0, canvasEscaneamento.width, canvasEscaneamento.height);
-  const imageData = ctxEscaneamento.getImageData(0, 0, canvasEscaneamento.width, canvasEscaneamento.height);
-  const qr = window.jsQR(imageData.data, canvasEscaneamento.width, canvasEscaneamento.height);
+  const imageData = ctxProcessamento.getImageData(0, 0, quadro.width, quadro.height);
+  const qr = window.jsQR(imageData.data, quadro.width, quadro.height);
 
   if (qr && qr.data) {
     processarResultadoInicio(() => api('/api/terminal/acesso/codigo', {
@@ -164,7 +356,7 @@ async function tickEscaneamento() {
   // 2) senão, tenta reconhecimento facial no mesmo quadro
   let deteccao = null;
   try {
-    deteccao = await detectarRosto(video);
+    deteccao = await detectarRosto(quadro);
   } catch {
     // ignora erros pontuais de detecção (ex.: frame instável) e segue tentando
   }
@@ -386,7 +578,21 @@ async function iniciarCadastroFacial({ video, statusEl, cpf, aoConcluir }) {
   }
 
   const tick = async () => {
-    const deteccao = await detectarRosto(video);
+    // Mesma proteção do escaneamento contínuo: espera o quadro estar pronto e
+    // processa numa cópia reduzida (ver LARGURA_MAX_PROCESSAMENTO), pra não
+    // travar com a resolução nativa da webcam USB; e não deixa um erro
+    // pontual de detecção (frame instável) parar o loop de vez.
+    if (!elementoCameraPronto(video)) {
+      setTimeout(tick, 400);
+      return;
+    }
+    const quadro = desenharQuadroProcessamento(video);
+    let deteccao = null;
+    try {
+      deteccao = await detectarRosto(quadro);
+    } catch {
+      // ignora erro pontual e segue tentando
+    }
     if (deteccao) {
       pararCamera();
       try {

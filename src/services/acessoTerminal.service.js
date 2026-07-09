@@ -248,6 +248,37 @@ async function registrarAcesso({ alunoId, metodo, resultado, mensagem }) {
 }
 
 /**
+ * Variante de `registrarAcesso` usada pelo lote de reenvio da fila offline do
+ * agente (Fase 2 do modo offline/resiliente — ver agente-local/filaAcessos.js
+ * e a rota POST /api/terminal/acessos/lote). Duas diferenças da versão normal:
+ *
+ *  - `id` vem PRONTO de quem chama (gerado no agente, no momento da leitura
+ *    da digital) em vez de gerado aqui, e o INSERT é "OR IGNORE": isso torna
+ *    a operação idempotente — se o mesmo lote for reenviado (ex.: o agente
+ *    reiniciou antes de receber a confirmação do servidor), o registro já
+ *    existente é silenciosamente ignorado em vez de duplicado.
+ *  - `criadoEm`, quando informado, é o horário em que o evento realmente
+ *    aconteceu na catraca (capturado pelo agente), não o horário em que o
+ *    lote chegou no servidor — importante porque, numa queda de internet, o
+ *    reenvio pode acontecer bem depois do toque de verdade, e "Últimos
+ *    acessos" deve mostrar quando o aluno passou, não quando a fila foi
+ *    esvaziada.
+ */
+async function registrarAcessoIdempotente({ id, alunoId, metodo, resultado, mensagem, criadoEm }) {
+  if (criadoEm) {
+    await db.execute({
+      sql: 'INSERT OR IGNORE INTO acessos_catraca (id, aluno_id, metodo, resultado, mensagem, criado_em) VALUES (?, ?, ?, ?, ?, ?)',
+      args: [id, alunoId || null, metodo, resultado, mensagem || null, criadoEm],
+    });
+  } else {
+    await db.execute({
+      sql: 'INSERT OR IGNORE INTO acessos_catraca (id, aluno_id, metodo, resultado, mensagem) VALUES (?, ?, ?, ?, ?)',
+      args: [id, alunoId || null, metodo, resultado, mensagem || null],
+    });
+  }
+}
+
+/**
  * Ponto único de acionamento físico da catraca. catracaGateway decide sozinho
  * se fala TCP direto (deploy local, mesma rede da catraca) ou se repassa o
  * comando para o agente local via WebSocket (deploy na nuvem).
@@ -301,5 +332,6 @@ module.exports = {
   temMatriculaAtiva,
   possuiCobrancaEmAtraso,
   registrarAcesso,
+  registrarAcessoIdempotente,
   tentarLiberar,
 };

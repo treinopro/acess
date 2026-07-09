@@ -178,6 +178,80 @@ terminal.get('/cache-autorizacao', limitadorCacheAutorizacao, autenticarTerminal
   }
 });
 
+// ---------------------------------------------------------------------------
+// Fila de reenvio de acessos (Fase 2 do modo offline/resiliente) — o agente
+// local grava cada leitura de biometria numa fila própria em disco (ver
+// agente-local/filaAcessos.js) em vez de um POST síncrono por toque, e
+// reenvia em LOTE assim que consegue falar com o servidor de novo (ao
+// reconectar no painel + por timer periódico). Isso evita que um acesso
+// aconteça e se perca silenciosamente só porque a internet caiu no exato
+// segundo do toque — antes ficava só no log do agente, sem chegar em
+// "Últimos acessos".
+//
+// Idempotente por `id` (gerado no agente, no momento da leitura, não aqui):
+// reenviar o mesmo lote (ex.: o agente reiniciou antes de receber a
+// confirmação) não duplica o registro — ver
+// acessoTerminal.registrarAcessoIdempotente (INSERT OR IGNORE pela PK).
+//
+// Cada evento é processado de forma independente (um item malformado não
+// derruba o lote inteiro); a resposta lista só os ids que o servidor
+// confirmou, e o agente só remove da fila local os que aparecerem aqui —
+// qualquer id que faltar é reenviado automaticamente no próximo flush.
+// ---------------------------------------------------------------------------
+const limitadorAcessosLote = criarLimitador({
+  janelaMs: 5 * 60 * 1000, maximo: 60,
+  mensagem: 'Muitas requisições de reenvio de acessos. Aguarde alguns minutos.',
+});
+
+terminal.post('/acessos/lote', limitadorAcessosLote, autenticarTerminal, async (req, res, next) => {
+  try {
+    const { eventos } = z.object({
+      eventos: z.array(z.object({
+        id: z.string().min(1),
+        biometria_id: z.string().min(1),
+        capturado_em: z.string().min(1).optional(),
+      })).max(200),
+    }).parse(req.body);
+
+    const processados = [];
+    for (const evento of eventos) {
+      try {
+        const aluno = await acessoTerminal.buscarAlunoPorBiometriaId(evento.biometria_id);
+        if (!aluno) {
+          await acessoTerminal.registrarAcessoIdempotente({
+            id: evento.id,
+            alunoId: null,
+            metodo: 'biometria_catraca',
+            resultado: 'negado',
+            mensagem: 'Biometria não vinculada a nenhum aluno.',
+            criadoEm: evento.capturado_em,
+          });
+          processados.push(evento.id);
+          continue;
+        }
+        const { autorizado, motivo } = await acessoTerminal.verificarAutorizacaoAluno(aluno);
+        await acessoTerminal.registrarAcessoIdempotente({
+          id: evento.id,
+          alunoId: aluno.id,
+          metodo: 'biometria_catraca',
+          resultado: autorizado ? 'liberado' : 'negado',
+          mensagem: motivo,
+          criadoEm: evento.capturado_em,
+        });
+        processados.push(evento.id);
+      } catch {
+        // Item pontualmente malformado/com erro — não entra em `processados`,
+        // então o agente naturalmente tenta de novo no próximo flush. Não
+        // interrompe o processamento do resto do lote.
+      }
+    }
+
+    res.json({ processados });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ---- Vinculação de método de acesso para alunos já cadastrados ----
 
 // GET /api/terminal/vincular/codigo?cpf=... — gera (ou recupera) o código de

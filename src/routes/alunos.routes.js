@@ -278,6 +278,9 @@ router.put('/:id', async (req, res, next) => {
     const args = [...campos.map((c) => dados[c]), req.params.id];
 
     await db.execute({ sql: `UPDATE alunos SET ${sets} WHERE id = ?`, args });
+    // Este endpoint genérico pode alterar biometria_id junto com o resto —
+    // best-effort, não bloqueia a resposta (ver notificarAgenteAtualizacaoAluno).
+    if (campos.includes('biometria_id')) acessoTerminal.notificarAgenteAtualizacaoAluno(req.params.id);
     res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -292,6 +295,10 @@ router.patch('/:id/status', async (req, res, next) => {
       sql: 'UPDATE alunos SET status = ? WHERE id = ?',
       args: [status, req.params.id],
     });
+    // Best-effort, não bloqueia a resposta — atualiza o cache local do
+    // agente da catraca (Fase 1 do modo offline/resiliente) sem esperar o
+    // próximo pull periódico dele.
+    acessoTerminal.notificarAgenteAtualizacaoAluno(req.params.id);
     res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -309,6 +316,7 @@ router.patch('/:id/biometria', async (req, res, next) => {
       sql: 'UPDATE alunos SET biometria_id = ? WHERE id = ?',
       args: [biometriaId, req.params.id],
     });
+    acessoTerminal.notificarAgenteAtualizacaoAluno(req.params.id);
     res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -318,6 +326,12 @@ router.patch('/:id/biometria', async (req, res, next) => {
 router.delete('/:id/biometria', async (req, res, next) => {
   try {
     await db.execute({ sql: 'UPDATE alunos SET biometria_id = NULL WHERE id = ?', args: [req.params.id] });
+    // biometria_id acabou de virar NULL — notificarAgenteAtualizacaoAluno não
+    // vai encontrar mais nada pra mandar (checa aluno.biometria_id), então o
+    // registro antigo só some do cache do agente no próximo pull periódico
+    // completo (substituirTudo). Sem risco: um registro "sobrando" no cache
+    // só ajuda a liberar mais um pouco, nunca bloqueia (mesma filosofia
+    // fail-open de todo este sistema).
     res.json({ ok: true });
   } catch (err) {
     next(err);

@@ -154,6 +154,30 @@ terminal.post('/validar-biometria-catraca', limitadorIdentificacao, autenticarTe
   }
 });
 
+// ---------------------------------------------------------------------------
+// Cache local de autorização (Fase 1 do modo offline/resiliente) — o agente
+// local (agente-local/agente.js) puxa esta lista periodicamente e ao
+// conectar, pra poder liberar uma leitura de digital feita direto na própria
+// catraca sem depender de round-trip de rede a cada toque. Ver
+// agente-local/cacheAutorizacao.js e acessoTerminal.listarAutorizacoesBiometricas
+// (mesma regra de autorização do totem, só que em lote/sem N+1).
+// ---------------------------------------------------------------------------
+const limitadorCacheAutorizacao = criarLimitador({
+  janelaMs: 5 * 60 * 1000, maximo: 20,
+  mensagem: 'Muitas requisições de sincronização de cache. Aguarde alguns minutos.',
+});
+
+// GET /api/terminal/cache-autorizacao — snapshot completo (todos os alunos
+// com biometria vinculada) para o agente local popular/atualizar seu cache.
+terminal.get('/cache-autorizacao', limitadorCacheAutorizacao, autenticarTerminal, async (req, res, next) => {
+  try {
+    const itens = await acessoTerminal.listarAutorizacoesBiometricas();
+    res.json({ atualizado_em: Date.now(), itens });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ---- Vinculação de método de acesso para alunos já cadastrados ----
 
 // GET /api/terminal/vincular/codigo?cpf=... — gera (ou recupera) o código de
@@ -391,6 +415,10 @@ terminal.get('/auto-cadastro/status/:cobrancaId', autenticarTerminalOuCadastroPu
     if (!aluno) return res.status(404).json({ erro: 'Aluno não encontrado.' });
 
     const codigoAcesso = await acessoTerminal.garantirCodigoAcesso(aluno.id);
+    // Best-effort, não bloqueia a resposta — pagamento confirmado pode ter
+    // tirado este aluno da lista de "em atraso" (se já tinha biometria de
+    // catraca vinculada por outro canal, ex.: importação em lote).
+    acessoTerminal.notificarAgenteAtualizacaoAluno(aluno.id);
 
     if (jaAtivadaAntes) {
       return res.json({ pago: true, autorizado: true, motivo: null, aluno_nome: aluno.nome, cpf: aluno.cpf, codigo_acesso: codigoAcesso });

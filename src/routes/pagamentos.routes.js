@@ -7,6 +7,7 @@ const { autenticar, apenasAdmin } = require('../middleware/auth');
 const mercadopago = require('../services/payment/mercadopago.service');
 const { gerarCobrancasRecorrentes } = require('../services/cobrancas.service');
 const { criarLimitador } = require('../middleware/rateLimit');
+const acessoTerminal = require('../services/acessoTerminal.service');
 
 const router = express.Router();
 
@@ -92,6 +93,10 @@ router.post('/cobrancas', autenticar, async (req, res, next) => {
       });
     }
 
+    // Best-effort, não bloqueia a resposta — uma conta nova (mesmo pendente)
+    // pode mudar se este aluno está em atraso, então atualiza o cache local
+    // do agente da catraca (Fase 1 do modo offline/resiliente).
+    acessoTerminal.notificarAgenteAtualizacaoAluno(dados.aluno_id);
     res.status(201).json({ id });
   } catch (err) {
     next(err);
@@ -181,6 +186,10 @@ router.put('/cobrancas/:id', autenticar, async (req, res, next) => {
 
     const result = await db.execute({ sql: `UPDATE cobrancas SET ${sets} WHERE id = ?`, args });
     if (result.rowsAffected === 0) return res.status(404).json({ erro: 'Cobrança não encontrada.' });
+    if (campos.includes('status')) {
+      const cobrancaAtualizada = await buscarCobranca(req.params.id);
+      if (cobrancaAtualizada) acessoTerminal.notificarAgenteAtualizacaoAluno(cobrancaAtualizada.aluno_id);
+    }
     res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -235,6 +244,10 @@ async function recalcularStatusCobranca(cobrancaId) {
       args: [vencida ? 'atrasado' : 'pendente', cobrancaId],
     });
   }
+
+  // Best-effort, não bloqueia — status financeiro deste aluno pode ter
+  // mudado (quitou, ou voltou a ficar em atraso após remover um pagamento).
+  acessoTerminal.notificarAgenteAtualizacaoAluno(cobranca.aluno_id);
 
   return { ...(await buscarCobranca(cobrancaId)), valor_pago_centavos: total };
 }
@@ -315,6 +328,7 @@ router.post('/cobrancas/:id/remover-quitacao', autenticar, async (req, res, next
       sql: `UPDATE cobrancas SET status = ?, pago_em = NULL WHERE id = ?`,
       args: [vencida ? 'atrasado' : 'pendente', req.params.id],
     });
+    acessoTerminal.notificarAgenteAtualizacaoAluno(cobranca.aluno_id);
 
     res.json({ ok: true, cobranca: await buscarCobranca(req.params.id) });
   } catch (err) {
@@ -546,6 +560,11 @@ router.post('/webhook/mercadopago', limitadorWebhook, express.json(), async (req
                 WHERE id = ?`,
           args: [pagamento.payment_type_id || null, referenciaExterna],
         });
+        // Best-effort — Pix confirmado pode ter quitado o que deixava este
+        // aluno em atraso; atualiza o cache local do agente da catraca sem
+        // esperar o próximo pull periódico.
+        const cobrancaPaga = await buscarCobranca(referenciaExterna);
+        if (cobrancaPaga) acessoTerminal.notificarAgenteAtualizacaoAluno(cobrancaPaga.aluno_id);
       }
     }
     res.sendStatus(200); // Mercado Pago espera 200 rapidamente

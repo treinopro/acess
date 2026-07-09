@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const { v4: uuid } = require('uuid');
 const db = require('../db/client');
 const catracaGateway = require('./catracaGateway.service');
+const agenteGateway = require('./agenteGateway.service');
 
 const FACE_MATCH_THRESHOLD = Number(process.env.FACE_MATCH_THRESHOLD || 0.6);
 
@@ -135,6 +136,24 @@ async function possuiCobrancaEmAtraso(alunoId) {
 }
 
 /**
+ * Só a parte da decisão que NÃO depende de consulta ao banco (status do
+ * cadastro). Extraída à parte pra ser reaproveitada tanto por
+ * `verificarAutorizacaoAluno` (uma consulta por vez, no totem) quanto por
+ * `listarAutorizacoesBiometricas` (todos de uma vez, sem N+1, pro cache do
+ * agente da catraca) — assim as duas nunca correm o risco de divergir.
+ * Retorna o motivo do bloqueio, ou `null` se o status por si só não bloqueia
+ * (ainda falta checar cobrança em atraso nesse caso).
+ */
+function motivoBloqueioPorStatus(aluno) {
+  if (!aluno) return 'Aluno não encontrado.';
+  if (aluno.status === 'inadimplente') return 'Existem mensalidades em atraso.';
+  if (aluno.status === 'trancado') return 'Cadastro trancado.';
+  if (aluno.status === 'inativo') return 'Cadastro inativo.';
+  if (aluno.status !== 'ativo') return `Status "${aluno.status}" não permite acesso.`;
+  return null;
+}
+
+/**
  * Decide se o aluno pode entrar agora, com o motivo em caso negativo.
  * Regra: o que bloqueia de verdade é o status do cadastro e a existência de
  * cobrança em atraso — NÃO a falta de matrícula ativa. Um aluno sem nenhuma
@@ -143,16 +162,82 @@ async function possuiCobrancaEmAtraso(alunoId) {
  * mensalidade vencida é que bloqueia.
  */
 async function verificarAutorizacaoAluno(aluno) {
-  if (!aluno) return { autorizado: false, motivo: 'Aluno não encontrado.' };
-  if (aluno.status === 'inadimplente') return { autorizado: false, motivo: 'Existem mensalidades em atraso.' };
-  if (aluno.status === 'trancado') return { autorizado: false, motivo: 'Cadastro trancado.' };
-  if (aluno.status === 'inativo') return { autorizado: false, motivo: 'Cadastro inativo.' };
-  if (aluno.status !== 'ativo') return { autorizado: false, motivo: `Status "${aluno.status}" não permite acesso.` };
+  const motivoStatus = motivoBloqueioPorStatus(aluno);
+  if (motivoStatus) return { autorizado: false, motivo: motivoStatus };
 
   const emAtraso = await possuiCobrancaEmAtraso(aluno.id);
   if (emAtraso) return { autorizado: false, motivo: 'Existem mensalidades em atraso.' };
 
   return { autorizado: true, motivo: null };
+}
+
+/**
+ * Autorização de TODOS os alunos com biometria vinculada, numa única passada
+ * (duas queries no total — nunca N+1) — usado para alimentar o cache local
+ * do agente da catraca (Fase 1 do modo offline/resiliente), permitindo que a
+ * leitura de digital direto na catraca seja liberada sem round-trip de rede
+ * a cada toque. Aplica exatamente a mesma regra de `verificarAutorizacaoAluno`,
+ * só que em lote.
+ */
+async function listarAutorizacoesBiometricas() {
+  const [resultAlunos, resultAtraso] = await Promise.all([
+    db.execute("SELECT id, nome, status, biometria_id FROM alunos WHERE biometria_id IS NOT NULL AND biometria_id != ''"),
+    db.execute(`SELECT DISTINCT aluno_id FROM cobrancas
+                WHERE matricula_id IS NOT NULL AND (
+                  status = 'atrasado'
+                  OR (status = 'pendente' AND vencimento IS NOT NULL AND vencimento < date('now'))
+                )`),
+  ]);
+
+  const idsEmAtraso = new Set(resultAtraso.rows.map((linha) => linha.aluno_id));
+
+  return resultAlunos.rows.map((aluno) => {
+    const motivoStatus = motivoBloqueioPorStatus(aluno);
+    if (motivoStatus) {
+      return { biometria_id: aluno.biometria_id, autorizado: false, aluno_nome: aluno.nome, motivo: motivoStatus };
+    }
+    if (idsEmAtraso.has(aluno.id)) {
+      return { biometria_id: aluno.biometria_id, autorizado: false, aluno_nome: aluno.nome, motivo: 'Existem mensalidades em atraso.' };
+    }
+    return { biometria_id: aluno.biometria_id, autorizado: true, aluno_nome: aluno.nome, motivo: null };
+  });
+}
+
+/**
+ * Notifica o agente local (best-effort — nunca lança, nunca atrasa o
+ * fluxo que chamou) que a autorização de UM aluno específico pode ter
+ * mudado, pra atualizar o cache dele (Fase 1 do modo offline/resiliente)
+ * sem esperar até 15 minutos do próximo pull periódico. Chamar nos pontos
+ * onde status, biometria_id ou pagamento de mensalidade mudam (ver
+ * alunos.routes.js, pagamentos.routes.js, terminal.routes.js).
+ *
+ * Não faz nada (silenciosamente) se o aluno não tiver biometria_id
+ * vinculada, ou se não houver agente conectado agora — nesses casos o
+ * próximo pull periódico do agente resolve de qualquer forma.
+ */
+async function notificarAgenteAtualizacaoAluno(alunoId) {
+  try {
+    const result = await db.execute({ sql: 'SELECT id, nome, status, biometria_id FROM alunos WHERE id = ?', args: [alunoId] });
+    const aluno = result.rows[0];
+    if (!aluno || !aluno.biometria_id) return;
+
+    const motivoStatus = motivoBloqueioPorStatus(aluno);
+    let item;
+    if (motivoStatus) {
+      item = { biometria_id: aluno.biometria_id, autorizado: false, aluno_nome: aluno.nome, motivo: motivoStatus };
+    } else {
+      const emAtraso = await possuiCobrancaEmAtraso(aluno.id);
+      item = emAtraso
+        ? { biometria_id: aluno.biometria_id, autorizado: false, aluno_nome: aluno.nome, motivo: 'Existem mensalidades em atraso.' }
+        : { biometria_id: aluno.biometria_id, autorizado: true, aluno_nome: aluno.nome, motivo: null };
+    }
+
+    await agenteGateway.enviarComando('atualizar_cache', { itens: [item], substituir_tudo: false });
+  } catch {
+    // Best-effort de propósito: falha aqui (aluno sem biometria, agente
+    // desconectado, timeout etc.) nunca deve derrubar quem chamou esta
+    // função — o próximo pull periódico do agente cobre a atualização.
+  }
 }
 
 async function registrarAcesso({ alunoId, metodo, resultado, mensagem }) {
@@ -211,6 +296,8 @@ module.exports = {
   encontrarMelhorMatchFacial,
   salvarFaceDescriptor,
   verificarAutorizacaoAluno,
+  listarAutorizacoesBiometricas,
+  notificarAgenteAtualizacaoAluno,
   temMatriculaAtiva,
   possuiCobrancaEmAtraso,
   registrarAcesso,

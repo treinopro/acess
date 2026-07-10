@@ -5,7 +5,7 @@
 // IMPORTANTE: troque o valor abaixo pelo mesmo TERMINAL_TOKEN configurado no
 // .env do servidor. Como o aluno não faz login, este token é o que autentica
 // o totem perante a API — mantenha o dispositivo fisicamente controlado.
-const TERMINAL_TOKEN = 'w7bN3qXeR9mKpL2vJ8tYd5cA6sZ0hU4gF1oQnE7iBxW';
+const TERMINAL_TOKEN = '533910a1b2ff8e90e62194b1b2f61c1e641e724e9d00b2d4f50e96bbce3e9e63';
 
 // URL dos modelos do face-api.js — hospedados localmente em public/vendor/,
 // já que o totem roda numa rede sem internet. Ver README (seção do totem)

@@ -261,6 +261,48 @@ async function buscarAvisoVencimentoSeguro(alunoId) {
 }
 
 /**
+ * "Primeiro acesso do dia" (2026-07) — usado pelo aviso sonoro do totem
+ * (ver terminal.js/config.routes.js, chave "som_totem"): toca "Bom treino!"
+ * (ou o que o admin configurar) só no 1º acesso liberado do dia de cada
+ * aluno; os seguintes tocam o aviso normal de "acesso liberado".
+ *
+ * IMPORTANTE: precisa ser chamado ANTES de `registrarAcesso` gravar o acesso
+ * de agora — senão o próprio acesso atual já contaria como "já teve acesso
+ * hoje" e a saudação de primeiro acesso nunca tocaria.
+ *
+ * acessos_catraca.criado_em é gravado como "AAAA-MM-DD HH:MM:SS" em UTC (ver
+ * comentário de formatarDataOuDataHora em app.js) — comparamos só os 10
+ * primeiros caracteres (a data) contra o dia de hoje em UTC, mesma convenção
+ * já usada em cobrancas.service.js. Isso pode discordar por algumas horas do
+ * "dia" na hora local da academia perto da virada da meia-noite UTC — efeito
+ * colateral aceitável aqui (só decide qual frase toca, nunca bloqueia acesso).
+ */
+async function jaTeveAcessoLiberadoHojeEm(cliente, alunoId) {
+  const hojeISO = new Date().toISOString().slice(0, 10);
+  const result = await cliente.execute({
+    sql: `SELECT COUNT(*) as total FROM acessos_catraca
+          WHERE aluno_id = ? AND resultado = 'liberado' AND substr(criado_em, 1, 10) = ?`,
+    args: [alunoId, hojeISO],
+  });
+  return Number(result.rows[0].total) > 0;
+}
+
+async function verificarPrimeiroAcessoHojeSeguro(alunoId) {
+  try {
+    const jaTeve = await dbResiliente.comFallback(
+      'jaTeveAcessoLiberadoHoje',
+      () => jaTeveAcessoLiberadoHojeEm(db, alunoId),
+      () => jaTeveAcessoLiberadoHojeEm(dbOffline, alunoId),
+    );
+    return !jaTeve;
+  } catch {
+    // Best-effort: na dúvida, não trata como "primeiro acesso" — evita tocar
+    // a saudação de "bom treino" repetidamente se essa checagem falhar.
+    return false;
+  }
+}
+
+/**
  * Só a parte da decisão que NÃO depende de consulta ao banco (status do
  * cadastro). Extraída à parte pra ser reaproveitada tanto por
  * `verificarAutorizacaoAluno` (uma consulta por vez, no totem) quanto por
@@ -486,6 +528,10 @@ async function tentarLiberar({ aluno, metodo }) {
     return { autorizado: false, motivo, aluno_nome: aluno ? aluno.nome : null, aluno_id: aluno ? aluno.id : null, cpf: aluno ? aluno.cpf : null, aviso_vencimento: avisoVencimento };
   }
 
+  // Precisa ser calculado ANTES de registrarAcesso gravar o acesso de agora
+  // (ver comentário de verificarPrimeiroAcessoHojeSeguro acima).
+  const primeiroAcessoHoje = await verificarPrimeiroAcessoHojeSeguro(aluno.id);
+
   try {
     await liberarNaCatraca(`Bem-vindo(a) ${aluno.nome}`);
   } catch (err) {
@@ -495,7 +541,7 @@ async function tentarLiberar({ aluno, metodo }) {
   }
 
   await registrarAcesso({ alunoId: aluno.id, metodo, resultado: 'liberado', mensagem: null });
-  return { autorizado: true, motivo: null, aluno_nome: aluno.nome, aluno_id: aluno.id, cpf: aluno.cpf, aviso_vencimento: avisoVencimento };
+  return { autorizado: true, motivo: null, aluno_nome: aluno.nome, aluno_id: aluno.id, cpf: aluno.cpf, aviso_vencimento: avisoVencimento, primeiro_acesso_hoje: primeiroAcessoHoje };
 }
 
 module.exports = {

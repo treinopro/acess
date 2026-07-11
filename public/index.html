@@ -962,6 +962,70 @@
           </div>
         </div>
 
+        <form id="form-config-som-totem" class="form-painel">
+          <h3 style="margin-top:0">Aviso sonoro no totem</h3>
+          <p style="margin-top:0;color:#667085;font-size:13px">
+            Toca automaticamente no totem a cada identificação (CPF, QR ou reconhecimento facial). "Voz" fala uma
+            frase pelo navegador (precisa do pacote de voz em português instalado no tablet, já que o totem roda
+            sem internet); "Beep" toca um som curto, sem depender disso. Use "Testar" pra ouvir antes de salvar.
+          </p>
+
+          <div class="som-totem-linha" data-som-linha="primeiroAcesso" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px">
+            <div><label>1º acesso do dia</label>
+              <select class="som-totem-tipo" data-som-situacao="primeiroAcesso">
+                <option value="voz">Voz</option>
+                <option value="beep">Beep</option>
+                <option value="nenhum">Nenhum</option>
+              </select>
+            </div>
+            <div class="som-totem-campo-texto"><label>Frase</label>
+              <input class="som-totem-texto" data-som-situacao="primeiroAcesso" placeholder="ex: Bom treino!" style="min-width:200px" />
+            </div>
+            <div class="som-totem-campo-beeps oculto"><label>Beeps</label>
+              <input type="number" min="1" max="5" class="som-totem-beeps" data-som-situacao="primeiroAcesso" style="width:70px" />
+            </div>
+            <button type="button" class="btn-secundario btn-testar-som" data-som-situacao="primeiroAcesso">Testar</button>
+          </div>
+
+          <div class="som-totem-linha" data-som-linha="acessoLiberado" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px">
+            <div><label>Próximos acessos (liberado)</label>
+              <select class="som-totem-tipo" data-som-situacao="acessoLiberado">
+                <option value="voz">Voz</option>
+                <option value="beep">Beep</option>
+                <option value="nenhum">Nenhum</option>
+              </select>
+            </div>
+            <div class="som-totem-campo-texto"><label>Frase</label>
+              <input class="som-totem-texto" data-som-situacao="acessoLiberado" placeholder="ex: Acesso liberado" style="min-width:200px" />
+            </div>
+            <div class="som-totem-campo-beeps oculto"><label>Beeps</label>
+              <input type="number" min="1" max="5" class="som-totem-beeps" data-som-situacao="acessoLiberado" style="width:70px" />
+            </div>
+            <button type="button" class="btn-secundario btn-testar-som" data-som-situacao="acessoLiberado">Testar</button>
+          </div>
+
+          <div class="som-totem-linha" data-som-linha="acessoNegado" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+            <div><label>Acesso negado</label>
+              <select class="som-totem-tipo" data-som-situacao="acessoNegado">
+                <option value="voz">Voz</option>
+                <option value="beep">Beep</option>
+                <option value="nenhum">Nenhum</option>
+              </select>
+            </div>
+            <div class="som-totem-campo-texto"><label>Frase</label>
+              <input class="som-totem-texto" data-som-situacao="acessoNegado" placeholder="ex: Acesso negado" style="min-width:200px" />
+            </div>
+            <div class="som-totem-campo-beeps oculto"><label>Beeps</label>
+              <input type="number" min="1" max="5" class="som-totem-beeps" data-som-situacao="acessoNegado" style="width:70px" />
+            </div>
+            <button type="button" class="btn-secundario btn-testar-som" data-som-situacao="acessoNegado">Testar</button>
+          </div>
+
+          <div class="form-acoes">
+            <button type="submit" class="btn-primario">Salvar</button>
+          </div>
+        </form>
+
         <div class="form-painel">
           <h3 style="margin-top:0">Backup</h3>
           <p style="margin-top:0;color:#667085;font-size:13px">

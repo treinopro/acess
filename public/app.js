@@ -383,6 +383,103 @@ tornarArrastavel(document.getElementById('janela-catraca'), document.getElementB
 
 // ---------------- Configurações (nome do app, licenciado para, backup) ----------------
 
+// Padrões espelhando PADROES.som_totem em config.routes.js — usados aqui só
+// pra preencher o formulário quando ainda não existe nada salvo.
+const SOM_TOTEM_PADRAO = {
+  primeiroAcesso: { tipo: 'voz', texto: 'Bom treino!' },
+  acessoLiberado: { tipo: 'beep', beeps: 1, texto: 'Acesso liberado' },
+  acessoNegado: { tipo: 'beep', beeps: 2, texto: 'Acesso negado' },
+};
+const SITUACOES_SOM_TOTEM = ['primeiroAcesso', 'acessoLiberado', 'acessoNegado'];
+
+function atualizarVisibilidadeCamposSom(situacao) {
+  const linha = document.querySelector(`[data-som-linha="${situacao}"]`);
+  if (!linha) return;
+  const tipo = linha.querySelector('.som-totem-tipo').value;
+  linha.querySelector('.som-totem-campo-texto').classList.toggle('oculto', tipo !== 'voz');
+  linha.querySelector('.som-totem-campo-beeps').classList.toggle('oculto', tipo !== 'beep');
+}
+
+function preencherLinhaSomTotem(situacao, dados) {
+  const linha = document.querySelector(`[data-som-linha="${situacao}"]`);
+  if (!linha) return;
+  linha.querySelector('.som-totem-tipo').value = dados.tipo || 'beep';
+  linha.querySelector('.som-totem-texto').value = dados.texto || '';
+  linha.querySelector('.som-totem-beeps').value = dados.beeps || 1;
+  atualizarVisibilidadeCamposSom(situacao);
+}
+
+function lerLinhaSomTotem(situacao) {
+  const linha = document.querySelector(`[data-som-linha="${situacao}"]`);
+  return {
+    tipo: linha.querySelector('.som-totem-tipo').value,
+    texto: linha.querySelector('.som-totem-texto').value.trim(),
+    beeps: Number(linha.querySelector('.som-totem-beeps').value) || 1,
+  };
+}
+
+document.querySelectorAll('.som-totem-tipo').forEach((sel) => {
+  sel.addEventListener('change', () => atualizarVisibilidadeCamposSom(sel.dataset.somSituacao));
+});
+
+// ---------------- Testar aviso sonoro (admin) ----------------
+// Mesma lógica de tocarAvisoSonoro/tocarBeep/falarTexto do totem (ver
+// public/terminal.js) — duplicada aqui de propósito: cada página deste
+// projeto carrega seu próprio .js isolado, sem sistema de módulos
+// compartilhados (mesmo motivo documentado em
+// filaCadastroOffline.service.js pra duplicar trechos pequenos em vez de
+// arriscar um require circular).
+let audioCtxSomAdmin = null;
+function tocarBeepAdmin(vezes = 1) {
+  try {
+    audioCtxSomAdmin = audioCtxSomAdmin || new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = audioCtxSomAdmin;
+    for (let i = 0; i < vezes; i++) {
+      const inicio = ctx.currentTime + i * 0.35;
+      const osc = ctx.createOscillator();
+      const ganho = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = 880;
+      ganho.gain.setValueAtTime(0.0001, inicio);
+      ganho.gain.exponentialRampToValueAtTime(0.3, inicio + 0.02);
+      ganho.gain.exponentialRampToValueAtTime(0.0001, inicio + 0.18);
+      osc.connect(ganho);
+      ganho.connect(ctx.destination);
+      osc.start(inicio);
+      osc.stop(inicio + 0.2);
+    }
+  } catch { /* som é só reforço, nunca deve travar nada */ }
+}
+
+function falarTextoAdmin(texto) {
+  try {
+    if (!('speechSynthesis' in window) || !texto) return;
+    speechSynthesis.cancel();
+    const fala = new SpeechSynthesisUtterance(texto);
+    fala.lang = 'pt-BR';
+    speechSynthesis.speak(fala);
+  } catch { /* idem */ }
+}
+
+document.querySelectorAll('.btn-testar-som').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const dados = lerLinhaSomTotem(btn.dataset.somSituacao);
+    if (dados.tipo === 'voz') falarTextoAdmin(dados.texto);
+    else if (dados.tipo === 'beep') tocarBeepAdmin(dados.beeps);
+    else mostrarToast('Situação configurada como "Nenhum" — não toca som.');
+  });
+});
+
+document.getElementById('form-config-som-totem').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const somTotem = {};
+  SITUACOES_SOM_TOTEM.forEach((situacao) => { somTotem[situacao] = lerLinhaSomTotem(situacao); });
+  try {
+    await api('/api/config', { method: 'PUT', body: JSON.stringify({ som_totem: somTotem }) });
+    mostrarToast('Aviso sonoro salvo.');
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
 async function carregarConfiguracoesForm() {
   try {
     const config = await api('/api/config');
@@ -395,6 +492,11 @@ async function carregarConfiguracoesForm() {
       ? [...config.menu_ordem]
       : [...ORDEM_MENU_PADRAO];
     renderizarOrdemMenu();
+
+    const somConfig = config.som_totem && typeof config.som_totem === 'object' ? config.som_totem : {};
+    SITUACOES_SOM_TOTEM.forEach((situacao) => {
+      preencherLinhaSomTotem(situacao, { ...SOM_TOTEM_PADRAO[situacao], ...(somConfig[situacao] || {}) });
+    });
   } catch (err) { mostrarToast(err.message, true); }
 }
 

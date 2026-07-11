@@ -20,6 +20,83 @@ const DURACAO_RESULTADO_MS = 3000;
 // Intervalo (ms) entre tentativas de detecção no loop contínuo da tela inicial.
 const INTERVALO_ESCANEAMENTO_MS = 600;
 
+// ---------------- Aviso sonoro no totem (2026-07) ----------------
+// Toca automaticamente a cada identificação (CPF, QR ou facial): frase falada
+// ("voz") ou beep(s) curto(s), configurável por situação em Configurações >
+// Aviso sonoro no totem (ver config.routes.js, chave "som_totem"). Padrões
+// abaixo valem até a config carregar (ou se a busca falhar por algum motivo).
+//
+// ATENÇÃO com a opção "voz": o totem roda numa rede sem saída pra internet
+// (ver comentário dos modelos de rosto acima). O navegador às vezes precisa
+// de uma "voz de rede" pra sintetizar fala em português — se o tablet não
+// tiver uma voz pt-BR instalada localmente (Android: Ajustes > Acessibilidade
+// > Conversão de texto em voz > baixar o pacote de voz em português), a fala
+// pode simplesmente não sair nenhum som, sem erro nenhum aparecendo. "Beep"
+// não depende disso — é só um tom curto gerado na hora, sempre funciona.
+let configSomTotem = {
+  primeiroAcesso: { tipo: 'voz', texto: 'Bom treino!' },
+  acessoLiberado: { tipo: 'beep', beeps: 1 },
+  acessoNegado: { tipo: 'beep', beeps: 2 },
+};
+
+async function carregarConfigSomTotem() {
+  try {
+    const config = await api('/api/config');
+    if (config.som_totem) {
+      const somConfig = typeof config.som_totem === 'string' ? JSON.parse(config.som_totem) : config.som_totem;
+      configSomTotem = { ...configSomTotem, ...somConfig };
+    }
+  } catch {
+    // Fica com os padrões acima se a busca da config pública falhar.
+  }
+}
+carregarConfigSomTotem();
+
+let audioCtxSom = null;
+function tocarBeep(vezes = 1) {
+  try {
+    audioCtxSom = audioCtxSom || new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = audioCtxSom;
+    for (let i = 0; i < vezes; i++) {
+      const inicio = ctx.currentTime + i * 0.35;
+      const osc = ctx.createOscillator();
+      const ganho = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = 880;
+      // Envelope curto (sobe e desce rápido) em vez de ligar/desligar seco —
+      // evita o "clique" de estouro que um beep sem fade costuma ter.
+      ganho.gain.setValueAtTime(0.0001, inicio);
+      ganho.gain.exponentialRampToValueAtTime(0.3, inicio + 0.02);
+      ganho.gain.exponentialRampToValueAtTime(0.0001, inicio + 0.18);
+      osc.connect(ganho);
+      ganho.connect(ctx.destination);
+      osc.start(inicio);
+      osc.stop(inicio + 0.2);
+    }
+  } catch {
+    // Web Audio pode falhar em navegadores muito antigos — o aviso sonoro é
+    // só um reforço, nunca deve travar o fluxo normal do totem por causa disso.
+  }
+}
+
+function falarTexto(texto) {
+  try {
+    if (!('speechSynthesis' in window) || !texto) return;
+    speechSynthesis.cancel(); // corta qualquer fala anterior ainda tocando, evita acumular fila
+    const fala = new SpeechSynthesisUtterance(texto);
+    fala.lang = 'pt-BR';
+    speechSynthesis.speak(fala);
+  } catch {
+    // idem — nunca deve travar o totem por causa do aviso sonoro
+  }
+}
+
+function tocarAvisoSonoro(situacao) {
+  if (!situacao || situacao.tipo === 'nenhum') return;
+  if (situacao.tipo === 'voz') falarTexto(situacao.texto);
+  else if (situacao.tipo === 'beep') tocarBeep(situacao.beeps || 1);
+}
+
 // ---------------- Fonte da câmera: webcam USB (via app "USB Camera" no tablet) ----------------
 // O totem passou a usar uma webcam USB plugada no tablet em vez da câmera
 // embutida, porque o Android do tablet não expõe a webcam USB pra API padrão
@@ -81,8 +158,19 @@ function pedirTelaCheia() {
   if (pedir) pedir.call(el).catch(() => {});
 }
 
+// 2026-07: antes, QUALQUER clique/toque na página (inclusive dentro da caixa
+// de digitar CPF, ou nos botões) já disparava o pedido de tela cheia — na
+// prática isso fazia a tela entrar em tela cheia "sozinha" bem na hora em que
+// alguém só queria clicar num campo ou botão pra usar o totem, parecendo um
+// acidente. Agora ignora cliques/toques em campos de formulário, botões e
+// links — só entra em tela cheia a partir de um toque numa área neutra da
+// tela (o vídeo da câmera, o fundo). Também ignora toque com mais de um dedo,
+// que é o gesto reservado pra abrir o destravar do modo quiosque (ver mais
+// abaixo).
 function ativarTelaCheiaNoPrimeiroToque() {
-  const ativar = () => {
+  const ativar = (ev) => {
+    if (ev.touches && ev.touches.length > 1) return;
+    if (ev.target && ev.target.closest && ev.target.closest('input, select, textarea, button, a')) return;
     pedirTelaCheia();
     document.removeEventListener('click', ativar);
     document.removeEventListener('touchstart', ativar);
@@ -96,6 +184,101 @@ ativarTelaCheiaNoPrimeiroToque();
 // volta a escutar o próximo toque pra pedir de novo.
 document.addEventListener('fullscreenchange', () => {
   if (!document.fullscreenElement) ativarTelaCheiaNoPrimeiroToque();
+});
+
+// ---------------- Modo quiosque: impedir voltar/mudar de página (2026-07) ----------------
+// Pedido do dono do sistema: no tablet do totem, ninguém deve conseguir sair
+// da tela usando o gesto/botão de "voltar" nem trocar de página. Isso é feito
+// armadilhando o histórico do navegador: sempre que alguém tenta voltar, a
+// página empurra o mesmo estado de novo, cancelando a navegação.
+//
+// LIMITE IMPORTANTE (deixando isso bem claro): isso trava o gesto/botão de
+// "voltar" e alguns atalhos de teclado, mas NÃO impede alguém de digitar
+// outro endereço na barra do navegador ou usar o menu do próprio navegador —
+// isso só dá pra travar de verdade com um app de quiosque de verdade (tipo
+// "Fully Kiosk Browser") ou fixando o app no Android ("Fixar app", ver
+// comentário da tela cheia acima). Ainda assim, cobre o caso mais comum de
+// alguém arrastar a borda da tela ou apertar "voltar" sem querer/de propósito.
+let quiosqueDestravado = false;
+
+function armarArmadilhaHistorico() {
+  history.pushState({ quiosque: true }, '', location.href);
+}
+armarArmadilhaHistorico();
+
+window.addEventListener('popstate', () => {
+  if (quiosqueDestravado) return;
+  armarArmadilhaHistorico();
+});
+
+// Bloqueia atalhos de teclado comuns de navegação (Alt+Seta, Backspace fora
+// de campo de texto) — só faz diferença pra quem usa o totem com teclado
+// físico (ex.: notebook em vez de tablet), mas não custa ter também no tablet.
+document.addEventListener('keydown', (ev) => {
+  if (quiosqueDestravado) return;
+  const alvoEhCampoDeTexto = ev.target && (ev.target.tagName === 'INPUT' || ev.target.tagName === 'TEXTAREA');
+  const tentandoVoltar = (ev.altKey && (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight'))
+    || (ev.key === 'Backspace' && !alvoEhCampoDeTexto);
+  if (tentandoVoltar) ev.preventDefault();
+});
+
+// ---------------- Destravar o modo quiosque (gesto/atalho secreto) ----------------
+// Em tela touch: toque com DOIS dedos em qualquer lugar mostra o campo de
+// senha (pedido explícito do dono do sistema). Sem touch (notebook, sem tela
+// sensível ao toque): o atalho de teclado Ctrl+Shift+L mostra direto a opção
+// de destravar, sem pedir senha — quem está mexendo pelo teclado já está
+// fisicamente no PC/recepção, não é o público geral que usa o tablet.
+//
+// TROQUE a senha abaixo por uma só sua (mesma ideia do TERMINAL_TOKEN lá em
+// cima) antes de usar isso de verdade — não deixe o valor padrão.
+const SENHA_DESTRAVAR_QUIOSQUE = 'academia2026';
+
+function mostrarOverlayDestravar({ pedirSenha }) {
+  const overlay = document.getElementById('overlay-destravar-quiosque');
+  const campoSenha = document.getElementById('destravar-quiosque-senha');
+  const erroEl = document.getElementById('destravar-quiosque-erro');
+  erroEl.textContent = '';
+  campoSenha.value = '';
+  campoSenha.classList.toggle('oculto', !pedirSenha);
+  document.getElementById('btn-destravar-quiosque-confirmar').dataset.pedeSenha = pedirSenha ? '1' : '';
+  overlay.classList.remove('oculto');
+  if (pedirSenha) campoSenha.focus();
+}
+
+document.addEventListener('touchstart', (ev) => {
+  if (ev.touches && ev.touches.length === 2) {
+    ev.preventDefault();
+    mostrarOverlayDestravar({ pedirSenha: true });
+  }
+});
+
+document.addEventListener('keydown', (ev) => {
+  if (ev.ctrlKey && ev.shiftKey && (ev.key === 'L' || ev.key === 'l')) {
+    mostrarOverlayDestravar({ pedirSenha: false });
+  }
+});
+
+document.getElementById('btn-destravar-quiosque-cancelar').addEventListener('click', () => {
+  document.getElementById('overlay-destravar-quiosque').classList.add('oculto');
+});
+
+document.getElementById('btn-destravar-quiosque-confirmar').addEventListener('click', (ev) => {
+  const pedeSenha = ev.currentTarget.dataset.pedeSenha === '1';
+  if (pedeSenha) {
+    const campoSenha = document.getElementById('destravar-quiosque-senha');
+    if (campoSenha.value !== SENHA_DESTRAVAR_QUIOSQUE) {
+      document.getElementById('destravar-quiosque-erro').textContent = 'Senha incorreta.';
+      return;
+    }
+  }
+  quiosqueDestravado = true;
+  if (document.fullscreenElement) {
+    const sair = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen;
+    if (sair) {
+      try { Promise.resolve(sair.call(document)).catch(() => {}); } catch { /* alguns navegadores não retornam Promise aqui */ }
+    }
+  }
+  document.getElementById('overlay-destravar-quiosque').classList.add('oculto');
 });
 
 async function api(caminho, opcoes = {}) {
@@ -558,14 +741,22 @@ async function processarResultado(chamada, { aoVoltar } = {}) {
     const r = await chamada();
     if (r.autorizado) {
       overlay.classList.add('liberado');
+      document.body.classList.add('tela-flash-liberado');
       document.getElementById('overlay-icone').textContent = '✅';
       document.getElementById('overlay-titulo').textContent = `Bem-vindo(a), ${r.aluno_nome || ''}!`;
       document.getElementById('overlay-msg').textContent = 'Acesso liberado. Pode entrar.';
+      // Aviso sonoro (2026-07): "Bom treino" só no primeiro acesso liberado do
+      // dia (calculado no servidor, ver acessoTerminal.service.js); nos
+      // seguintes, o aviso normal de "acesso liberado" (voz ou beep, conforme
+      // configurado em Configurações > Aviso sonoro no totem).
+      tocarAvisoSonoro(r.primeiro_acesso_hoje ? configSomTotem.primeiroAcesso : configSomTotem.acessoLiberado);
     } else {
       overlay.classList.add('negado');
+      document.body.classList.add('tela-flash-negado');
       document.getElementById('overlay-icone').textContent = '⛔';
       document.getElementById('overlay-titulo').textContent = 'Acesso negado';
       document.getElementById('overlay-msg').textContent = r.motivo || 'Procure a recepção.';
+      tocarAvisoSonoro(configSomTotem.acessoNegado);
       if (r.cpf && /atraso/i.test(r.motivo || '')) {
         cpfParaContas = r.cpf;
       }
@@ -587,13 +778,16 @@ async function processarResultado(chamada, { aoVoltar } = {}) {
     }
   } catch (err) {
     overlay.classList.add('negado');
+    document.body.classList.add('tela-flash-negado');
     document.getElementById('overlay-icone').textContent = '⚠️';
     document.getElementById('overlay-titulo').textContent = 'Não foi possível verificar';
     document.getElementById('overlay-msg').textContent = err.message;
+    tocarAvisoSonoro(configSomTotem.acessoNegado);
   }
 
   const fecharOverlay = () => {
     overlay.classList.remove('visivel');
+    document.body.classList.remove('tela-flash-liberado', 'tela-flash-negado');
     btnPagarContas.classList.add('oculto');
     document.getElementById('input-cpf').value = '';
     if (aoVoltar) aoVoltar();
@@ -608,6 +802,7 @@ async function processarResultado(chamada, { aoVoltar } = {}) {
     btnPagarContas.onclick = () => {
       clearTimeout(fechamentoAutomatico);
       overlay.classList.remove('visivel');
+      document.body.classList.remove('tela-flash-liberado', 'tela-flash-negado');
       btnPagarContas.classList.add('oculto');
       pararEscaneamentoContinuo();
       abrirTelaContasComCpf(cpfParaContas);

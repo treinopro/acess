@@ -24,6 +24,17 @@ const PADROES = {
   // de aviso de cobrança, ainda não implementada), isso já dá um jeito simples
   // do aluno pedir o agendamento sem precisar ligar.
   whatsapp_contato: '',
+  // Aviso sonoro do totem (2026-07) — ver src/services/acessoTerminal.service.js
+  // (primeiro_acesso_hoje) e public/terminal.js (tocarAvisoSonoro). Cada
+  // situação tem: tipo ('voz' | 'beep' | 'nenhum'), texto (só usado se
+  // tipo='voz') e beeps (só usado se tipo='beep', 1 a 5). Fica como objeto
+  // (não string) igual menu_ordem, pelo mesmo motivo: só vira string quando
+  // volta do banco.
+  som_totem: {
+    primeiroAcesso: { tipo: 'voz', texto: 'Bom treino!' },
+    acessoLiberado: { tipo: 'beep', beeps: 1, texto: 'Acesso liberado' },
+    acessoNegado: { tipo: 'beep', beeps: 2, texto: 'Acesso negado' },
+  },
 };
 
 // GET /api/config — pública de propósito: a tela de login precisa mostrar o
@@ -46,13 +57,31 @@ router.get('/', async (req, res, next) => {
       }
     }
 
+    if (typeof config.som_totem === 'string') {
+      try {
+        const somSalvo = JSON.parse(config.som_totem);
+        config.som_totem = somSalvo && typeof somSalvo === 'object' ? somSalvo : PADROES.som_totem;
+      } catch {
+        config.som_totem = PADROES.som_totem;
+      }
+    }
+
     res.json(config);
   } catch (err) {
     next(err);
   }
 });
 
-// PUT /api/config { nome_app?, licenciado_para?, menu_ordem? } — só admin
+// Cada situação do aviso sonoro do totem: tipo obrigatório, texto/beeps
+// opcionais (só fazem sentido conforme o tipo, mas não custa aceitar os dois
+// sempre — o front decide qual mostrar/usar).
+const SomSituacaoSchema = z.object({
+  tipo: z.enum(['voz', 'beep', 'nenhum']),
+  texto: z.string().trim().max(200).optional(),
+  beeps: z.number().int().min(1).max(5).optional(),
+});
+
+// PUT /api/config { nome_app?, licenciado_para?, menu_ordem?, som_totem? } — só admin
 router.put('/', autenticar, apenasAdmin, async (req, res, next) => {
   try {
     const schema = z.object({
@@ -71,13 +100,18 @@ router.put('/', autenticar, apenasAdmin, async (req, res, next) => {
         },
         { message: 'Lista de menus inválida (itens faltando, duplicados ou desconhecidos).' },
       ).optional(),
+      som_totem: z.object({
+        primeiroAcesso: SomSituacaoSchema,
+        acessoLiberado: SomSituacaoSchema,
+        acessoNegado: SomSituacaoSchema,
+      }).optional(),
     });
     const dados = schema.parse(req.body);
     const chaves = Object.keys(dados);
     if (chaves.length === 0) return res.status(400).json({ erro: 'Nenhum campo informado.' });
 
     for (const chave of chaves) {
-      const valor = chave === 'menu_ordem' ? JSON.stringify(dados[chave]) : dados[chave];
+      const valor = (chave === 'menu_ordem' || chave === 'som_totem') ? JSON.stringify(dados[chave]) : dados[chave];
       await db.execute({
         sql: 'INSERT INTO configuracoes (chave, valor) VALUES (?, ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor',
         args: [chave, valor],

@@ -39,7 +39,12 @@
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
     background: #0f172a; color: #fff;
     -webkit-user-select: none; user-select: none;
+    transition: background-color 0.25s ease;
   }
+  /* Fundo da tela toda pisca verde/vermelho junto com o resultado do check-in
+     (2026-07) — além do ícone/overlay, que já mudavam de cor antes. */
+  body.tela-flash-liberado { background: #065f46; }
+  body.tela-flash-negado { background: #7f1d1d; }
   .tela { display: none; height: 100vh; width: 100vw; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; }
   .tela.ativa { display: flex; }
   .oculto { display: none !important; }
@@ -104,6 +109,22 @@
   .overlay-resultado .botao-pequeno { margin-top: 12px; }
 
   .link-voltar { margin-top: 32px; background: none; border: none; color: #64748b; font-size: 14px; cursor: pointer; text-decoration: underline; }
+
+  /* Modo quiosque: overlay de destravar (2026-07) — some por baixo de tudo
+     (position: fixed, z-index alto) até o gesto/atalho secreto abrir. */
+  .overlay-quiosque {
+    position: fixed; inset: 0; z-index: 999; background: rgba(15, 23, 42, 0.94);
+    display: flex; align-items: center; justify-content: center; padding: 16px;
+  }
+  .quiosque-caixa { background: #1e293b; border-radius: 16px; padding: 24px; width: 280px; max-width: 100%; text-align: center; }
+  .quiosque-caixa h3 { margin: 0 0 12px; font-size: 17px; }
+  .quiosque-caixa input {
+    width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 8px;
+    border: 1px solid #334155; background: #0f172a; color: #fff; font-size: 15px;
+  }
+  .quiosque-caixa .erro-msg { color: #f87171; font-size: 13px; min-height: 16px; margin-top: 8px; }
+  .quiosque-caixa .botoes { display: flex; gap: 8px; margin-top: 8px; }
+  .quiosque-caixa .botoes .botao-pequeno { flex: 1; margin-top: 0; }
 
   #qrcode-vincular { margin: 20px 0; }
   .aviso-caixa { background: #1e293b; border-radius: 10px; padding: 14px; font-size: 14px; color: #cbd5e1; max-width: 380px; }
@@ -280,6 +301,20 @@
     </div>
 
     <button class="link-voltar" id="btn-voltar-4">&larr; Voltar</button>
+  </div>
+
+  <!-- Modo quiosque: destravar (2026-07) — toque com 2 dedos (touch) ou
+       Ctrl+Shift+L (teclado) abre isto. Ver comentário em terminal.js. -->
+  <div class="overlay-quiosque oculto" id="overlay-destravar-quiosque">
+    <div class="quiosque-caixa">
+      <h3>Destravar modo totem</h3>
+      <input type="password" id="destravar-quiosque-senha" placeholder="Senha" autocomplete="off" />
+      <div class="erro-msg" id="destravar-quiosque-erro"></div>
+      <div class="botoes">
+        <button class="botao-pequeno" id="btn-destravar-quiosque-confirmar">Desbloquear</button>
+        <button class="botao-pequeno" id="btn-destravar-quiosque-cancelar">Cancelar</button>
+      </div>
+    </div>
   </div>
 
 <script src="terminal.js"></script>

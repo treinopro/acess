@@ -268,3 +268,19 @@ body {
   background: #ecfdf3; border: 1px solid #abefc6; border-radius: 8px; padding: 14px; margin-bottom: 20px; font-size: 14px;
 }
 #cobranca-resultado a { color: #067647; font-weight: 600; }
+
+/* ---------- Botão (x) de limpar dentro das caixas de pesquisa ---------- */
+/* Envolve o <input> de busca num wrapper relativo e sobrepõe um botão "×"
+   alinhado à direita, dentro da própria caixa — não altera o layout ao redor
+   (o wrapper só existe pra posicionar o botão, o input mantém seu próprio
+   tamanho/estilo inline de antes). */
+.campo-busca-wrap { position: relative; display: inline-block; }
+.campo-busca-wrap input { padding-right: 30px !important; box-sizing: border-box; }
+.btn-limpar-busca {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  width: 20px; height: 20px; border: none; background: none; cursor: pointer;
+  color: #98a2b3; font-size: 16px; line-height: 1; border-radius: 50%;
+  display: none; align-items: center; justify-content: center; padding: 0;
+}
+.btn-limpar-busca:hover { background: #eaecf0; color: #475467; }
+.campo-busca-wrap input:not(:placeholder-shown) ~ .btn-limpar-busca { display: flex; }

@@ -21,6 +21,16 @@
 <script src="vendor/qrcode.min.js"></script>
 <script src="vendor/jsQR.js"></script>
 <script src="vendor/face-api/face-api.min.js"></script>
+<!-- Ponte com o plugin nativo Android da webcam USB — projeto do app nativo
+     (Capacitor) pausado em 11/07/2026 por causa de instabilidade de energia
+     na porta USB-OTG do tablet (webcam caindo fisicamente durante o uso; ver
+     README.md em totem-app-scaffold/totem-app/ pra retomar no futuro, ex. com
+     um hub USB alimentado). Totem voltou a usar a câmera embutida do tablet
+     (USAR_WEBCAM_USB = false em terminal.js). Este script continua aqui sem
+     problema: window.NativeUsbWebcam.disponivel() só retorna true dentro do
+     app nativo (que não está mais em uso), então em qualquer navegador comum
+     ele fica inofensivo e terminal.js nem chega a checá-lo. -->
+<script src="native-usb-webcam-bridge.js"></script>
 
 <style>
   * { box-sizing: border-box; }
@@ -87,6 +97,8 @@
   .overlay-resultado .resultado-icone { font-size: 52px; margin-bottom: 8px; }
   .overlay-resultado .resultado-titulo { font-size: 19px; margin-bottom: 6px; }
   .overlay-resultado .resultado-msg { font-size: 13px; max-width: 300px; }
+  .overlay-resultado .resultado-vencimento { font-size: 13px; max-width: 300px; margin-top: 8px; font-weight: 600; color: #fbbf24; }
+  .overlay-resultado .resultado-vencimento.vencido { color: #f87171; }
   .overlay-resultado.liberado .resultado-icone { color: #10b981; }
   .overlay-resultado.negado .resultado-icone { color: #f87171; }
   .overlay-resultado .botao-pequeno { margin-top: 12px; }
@@ -117,11 +129,12 @@
     <div class="subtitulo" id="status-inicio">Aproxime-se para reconhecimento facial, ou mostre o QR do seu celular...</div>
 
     <div class="video-wrap">
-      <img id="video-inicio" class="camera-feed" alt="Câmera do totem" />
+      <video id="video-inicio" class="camera-feed" autoplay muted playsinline></video>
       <div class="overlay-resultado" id="overlay-resultado">
         <div class="resultado-icone" id="overlay-icone">⏳</div>
         <div class="resultado-titulo" id="overlay-titulo">Verificando...</div>
         <div class="resultado-msg" id="overlay-msg"></div>
+        <div class="resultado-vencimento oculto" id="overlay-vencimento"></div>
         <button class="botao-pequeno oculto" id="btn-overlay-pagar-contas">Pagar contas em atraso</button>
       </div>
     </div>
@@ -157,7 +170,7 @@
 
     <div class="painel-identificar oculto" id="painel-vincular-facial">
       <div class="video-wrap">
-        <img id="video-vincular-facial" class="camera-feed" alt="Câmera do totem" />
+        <video id="video-vincular-facial" class="camera-feed" autoplay muted playsinline></video>
       </div>
       <div class="status-scan" id="status-vincular-facial">Posicione seu rosto no centro da câmera...</div>
     </div>
@@ -221,7 +234,7 @@
     <!-- Cadastro facial (reaproveita a mesma lógica do fluxo "vincular") -->
     <div class="painel-identificar oculto" id="painel-cadastro-facial">
       <div class="video-wrap">
-        <img id="video-cadastro-facial" class="camera-feed" alt="Câmera do totem" />
+        <video id="video-cadastro-facial" class="camera-feed" autoplay muted playsinline></video>
       </div>
       <div class="status-scan" id="status-cadastro-facial">Posicione seu rosto no centro da câmera...</div>
     </div>

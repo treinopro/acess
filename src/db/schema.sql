@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS alunos (
   biometria_id TEXT, -- referencia/ID do template biometrico cadastrado no leitor externo (catraca/app)
   codigo_acesso TEXT, -- codigo estavel para QR/"cartao de embarque" e fallback manual no totem
   face_descriptor TEXT, -- descritor facial (JSON, 128 floats do face-api.js) para reconhecimento facial recorrente no totem
+  treino_modo TEXT DEFAULT 'nativo', -- nativo | app_externo (ver tabela "treinos" mais abaixo)
   -- Identificador da PESSOA no Secullum Academia.Net (campo "Nº Identificador"
   -- na tela de Contas a Receber). NULL para alunos cadastrados direto aqui,
   -- nunca importados. Usado pela migracao pra decidir "ja existe, so

@@ -1,5 +1,7 @@
 const path = require('path');
+const fs = require('fs');
 const http = require('http');
+const https = require('https');
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
@@ -16,9 +18,27 @@ const terminalRoutes = require('./routes/terminal.routes');
 const portalRoutes = require('./routes/portal.routes');
 const treinosRoutes = require('./routes/treinos.routes');
 const { router: configRoutes } = require('./routes/config.routes');
-const { rodar: rodarRecorrencia } = require('./jobs/recorrencia');
 const { rodar: rodarBackup } = require('./jobs/backup');
 const agenteGateway = require('./services/agenteGateway.service');
+const dbResiliente = require('./services/dbResiliente.service');
+const filaAcessosOffline = require('./services/filaAcessosOffline.service');
+const filaCadastroOffline = require('./services/filaCadastroOffline.service');
+const syncOfflineCache = require('./jobs/syncOfflineCache');
+
+// Guarda do job de backup agendado: default 'true' preserva o comportamento
+// atual (nenhuma mudança pra quem não define esta variável). Existe só para
+// o processo "modo totem" (ver ecosystem.config.js, app
+// "academia-gestao-totem") poder rodar com EXECUTAR_JOBS_AGENDADOS=false —
+// evitando duplicar o backup automático junto com o processo principal que
+// já roda na nuvem contra o mesmo Turso.
+//
+// A geração de mensalidades recorrentes NÃO usa mais este guard: desde
+// 2026-07 ela deixou de rodar automaticamente em qualquer processo (nuvem ou
+// totem) — decisão do dono do sistema, que prefere gerar manualmente pelo
+// botão "Gerar Contas a Receber" no painel, escolhendo o período na hora, em
+// vez de deixar rodando sozinha (ver src/routes/pagamentos.routes.js e
+// src/services/cobrancas.service.js).
+const EXECUTAR_JOBS_AGENDADOS = String(process.env.EXECUTAR_JOBS_AGENDADOS || 'true').toLowerCase() === 'true';
 
 const app = express();
 app.disable('x-powered-by'); // não anuncia "Express" na resposta (mesmo efeito de helmet.hidePoweredBy)
@@ -80,23 +100,94 @@ server.listen(PORT, () => {
   console.log(`Servidor rodando em http://localhost:${PORT}`);
   console.log(`Agente local da catraca deve conectar em ws://localhost:${PORT}/agente/socket?token=<AGENTE_TOKEN> (ou wss:// em produção).`);
 
-  // Gera as próximas mensalidades de planos recorrentes: roda uma vez ao subir
-  // o servidor e depois a cada 24h enquanto o processo ficar no ar. Em produção,
-  // como alternativa mais confiável, um Render Cron Job pode chamar
-  // `npm run gerar-cobrancas` periodicamente (ver README).
-  rodarRecorrencia().catch((err) => console.error('[recorrencia] erro na execução inicial:', err));
-  setInterval(() => {
-    rodarRecorrencia().catch((err) => console.error('[recorrencia] erro na execução agendada:', err));
-  }, 24 * 60 * 60 * 1000);
+  // Geração de mensalidades recorrentes: NÃO roda mais automaticamente aqui
+  // (2026-07 — decisão do dono do sistema). O único jeito de gerar essas
+  // cobranças agora é o botão "Gerar Contas a Receber" no painel (escolhendo
+  // o período — mês corrente ou meses futuros — ver
+  // src/routes/pagamentos.routes.js), ou rodando `npm run gerar-cobrancas`
+  // manualmente no terminal.
 
-  // Backup automático: roda uma vez ao subir e depois a cada 24h, salvando um
-  // dump JSON em disco local (./backups). ATENÇÃO: em hospedagens com disco
-  // efêmero (reinicia zerado a cada deploy, como costuma ser o caso em
-  // Northflank/Buildpack) esses arquivos locais NÃO sobrevivem a um redeploy —
-  // use também o botão "Baixar backup agora" no painel (Configurações), que
-  // baixa o arquivo direto pro computador do admin.
-  rodarBackup().catch((err) => console.error('[backup] erro na execução inicial:', err));
-  setInterval(() => {
-    rodarBackup().catch((err) => console.error('[backup] erro na execução agendada:', err));
-  }, 24 * 60 * 60 * 1000);
+  // Backup automático — SÓ neste processo quando EXECUTAR_JOBS_AGENDADOS não
+  // estiver explicitamente desligado (default: ligado, comportamento
+  // idêntico ao de sempre). O processo "modo totem" (ecosystem.config.js)
+  // define essa variável como 'false' porque ele aponta pro MESMO Turso do
+  // processo principal da nuvem — rodar o backup duas vezes seria só
+  // redundante (o backup em si não tem o risco financeiro da recorrência,
+  // mas não há motivo pra duplicar o trabalho).
+  if (EXECUTAR_JOBS_AGENDADOS) {
+    // Roda uma vez ao subir e depois a cada 24h, salvando um dump JSON em
+    // disco local (./backups). ATENÇÃO: em hospedagens com disco efêmero
+    // (reinicia zerado a cada deploy, como costuma ser o caso em
+    // Northflank/Buildpack) esses arquivos locais NÃO sobrevivem a um
+    // redeploy — use também o botão "Baixar backup agora" no painel
+    // (Configurações), que baixa o arquivo direto pro computador do admin.
+    rodarBackup().catch((err) => console.error('[backup] erro na execução inicial:', err));
+    setInterval(() => {
+      rodarBackup().catch((err) => console.error('[backup] erro na execução agendada:', err));
+    }, 24 * 60 * 60 * 1000);
+  } else {
+    console.log('[server] EXECUTAR_JOBS_AGENDADOS=false — pulando backup agendado neste processo (esperado no processo "modo totem").');
+  }
+
+  // "Modo totem offline-resiliente" (2026-07): só ativa quando
+  // MODO_TOTEM_OFFLINE=true (processo dedicado do totem, ver
+  // ecosystem.config.js). Fora disso, dbResiliente.comFallback() já não faz
+  // nada de diferente sozinho, mas sem estes timers o cache local (local.db)
+  // nunca seria alimentado, nem a fila de acessos ou a fila de cadastro
+  // pendentes seriam reenviadas — então este bloco todo é o que efetivamente
+  // liga o modo offline-resiliente de ponta a ponta.
+  if (dbResiliente.MODO_TOTEM_OFFLINE) {
+    const SYNC_OFFLINE_INTERVALO_MS = Number(process.env.SYNC_OFFLINE_INTERVALO_MS) || 12 * 60 * 1000;
+    const FILA_ACESSOS_TOTEM_FLUSH_INTERVALO_MS = Number(process.env.FILA_ACESSOS_TOTEM_FLUSH_INTERVALO_MS) || 30 * 1000;
+    const FILA_CADASTRO_TOTEM_FLUSH_INTERVALO_MS = Number(process.env.FILA_CADASTRO_TOTEM_FLUSH_INTERVALO_MS) || 30 * 1000;
+
+    console.log(`[server] MODO_TOTEM_OFFLINE=true — sincronizando cache local a cada ${Math.round(SYNC_OFFLINE_INTERVALO_MS / 1000)}s, esvaziando a fila de acessos a cada ${Math.round(FILA_ACESSOS_TOTEM_FLUSH_INTERVALO_MS / 1000)}s e a fila de cadastro/pagamentos a cada ${Math.round(FILA_CADASTRO_TOTEM_FLUSH_INTERVALO_MS / 1000)}s.`);
+
+    syncOfflineCache.sincronizar().catch((err) => console.error('[syncOfflineCache] erro na sincronização inicial:', err));
+    setInterval(() => {
+      syncOfflineCache.sincronizar().catch((err) => console.error('[syncOfflineCache] erro na sincronização agendada:', err));
+    }, SYNC_OFFLINE_INTERVALO_MS);
+
+    filaAcessosOffline.flush().catch((err) => console.error('[filaAcessosOffline] erro no flush inicial:', err));
+    setInterval(() => {
+      filaAcessosOffline.flush().catch((err) => console.error('[filaAcessosOffline] erro no flush agendado:', err));
+    }, FILA_ACESSOS_TOTEM_FLUSH_INTERVALO_MS);
+
+    filaCadastroOffline.flush().catch((err) => console.error('[filaCadastroOffline] erro no flush inicial:', err));
+    setInterval(() => {
+      filaCadastroOffline.flush().catch((err) => console.error('[filaCadastroOffline] erro no flush agendado:', err));
+    }, FILA_CADASTRO_TOTEM_FLUSH_INTERVALO_MS);
+  }
 });
+
+// HTTPS opcional, só pro totem (2026-07): câmera (getUserMedia) só funciona em
+// contexto seguro — "https://" ou "localhost". O totem acessa por IP da rede
+// local (ex.: http://192.168.0.2:3000/terminal.html), que os navegadores NÃO
+// consideram seguro, então a captura facial falha com "navigator.mediaDevices
+// is undefined". Isso é restrição do navegador (mais rígida ainda no iOS
+// Safari, que não tem nenhuma flag de exceção como o Chrome/Android tem) — não
+// dá pra contornar sem servir HTTPS de verdade.
+//
+// Fica desligado por padrão (zero impacto no servidor da nuvem e em quem não
+// configurou nada): só liga se os dois arquivos abaixo existirem. Gere-os uma
+// vez com mkcert (ver instruções passadas no chat) e coloque em
+// academia-gestao/certs/totem-cert.pem e academia-gestao/certs/totem-key.pem.
+const HTTPS_CERT_PATH = process.env.HTTPS_CERT_PATH || path.join(__dirname, '..', 'certs', 'totem-cert.pem');
+const HTTPS_KEY_PATH = process.env.HTTPS_KEY_PATH || path.join(__dirname, '..', 'certs', 'totem-key.pem');
+const HTTPS_PORT = process.env.HTTPS_PORT || 3443;
+
+if (fs.existsSync(HTTPS_CERT_PATH) && fs.existsSync(HTTPS_KEY_PATH)) {
+  try {
+    const httpsOptions = {
+      cert: fs.readFileSync(HTTPS_CERT_PATH),
+      key: fs.readFileSync(HTTPS_KEY_PATH),
+    };
+    https.createServer(httpsOptions, app).listen(HTTPS_PORT, () => {
+      console.log(`[server] HTTPS ativo em https://localhost:${HTTPS_PORT} — use este endereço (com o IP da rede no lugar de "localhost") no totem para a câmera funcionar.`);
+    });
+  } catch (err) {
+    console.error('[server] Encontrei certs/totem-cert.pem e certs/totem-key.pem mas não consegui iniciar o HTTPS:', err.message);
+  }
+} else {
+  console.log('[server] HTTPS do totem não configurado (certs/totem-cert.pem / totem-key.pem não encontrados) — pulando. Sem impacto se você não usa câmera pelo IP da rede.');
+}

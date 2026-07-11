@@ -3,11 +3,14 @@ const crypto = require('crypto');
 const { v4: uuid } = require('uuid');
 const { z } = require('zod');
 const db = require('../db/client');
+const dbOffline = require('../db/clientOffline');
 const { autenticar, apenasAdmin } = require('../middleware/auth');
 const mercadopago = require('../services/payment/mercadopago.service');
-const { gerarCobrancasRecorrentes } = require('../services/cobrancas.service');
+const { gerarCobrancasRecorrentes, ultimoDiaDoMes } = require('../services/cobrancas.service');
 const { criarLimitador } = require('../middleware/rateLimit');
 const acessoTerminal = require('../services/acessoTerminal.service');
+const dbResiliente = require('../services/dbResiliente.service');
+const filaCadastroOffline = require('../services/filaCadastroOffline.service');
 
 const router = express.Router();
 
@@ -268,9 +271,26 @@ router.get('/cobrancas/:id/pagamentos', autenticar, async (req, res, next) => {
 // POST /api/pagamentos/cobrancas/:id/pagamentos { data, valor_centavos, tipo, conta_corrente }
 // Registra um pagamento (total ou parcial). Quando a soma bate o valor da conta, ela é
 // quitada automaticamente.
+//
+// Modo totem offline-resiliente (MODO_TOTEM_OFFLINE=true): se o Turso não
+// responder na hora, o pagamento NÃO é perdido — entra na fila local (ver
+// filaCadastroOffline.service.js) e é aplicado automaticamente assim que a
+// internet voltar, MAS só se o status da conta continuar o mesmo de agora
+// (ex.: ninguém mais quitou essa conta por outro caminho, tipo Mercado Pago,
+// enquanto a academia estava offline). Se o status tiver mudado nesse meio
+// tempo, a pendência fica esperando o admin decidir no painel ("Pendências de
+// sincronização") — nunca aplica um pagamento em cima de uma conta que já
+// mudou de estado sem confirmar antes.
 router.post('/cobrancas/:id/pagamentos', autenticar, async (req, res, next) => {
   try {
-    const cobranca = await buscarCobranca(req.params.id);
+    const cobranca = await dbResiliente.comFallback(
+      'buscarCobrancaParaPagamento',
+      () => buscarCobranca(req.params.id),
+      async () => {
+        const result = await dbOffline.execute({ sql: 'SELECT * FROM cobrancas WHERE id = ?', args: [req.params.id] });
+        return result.rows[0] || null;
+      },
+    );
     if (!cobranca) return res.status(404).json({ erro: 'Conta não encontrada.' });
     // Conta já quitada não aceita novo pagamento — evita lançar em dobro por
     // engano. Se for realmente necessário corrigir, primeiro remove a
@@ -288,14 +308,41 @@ router.post('/cobrancas/:id/pagamentos', autenticar, async (req, res, next) => {
     const dados = schema.parse(req.body);
     const id = uuid();
 
-    await db.execute({
-      sql: `INSERT INTO pagamentos_cobranca (id, cobranca_id, data, valor_centavos, tipo, conta_corrente)
-            VALUES (?, ?, ?, ?, ?, ?)`,
-      args: [id, req.params.id, dados.data, dados.valor_centavos, dados.tipo || null, dados.conta_corrente || null],
-    });
+    async function aplicarOnline() {
+      await db.execute({
+        sql: `INSERT INTO pagamentos_cobranca (id, cobranca_id, data, valor_centavos, tipo, conta_corrente)
+              VALUES (?, ?, ?, ?, ?, ?)`,
+        args: [id, req.params.id, dados.data, dados.valor_centavos, dados.tipo || null, dados.conta_corrente || null],
+      });
+      return recalcularStatusCobranca(req.params.id);
+    }
 
-    const cobrancaAtualizada = await recalcularStatusCobranca(req.params.id);
-    res.status(201).json({ id, cobranca: cobrancaAtualizada });
+    if (!dbResiliente.MODO_TOTEM_OFFLINE) {
+      const cobrancaAtualizada = await aplicarOnline();
+      return res.status(201).json({ id, cobranca: cobrancaAtualizada });
+    }
+
+    try {
+      const cobrancaAtualizada = await dbResiliente.comTimeout(aplicarOnline(), dbResiliente.timeoutAtual());
+      dbResiliente.registrarRecuperacaoSeNecessario();
+      return res.status(201).json({ id, cobranca: cobrancaAtualizada });
+    } catch (err) {
+      dbResiliente.logAlertaOffline('registrar pagamento', err);
+      filaCadastroOffline.registrar({
+        tipo: 'pagamento',
+        registroId: req.params.id,
+        pagamentoId: id,
+        pagamento: dados,
+        statusConhecidoAntes: cobranca.status,
+        descricaoResumo: `Pagamento de R$ ${(dados.valor_centavos / 100).toFixed(2)} na conta ${req.params.id}`,
+        criadoPor: req.usuario?.email || null,
+      });
+      return res.status(202).json({
+        id,
+        enfileirado: true,
+        aviso: 'Sem conexão com o Turso agora — pagamento guardado e será sincronizado automaticamente quando a internet voltar.',
+      });
+    }
   } catch (err) {
     next(err);
   }
@@ -589,13 +636,16 @@ router.get('/inadimplentes', autenticar, async (req, res, next) => {
 });
 
 // ---------------- Geração manual de contas a receber (estilo Secullum) ----------------
-// O job automático (src/jobs/recorrencia.js) já roda sozinho a cada 24h, mas o
-// admin pode querer forçar agora (ex: acabou de corrigir uma matrícula, ou quer
-// conferir antes de fechar o caixa do dia) — mesma função "Gerar Contas a
-// Receber" que existia no sistema antigo.
+// 2026-07: deixou de rodar automaticamente (nem no boot, nem a cada 24h — ver
+// src/server.js) por decisão do dono do sistema: gerar contas a receber
+// "sozinho" é uma ação financeira, e ele prefere decidir NA HORA, escolhendo
+// o período (mês corrente ou meses futuros) em vez de deixar rodando sem
+// supervisão. Este é agora o ÚNICO jeito de gerar essas cobranças (fora rodar
+// `npm run gerar-cobrancas` manualmente no terminal, que chama a mesma
+// função).
 
-// GET /api/pagamentos/gerar-recorrentes/status — data/quantidade da última
-// geração (manual ou automática), pra mostrar ao lado do botão no painel.
+// GET /api/pagamentos/gerar-recorrentes/status — data/quantidade/período da
+// última geração, pra mostrar ao lado do botão no painel.
 router.get('/gerar-recorrentes/status', autenticar, async (req, res, next) => {
   try {
     const result = await db.execute({
@@ -609,12 +659,30 @@ router.get('/gerar-recorrentes/status', autenticar, async (req, res, next) => {
   }
 });
 
-// POST /api/pagamentos/gerar-recorrentes — dispara a rotina agora (só admin,
-// mesma restrição do resto de "Configurações" no Secullum).
+// POST /api/pagamentos/gerar-recorrentes { ano?, mes? } — dispara a rotina
+// agora (só admin), gerando as cobranças de todas as matrículas recorrentes
+// que faltarem até o FIM do período escolhido (inclusive). `ano`/`mes` são
+// opcionais — sem eles, gera até o fim do mês corrente (ex.: hoje é
+// 11/07/2026 sem informar período -> gera tudo que falta até 31/07/2026).
+// Pra "próximos meses", o painel manda o ano/mês-alvo (ex.: mes=10 gera tudo
+// que faltar, de cada matrícula, até outubro — sem duplicar o que já existe,
+// e respeitando o ciclo próprio de cada plano: um trimestral só ganha
+// cobrança nova no mês da sua própria renovação, não em todo mês do intervalo).
 router.post('/gerar-recorrentes', autenticar, apenasAdmin, async (req, res, next) => {
   try {
-    const geradas = await gerarCobrancasRecorrentes();
-    res.json({ geradas, executadoEm: new Date().toISOString() });
+    const schema = z.object({
+      ano: z.number().int().min(2020).max(2100).optional(),
+      mes: z.number().int().min(1).max(12).optional(),
+    });
+    const { ano, mes } = schema.parse(req.body || {});
+
+    const agora = new Date();
+    const anoAlvo = ano || agora.getFullYear();
+    const mesAlvo = mes || (agora.getMonth() + 1);
+    const ateData = ultimoDiaDoMes(`${anoAlvo}-${String(mesAlvo).padStart(2, '0')}`);
+
+    const geradas = await gerarCobrancasRecorrentes({ ateData });
+    res.json({ geradas, executadoEm: new Date().toISOString(), ateData });
   } catch (err) {
     next(err);
   }

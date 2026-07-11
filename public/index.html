@@ -106,7 +106,10 @@
         </form>
 
         <div style="margin-bottom:12px;display:flex;gap:16px;align-items:center;flex-wrap:wrap">
-          <input type="text" id="busca-aluno" placeholder="Buscar por nome ou ID..." style="max-width:340px;padding:9px 12px;border:1px solid #d0d5dd;border-radius:8px;font-size:14px" />
+          <span class="campo-busca-wrap">
+            <input type="text" id="busca-aluno" placeholder="Buscar por nome ou ID..." style="max-width:340px;padding:9px 12px;border:1px solid #d0d5dd;border-radius:8px;font-size:14px" />
+            <button type="button" class="btn-limpar-busca" data-alvo="busca-aluno" title="Limpar busca">&times;</button>
+          </span>
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#667085">
             <input type="checkbox" id="mostrar-inativos-alunos" style="width:auto" /> Mostrar inativos
           </label>
@@ -592,7 +595,10 @@
         <p style="margin:0 0 12px;color:#667085;font-size:13px">Digite o nome do aluno pra ver as contas em aberto dele e lançar o pagamento na hora, sem precisar abrir o cadastro completo.</p>
 
         <div style="position:relative;max-width:420px">
-          <input type="text" id="pr-busca-nome" placeholder="Digite o nome do aluno..." autocomplete="off" style="width:100%" />
+          <span class="campo-busca-wrap" style="display:block">
+            <input type="text" id="pr-busca-nome" placeholder="Digite o nome do aluno..." autocomplete="off" style="width:100%" />
+            <button type="button" class="btn-limpar-busca" data-alvo="pr-busca-nome" title="Limpar busca">&times;</button>
+          </span>
           <div id="pr-sugestoes" class="oculto" style="position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #e4e7ec;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.08);max-height:260px;overflow-y:auto;z-index:20"></div>
         </div>
 
@@ -618,7 +624,11 @@
             <button class="btn-secundario" id="btn-toggle-conta-manual">+ Incluir conta</button>
             <button class="btn-secundario" id="btn-nova-conta-parcelada">+ Incluir conta parcelada</button>
             <button class="btn-primario" id="btn-toggle-cobranca">+ Gerar cobrança (link)</button>
-            <button class="btn-secundario oculto" id="btn-gerar-recorrentes" title="Gera agora as próximas mensalidades de matrículas ativas (o mesmo processo já roda sozinho a cada 24h)">Gerar Contas a Receber</button>
+            <span class="oculto" id="grupo-gerar-recorrentes" style="display:flex;gap:8px;align-items:center">
+              <label for="gerar-recorrentes-periodo" style="margin:0;font-size:13px;color:#667085">Gerar até</label>
+              <input type="month" id="gerar-recorrentes-periodo" style="padding:6px 8px" title="Gera as mensalidades que faltarem, de cada matrícula ativa, até o fim deste mês (sem duplicar o que já existe)." />
+              <button class="btn-secundario" id="btn-gerar-recorrentes" title="Gera agora as mensalidades que faltarem até o mês escolhido acima — não roda mais sozinha, só quando você clicar.">Gerar Contas a Receber</button>
+            </span>
           </div>
         </div>
         <p class="oculto" id="txt-ultima-geracao-cobrancas" style="margin:-8px 0 12px;color:#667085;font-size:13px"></p>
@@ -641,7 +651,10 @@
           </div>
           <div style="flex:1;min-width:200px">
             <label>Buscar por nome</label>
-            <input type="text" id="busca-conta-nome" placeholder="Digite o nome do aluno..." />
+            <span class="campo-busca-wrap" style="display:block">
+              <input type="text" id="busca-conta-nome" placeholder="Digite o nome do aluno..." />
+              <button type="button" class="btn-limpar-busca" data-alvo="busca-conta-nome" title="Limpar busca">&times;</button>
+            </span>
           </div>
           <div style="flex:1;min-width:200px">
             <label>Aluno</label>
@@ -679,6 +692,7 @@
           </thead>
           <tbody id="lista-contas"></tbody>
         </table>
+        <p id="contas-total-resumo" style="font-size:13px;color:#667085;margin-top:8px"></p>
 
         <div class="secao-topo" style="margin-top:32px">
           <h2>Nova conta a receber (manual)</h2>
@@ -799,7 +813,10 @@
             <div><label>Data</label><input type="date" id="rel-diario-data" /></div>
             <div style="flex:1;min-width:180px">
               <label>Buscar por nome</label>
-              <input type="text" id="rel-diario-busca" placeholder="Nome do aluno..." />
+              <span class="campo-busca-wrap" style="display:block">
+                <input type="text" id="rel-diario-busca" placeholder="Nome do aluno..." />
+                <button type="button" class="btn-limpar-busca" data-alvo="rel-diario-busca" data-buscar="btn-rel-diario-buscar" title="Limpar busca">&times;</button>
+              </span>
             </div>
             <button type="button" class="btn-primario" id="btn-rel-diario-buscar">Filtrar</button>
           </div>
@@ -836,7 +853,10 @@
             <div><label>até</label><input type="date" id="rel-ultimo-ate" /></div>
             <div style="flex:1;min-width:180px">
               <label>Buscar por nome</label>
-              <input type="text" id="rel-ultimo-busca" placeholder="Nome do aluno..." />
+              <span class="campo-busca-wrap" style="display:block">
+                <input type="text" id="rel-ultimo-busca" placeholder="Nome do aluno..." />
+                <button type="button" class="btn-limpar-busca" data-alvo="rel-ultimo-busca" data-buscar="btn-rel-ultimo-buscar" title="Limpar busca">&times;</button>
+              </span>
             </div>
             <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#667085;padding-bottom:9px">
               <input type="checkbox" id="rel-ultimo-mostrar-inativos" style="width:auto" /> Mostrar inativos
@@ -953,6 +973,17 @@
           <div class="form-acoes">
             <button type="button" class="btn-primario" id="btn-baixar-backup">Baixar backup agora</button>
           </div>
+        </div>
+
+        <div class="form-painel oculto" id="painel-pendencias-sincronizacao">
+          <h3 style="margin-top:0">Pendências de sincronização (totem offline)</h3>
+          <p style="margin-top:0;color:#667085;font-size:13px">
+            Edições de cadastro e pagamentos feitos no PC do totem enquanto ele estava sem internet. O que não
+            teve conflito já foi sincronizado sozinho assim que a internet voltou — só aparece aqui o que
+            encontrou o cadastro/conta diferente do esperado e precisa da sua decisão: manter o que já está no
+            sistema, ou aplicar mesmo assim a alteração feita offline.
+          </p>
+          <div id="lista-pendencias-sincronizacao"></div>
         </div>
       </section>
 

@@ -1,11 +1,17 @@
 // Atualiza (de forma idempotente) o local.db de teste para o schema.sql mais
-// recente: adiciona as colunas de desconto que faltam em "planos" e cria as
-// tabelas do modulo de treino que faltam ("treinos", "treino_exercicios") -
-// alem de reconfirmar "pagamentos_totem". Necessario porque local.db foi
-// criado com uma versao mais antiga do schema.sql e "CREATE TABLE IF NOT
-// EXISTS" nunca mexe em tabela que ja existe (por isso "planos" ficou sem as
-// colunas novas), e porque a tabela "treinos" nunca chegou a ser criada
-// nesse banco.
+// recente: adiciona as colunas de desconto que faltam em "planos", a coluna
+// "treino_modo" que falta em "alunos", e cria as tabelas do modulo de treino
+// que faltam ("treinos", "treino_exercicios") - alem de reconfirmar
+// "pagamentos_totem". Necessario porque local.db foi criado com uma versao
+// mais antiga do schema.sql e "CREATE TABLE IF NOT EXISTS" nunca mexe em
+// tabela que ja existe (por isso "planos"/"alunos" ficaram sem as colunas
+// novas), e porque a tabela "treinos" nunca chegou a ser criada nesse banco.
+//
+// 2026-07: "alunos.treino_modo" foi adicionado aqui porque o job de
+// sincronizacao do modo totem (syncOfflineCache.js) copia essa coluna de
+// alunos do Turso pro local.db, e sem ela o INSERT falha com "table alunos
+// has no column named treino_modo" (erro visto num PC que nunca tinha rodado
+// este script depois que a coluna passou a ser usada).
 //
 // Contexto: rodando o servidor contra local.db (via rodar-local.ps1) a aba
 // Financeiro quebrava com "no such column: pl.desconto_tipo" e a aba Treino
@@ -34,6 +40,7 @@ const COLUNAS = [
   { tabela: 'planos', coluna: 'desconto_percentual', definicao: 'REAL' },
   { tabela: 'planos', coluna: 'desconto_valor_centavos', definicao: 'INTEGER' },
   { tabela: 'planos', coluna: 'desconto_forma_pagamento', definicao: 'TEXT' },
+  { tabela: 'alunos', coluna: 'treino_modo', definicao: "TEXT DEFAULT 'nativo'" },
 ];
 
 const TABELAS = [
@@ -89,7 +96,7 @@ async function tabelaExiste(tabela) {
 }
 
 async function main() {
-  console.log('=== Colunas de desconto em "planos" ===');
+  console.log('=== Colunas que faltam em "planos" / "alunos" ===');
   for (const { tabela, coluna, definicao } of COLUNAS) {
     const existe = await colunaExiste(tabela, coluna);
     if (existe) {

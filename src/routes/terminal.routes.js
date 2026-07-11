@@ -68,7 +68,7 @@ const limitadorContas = criarLimitador({
 terminal.post('/acesso/cpf', limitadorIdentificacao, autenticarTerminal, async (req, res, next) => {
   try {
     const { cpf } = z.object({ cpf: z.string().min(1) }).parse(req.body);
-    const aluno = await acessoTerminal.buscarAlunoPorCpf(cpf);
+    const aluno = await acessoTerminal.buscarAlunoPorCpfParaAcesso(cpf);
     if (!aluno) {
       await acessoTerminal.registrarAcesso({ alunoId: null, metodo: 'cpf', resultado: 'negado', mensagem: 'CPF não encontrado.' });
       return res.json({ autorizado: false, motivo: 'CPF não encontrado.' });
@@ -84,7 +84,7 @@ terminal.post('/acesso/cpf', limitadorIdentificacao, autenticarTerminal, async (
 terminal.post('/acesso/codigo', limitadorIdentificacao, autenticarTerminal, async (req, res, next) => {
   try {
     const { codigo_acesso } = z.object({ codigo_acesso: z.string().min(1) }).parse(req.body);
-    const aluno = await acessoTerminal.buscarAlunoPorCodigoAcesso(codigo_acesso);
+    const aluno = await acessoTerminal.buscarAlunoPorCodigoAcessoParaAcesso(codigo_acesso);
     if (!aluno) {
       await acessoTerminal.registrarAcesso({ alunoId: null, metodo: 'qrcode', resultado: 'negado', mensagem: 'Código de acesso inválido.' });
       return res.json({ autorizado: false, motivo: 'Código de acesso inválido.' });
@@ -100,7 +100,7 @@ terminal.post('/acesso/codigo', limitadorIdentificacao, autenticarTerminal, asyn
 terminal.post('/acesso/facial', limitadorIdentificacao, autenticarTerminal, async (req, res, next) => {
   try {
     const { descriptor } = z.object({ descriptor: z.array(z.number()).min(16) }).parse(req.body);
-    const match = await acessoTerminal.encontrarMelhorMatchFacial(descriptor);
+    const match = await acessoTerminal.encontrarMelhorMatchFacialParaAcesso(descriptor);
 
     if (!match.aluno) {
       await acessoTerminal.registrarAcesso({ alunoId: null, metodo: 'facial', resultado: 'negado', mensagem: 'Nenhum aluno com rosto cadastrado.' });
@@ -148,7 +148,12 @@ terminal.post('/validar-biometria-catraca', limitadorIdentificacao, autenticarTe
       resultado: autorizado ? 'liberado' : 'negado',
       mensagem: motivo,
     });
-    res.json({ autorizado, motivo, aluno_nome: aluno.nome });
+    // aviso_vencimento (2026-07): incluído aqui também pra ficar disponível
+    // pro agente local (ver agente-local/), caso algum dia ele passe a exibir
+    // isso em algum display próprio — hoje não tem nenhuma tela pra mostrar,
+    // mas não custa mandar o dado junto.
+    const avisoVencimento = await acessoTerminal.buscarAvisoVencimentoSeguro(aluno.id);
+    res.json({ autorizado, motivo, aluno_nome: aluno.nome, aviso_vencimento: avisoVencimento });
   } catch (err) {
     next(err);
   }

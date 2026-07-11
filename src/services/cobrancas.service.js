@@ -58,11 +58,38 @@ async function criarCobrancaDoCiclo({ matriculaId, alunoId, descricao, valorCent
   return id;
 }
 
-// Roda a rotina de renovação: para cada matrícula ativa com renovação automática
-// e plano recorrente, garante que exista uma cobrança pendente cobrindo o ciclo
-// atual. Chamada no início do servidor e periodicamente (ver src/jobs/recorrencia.js).
-async function gerarCobrancasRecorrentes() {
+// Último dia do mês (YYYY-MM-DD) de uma competência "YYYY-MM" — usado como
+// limite padrão de "gerar contas até o mês corrente" quando o painel não
+// informa um período específico.
+function ultimoDiaDoMes(anoMes) {
+  const [ano, mes] = anoMes.split('-').map(Number);
+  const ultimoDia = new Date(ano, mes, 0).getDate();
+  return `${anoMes}-${String(ultimoDia).padStart(2, '0')}`;
+}
+
+/**
+ * Roda a rotina de renovação: para cada matrícula ativa com renovação
+ * automática e plano recorrente, gera TODAS as cobranças pendentes que
+ * faltarem até `ateData` (inclusive) — não só a próxima. Chamada SÓ
+ * manualmente agora (botão "Gerar Contas a Receber" no painel — ver
+ * src/routes/pagamentos.routes.js), nunca mais automaticamente (decisão do
+ * dono do sistema, 2026-07: evitar qualquer geração "por conta própria" sem
+ * o admin decidir o período na hora).
+ *
+ * `ateData` (formato YYYY-MM-DD, padrão: hoje) é o limite do período pedido
+ * no painel — ex.: "mês corrente" manda o último dia do mês atual; "gerar
+ * até outubro" manda 2026-10-31. Cada matrícula avança seu PRÓPRIO ciclo (1,
+ * 3, 6 ou 12 meses conforme o tipo do plano) a partir da última cobrança já
+ * gerada, então um plano trimestral só gera uma cobrança nova quando o mês
+ * do seu próprio ciclo de renovação cai dentro do período pedido — pedir
+ * "gerar até setembro" não cria cobrança nova pra um plano trimestral cujo
+ * próximo vencimento é só em outubro. A checagem de duplicidade
+ * (`jaExiste`, por matrícula + vencimento exato) é feita a cada ciclo do
+ * loop, então não duplica cobrança já existente em nenhum mês do intervalo.
+ */
+async function gerarCobrancasRecorrentes({ ateData } = {}) {
   const hoje = new Date().toISOString().slice(0, 10);
+  const limite = ateData || hoje;
 
   const matriculas = await db.execute(`
     SELECT m.id, m.aluno_id, m.data_inicio, m.data_fim, m.renovacao_automatica,
@@ -77,6 +104,8 @@ async function gerarCobrancasRecorrentes() {
   for (const matricula of matriculas.rows) {
     if (!ehRecorrente(matricula.plano_tipo)) continue;
 
+    const diaAlvo = diaVencimentoPadrao(matricula.data_inicio);
+
     // Data do próximo vencimento: com base na última cobrança gerada para esta
     // matrícula, ou na data de início se ainda não existe nenhuma. Soma em
     // MESES (não em dias fixos) e alinha no dia-alvo (10 ou 20) da matrícula —
@@ -86,51 +115,59 @@ async function gerarCobrancasRecorrentes() {
       sql: `SELECT vencimento FROM cobrancas WHERE matricula_id = ? ORDER BY vencimento DESC LIMIT 1`,
       args: [matricula.id],
     });
-
-    const diaAlvo = diaVencimentoPadrao(matricula.data_inicio);
-    const proximoVencimento = ultimaCobranca.rows[0]
+    let proximoVencimento = ultimaCobranca.rows[0]
       ? somarMesesComDiaAlvo(ultimaCobranca.rows[0].vencimento, MESES_POR_TIPO[matricula.plano_tipo], diaAlvo)
       : matricula.data_inicio;
 
-    // Só gera quando o ciclo já venceu ou vence em até 3 dias (evita gerar
-    // cobranças muito antecipadas). Como a matrícula tem renovação automática,
-    // ela renova indefinidamente até ser cancelada/trancada — por isso não há
-    // limite de "data_fim" aqui; em vez disso, extendemos data_fim a cada ciclo
-    // para refletir até quando o aluno já tem cobrança gerada.
-    const antecedenciaOk = proximoVencimento <= somarDias(hoje, 3);
-    if (!antecedenciaOk) continue;
+    // Gera TODOS os ciclos que faltarem até `limite` (não só o próximo) — é
+    // isso que permite "gerar contas dos próximos meses de uma vez", em vez
+    // de precisar clicar o botão uma vez por mês. Cada volta do loop avança
+    // mais um ciclo (1/3/6/12 meses, conforme o plano) e só entra se esse
+    // vencimento já estiver dentro da janela pedida. Sem margem extra de dias
+    // aqui (diferente da rotina automática antiga): agora quem decide até
+    // onde gerar é o admin, escolhendo o período no painel — "mês corrente"
+    // deve gerar só o que vence dentro do mês corrente, não vazar pro mês
+    // seguinte.
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const antecedenciaOk = proximoVencimento <= limite;
+      if (!antecedenciaOk) break;
 
-    const jaExiste = await db.execute({
-      sql: `SELECT id FROM cobrancas WHERE matricula_id = ? AND vencimento = ?`,
-      args: [matricula.id, proximoVencimento],
-    });
-    if (jaExiste.rows[0]) continue;
+      const jaExiste = await db.execute({
+        sql: `SELECT id FROM cobrancas WHERE matricula_id = ? AND vencimento = ?`,
+        args: [matricula.id, proximoVencimento],
+      });
+      if (!jaExiste.rows[0]) {
+        await criarCobrancaDoCiclo({
+          matriculaId: matricula.id,
+          alunoId: matricula.aluno_id,
+          descricao: `Mensalidade - ${matricula.plano_nome}`,
+          valorCentavos: matricula.valor_centavos,
+          vencimento: proximoVencimento,
+        });
+        await db.execute({
+          sql: 'UPDATE matriculas SET data_fim = ? WHERE id = ?',
+          args: [proximoVencimento, matricula.id],
+        });
+        geradas += 1;
+      }
 
-    await criarCobrancaDoCiclo({
-      matriculaId: matricula.id,
-      alunoId: matricula.aluno_id,
-      descricao: `Mensalidade - ${matricula.plano_nome}`,
-      valorCentavos: matricula.valor_centavos,
-      vencimento: proximoVencimento,
-    });
-    await db.execute({
-      sql: 'UPDATE matriculas SET data_fim = ? WHERE id = ?',
-      args: [proximoVencimento, matricula.id],
-    });
-    geradas += 1;
+      // Avança pro próximo ciclo desta matrícula e repete a checagem — só
+      // sai do loop quando o próximo vencimento passar da janela pedida.
+      proximoVencimento = somarMesesComDiaAlvo(proximoVencimento, MESES_POR_TIPO[matricula.plano_tipo], diaAlvo);
+    }
   }
 
-  // Guarda quando/quantas cobranças a rotina gerou — usado pelo botão manual
-  // "Gerar Contas a Receber" no painel (mesmo campo "Data da última geração"
-  // que existia no Secullum), independente de ter rodado pelo cron, pelo
-  // intervalo de 24h do servidor ou clicado manualmente pelo admin.
+  // Guarda quando/quantas cobranças a rotina gerou, e até qual período foi
+  // pedido — usado pelo painel pra mostrar "Última geração de contas a
+  // receber" ao lado do botão "Gerar Contas a Receber".
   await db.execute({
     sql: `INSERT INTO configuracoes (chave, valor) VALUES ('ultima_geracao_cobrancas', ?)
           ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor`,
-    args: [JSON.stringify({ executadoEm: new Date().toISOString(), geradas })],
+    args: [JSON.stringify({ executadoEm: new Date().toISOString(), geradas, ateData: limite })],
   });
 
   return geradas;
 }
 
-module.exports = { ehRecorrente, criarCobrancaDoCiclo, gerarCobrancasRecorrentes };
+module.exports = { ehRecorrente, criarCobrancaDoCiclo, gerarCobrancasRecorrentes, ultimoDiaDoMes };

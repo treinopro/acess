@@ -46,9 +46,19 @@ const INTERVALO_ESCANEAMENTO_MS = 600;
 // navegador) e republica o vídeo sem senha e com cabeçalho CORS liberado.
 // Esse proxy precisa estar rodando pro totem funcionar.
 //
-// Pra voltar a usar a câmera embutida do tablet (getUserMedia), basta trocar
-// USAR_WEBCAM_USB para false — nada mais no código precisa mudar.
-const USAR_WEBCAM_USB = true;
+// REVERTIDO em 11/07/2026: depois de meses tentando webcam USB (primeiro via
+// app terceiro + proxy Termux, depois via app Android nativo com plugin UVC
+// direto), o Logcat do app nativo confirmou que o problema de fundo era
+// físico — a porta USB-OTG do tablet não sustenta a energia que a webcam
+// pede durante o streaming e cai sozinha a cada poucos segundos (visto como
+// "connected=false/no-power" no log do sistema Android). Sem hardware extra
+// (um hub USB alimentado) isso não tem solução só por software. Voltamos a
+// usar a câmera embutida do tablet (getUserMedia) — mais simples e sem esse
+// ponto de falha. Todo o trabalho da webcam USB (app nativo Capacitor,
+// plugin UVC, proxy Python/Termux) ficou arquivado em
+// totem-app-scaffold/totem-app/ (ver README.md lá) caso valha retomar no
+// futuro com um hub alimentado.
+const USAR_WEBCAM_USB = false;
 const USB_WEBCAM_URL = 'http://127.0.0.1:9000/video';
 
 // ---------------- Tela cheia (esconde a barra de endereço/UI do navegador) ----------------
@@ -123,6 +133,22 @@ async function iniciarCamera(videoEl) {
     // getImageData (usados pra ler QR code e rosto) travariam com erro de
     // segurança mesmo com a imagem aparecendo normal na tela.
     videoEl.crossOrigin = 'anonymous';
+
+    // App nativo Android (Capacitor + plugin "UsbWebcam" — ver pasta
+    // android-native-plugin/ no scaffold do totem-app): fala direto com a
+    // webcam USB via USB Host API do Android, sem precisar do app "USB
+    // Camera" de terceiros nem do proxy Python via Termux. Ver
+    // native-usb-webcam-bridge.js. Tem prioridade sobre o fluxo MJPEG abaixo
+    // quando disponível — o fallback MJPEG continua existindo de propósito,
+    // pra esta mesma página seguir funcionando num Chrome comum (sem o app
+    // nativo instalado) durante a transição.
+    if (window.NativeUsbWebcam && window.NativeUsbWebcam.disponivel()) {
+      await window.NativeUsbWebcam.iniciar((base64) => {
+        videoEl.src = `data:image/jpeg;base64,${base64}`;
+      });
+      return;
+    }
+
     await new Promise((resolve, reject) => {
       videoEl.onload = () => resolve();
       videoEl.onerror = () => reject(new Error(
@@ -155,6 +181,9 @@ function pararCamera() {
   if (elementoWebcamUsbAtual) {
     elementoWebcamUsbAtual.src = '';
     elementoWebcamUsbAtual = null;
+  }
+  if (window.NativeUsbWebcam && window.NativeUsbWebcam.disponivel()) {
+    window.NativeUsbWebcam.parar().catch(() => {});
   }
 }
 
@@ -234,11 +263,44 @@ async function carregarModelosFaciais() {
 // aparelhos sem aceleração por GPU disponível pro TensorFlow.js.
 const OPCOES_DETECTOR_FACIAL = new faceapi.TinyFaceDetectorOptions({ inputSize: 160 });
 
+// CAUSA do travamento do navegador durante o reconhecimento (2026-07,
+// confirmado pelo usuário: "quando não tem ninguém na frente da câmera volta
+// a ficar fluida"): a detecção "barata" (TinyFaceDetector sozinho, só achando
+// a CAIXA onde está um rosto) já é rápida mesmo sem GPU — por isso fica
+// fluido sem ninguém na frente (o pipeline nem passa dessa etapa). Quem trava
+// é a etapa SEGUINTE, que só roda quando uma caixa de rosto é encontrada:
+// calcular os 68 pontos de referência (landmarks) e depois o descritor de
+// 128 números usado pra reconhecer quem é a pessoa — as duas bem mais
+// pesadas. Enquanto a pessoa demora a ficar bem posicionada (ângulo ruim, se
+// mexendo, parcialmente fora do quadro), essa etapa pesada repetia a cada
+// tick (INTERVALO_ESCANEAMENTO_MS = 600ms) achando a caixa de novo e tentando
+// de novo — travando a página em sequência.
+//
+// Mantendo tudo que já ajudava antes (inputSize 160, resolução reduzida do
+// quadro — ver LARGURA_MAX_PROCESSAMENTO abaixo), este cooldown separa as
+// duas etapas: todo tick roda só a detecção barata; a etapa pesada
+// (landmarks + descritor) só roda de novo depois de passar esse tanto de
+// tempo desde a última tentativa, mesmo que uma caixa de rosto continue
+// aparecendo em todo tick. Não piora o reconhecimento de quem já está parado
+// corretamente (a 1ª tentativa já costuma funcionar e não passa pelo
+// cooldown de novo, porque processarResultadoInicio pausa o loop) — só evita
+// repetir a parte pesada em sequência enquanto a pessoa ainda está chegando.
+const INTERVALO_MINIMO_RECONHECIMENTO_PESADO_MS = 1200;
+let ultimaTentativaReconhecimentoPesadoEm = 0;
+
 async function detectarRosto(fonte) {
   return faceapi
     .detectSingleFace(fonte, OPCOES_DETECTOR_FACIAL)
     .withFaceLandmarks()
     .withFaceDescriptor();
+}
+
+// Só a etapa barata (acha a caixa do rosto, sem landmarks/descritor) — usada
+// pra decidir SE vale a pena pagar o custo da etapa pesada (ver cooldown
+// acima).
+async function temRostoNoQuadro(fonte) {
+  const caixa = await faceapi.detectSingleFace(fonte, OPCOES_DETECTOR_FACIAL);
+  return Boolean(caixa);
 }
 
 // ---------------- Limite de resolução de processamento ----------------
@@ -353,12 +415,28 @@ async function tickEscaneamento() {
     return;
   }
 
-  // 2) senão, tenta reconhecimento facial no mesmo quadro
+  // 2) senão, tenta reconhecimento facial no mesmo quadro — ver cooldown em
+  // INTERVALO_MINIMO_RECONHECIMENTO_PESADO_MS: só paga o custo pesado
+  // (landmarks + descritor) quando vale a pena, não em todo tick.
   let deteccao = null;
+  let rostoPresente = false;
   try {
-    deteccao = await detectarRosto(quadro);
+    rostoPresente = await temRostoNoQuadro(quadro);
   } catch {
-    // ignora erros pontuais de detecção (ex.: frame instável) e segue tentando
+    // ignora erro pontual da detecção barata (ex.: frame instável)
+  }
+
+  if (rostoPresente) {
+    const agora = Date.now();
+    if (agora - ultimaTentativaReconhecimentoPesadoEm >= INTERVALO_MINIMO_RECONHECIMENTO_PESADO_MS) {
+      ultimaTentativaReconhecimentoPesadoEm = agora;
+      try {
+        deteccao = await detectarRosto(quadro);
+      } catch {
+        // ignora erros pontuais da etapa pesada (frame mudou/instável nesse
+        // meio tempo) e segue tentando no próximo tick
+      }
+    }
   }
 
   if (!escaneamentoAtivo) return; // pode ter navegado durante o await
@@ -460,6 +538,7 @@ document.getElementById('btn-voltar-3').addEventListener('click', () => {
 async function processarResultado(chamada, { aoVoltar } = {}) {
   const overlay = document.getElementById('overlay-resultado');
   const btnPagarContas = document.getElementById('btn-overlay-pagar-contas');
+  const vencEl = document.getElementById('overlay-vencimento');
 
   overlay.classList.remove('liberado', 'negado');
   overlay.classList.add('visivel');
@@ -468,8 +547,12 @@ async function processarResultado(chamada, { aoVoltar } = {}) {
   document.getElementById('overlay-icone').textContent = '⏳';
   document.getElementById('overlay-titulo').textContent = 'Verificando...';
   document.getElementById('overlay-msg').textContent = '';
+  vencEl.classList.add('oculto');
+  vencEl.classList.remove('vencido');
+  vencEl.textContent = '';
 
   let cpfParaContas = null;
+  let labelBotaoContas = 'Pagar contas em atraso';
 
   try {
     const r = await chamada();
@@ -485,6 +568,21 @@ async function processarResultado(chamada, { aoVoltar } = {}) {
       document.getElementById('overlay-msg').textContent = r.motivo || 'Procure a recepção.';
       if (r.cpf && /atraso/i.test(r.motivo || '')) {
         cpfParaContas = r.cpf;
+      }
+    }
+
+    // Aviso de vencimento (2026-07): mostrado tanto liberado quanto negado —
+    // "faltam N dias" (âmbar, ainda no prazo) ou "vencido há N dias"
+    // (vermelho). Também oferece pagar na hora pelo totem mesmo quando o
+    // acesso já foi liberado normalmente (ex.: vence em 2 dias, ainda em dia
+    // hoje) — não só no caso já coberto acima de acesso negado por atraso.
+    if (r.aviso_vencimento) {
+      vencEl.textContent = r.aviso_vencimento.mensagem;
+      vencEl.classList.toggle('vencido', r.aviso_vencimento.vencido);
+      vencEl.classList.remove('oculto');
+      if (r.cpf && !cpfParaContas) {
+        cpfParaContas = r.cpf;
+        labelBotaoContas = r.aviso_vencimento.vencido ? 'Pagar contas em atraso' : 'Pagar agora';
       }
     }
   } catch (err) {
@@ -504,6 +602,7 @@ async function processarResultado(chamada, { aoVoltar } = {}) {
   if (cpfParaContas) {
     // Fica visível mais tempo (o triplo) já que agora tem uma ação disponível
     // — mas ainda fecha sozinho se ninguém interagir, pra não travar a fila.
+    btnPagarContas.textContent = labelBotaoContas;
     btnPagarContas.classList.remove('oculto');
     let fechamentoAutomatico;
     btnPagarContas.onclick = () => {
@@ -587,11 +686,28 @@ async function iniciarCadastroFacial({ video, statusEl, cpf, aoConcluir }) {
       return;
     }
     const quadro = desenharQuadroProcessamento(video);
+    // Mesmo cooldown do escaneamento contínuo (ver
+    // INTERVALO_MINIMO_RECONHECIMENTO_PESADO_MS): só roda a etapa pesada
+    // (landmarks + descritor) quando a barata já achou uma caixa de rosto, e
+    // no máximo uma vez a cada intervalo — evita travar enquanto a pessoa
+    // ainda está se posicionando pro cadastro.
     let deteccao = null;
+    let rostoPresente = false;
     try {
-      deteccao = await detectarRosto(quadro);
+      rostoPresente = await temRostoNoQuadro(quadro);
     } catch {
-      // ignora erro pontual e segue tentando
+      // ignora erro pontual da detecção barata
+    }
+    if (rostoPresente) {
+      const agora = Date.now();
+      if (agora - ultimaTentativaReconhecimentoPesadoEm >= INTERVALO_MINIMO_RECONHECIMENTO_PESADO_MS) {
+        ultimaTentativaReconhecimentoPesadoEm = agora;
+        try {
+          deteccao = await detectarRosto(quadro);
+        } catch {
+          // ignora erro pontual e segue tentando
+        }
+      }
     }
     if (deteccao) {
       pararCamera();

@@ -138,7 +138,23 @@ function resetHub() {
     .forEach((id) => document.getElementById(id).classList.add('oculto'));
 }
 
+// 2026-07: antes esse botão sempre resetava tudo e voltava pro início (digitar
+// CPF de novo), mesmo estando só um nível dentro (ex: na tela de Contas ou
+// Treino, depois de já ter aberto o menu). Agora ele volta um nível de cada
+// vez: se tiver algum painel de submenu aberto (contas/treino/plano/pix/
+// facial), fecha esse painel e volta pro menu principal (painel-hub-
+// dashboard); só faz o reset completo pro início quando já está no menu
+// principal (ou na tela de CPF).
 document.getElementById('btn-voltar-hub').addEventListener('click', () => {
+  const SUBPAINEIS_HUB = ['painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-facial'];
+  const painelAberto = SUBPAINEIS_HUB.find((id) => !document.getElementById(id).classList.contains('oculto'));
+  if (painelAberto) {
+    if (painelAberto === 'painel-hub-pix') pararPollPixHub();
+    if (painelAberto === 'painel-hub-facial') pararCamera();
+    ocultarPaineisHub();
+    document.getElementById('painel-hub-dashboard').classList.remove('oculto');
+    return;
+  }
   resetHub();
   mostrarPagina('pagina-inicio');
 });

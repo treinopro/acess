@@ -23,6 +23,41 @@ function formatarMoeda(centavos) {
   return (Number(centavos || 0) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
+// ---------------- Botão (x) de limpar dentro das caixas de pesquisa ----------------
+// Um único handler genérico cobre todas as caixas de busca do painel (Alunos,
+// Pagamento Rápido, Contas a Receber, Relatórios) — cada botão só precisa do
+// atributo data-alvo apontando pro id do <input> que ele limpa. O botão
+// aparece/some sozinho via CSS (:not(:placeholder-shown), ver style.css),
+// sem precisar de JS pra isso. Disparar um evento "input" de verdade (em vez
+// de só zerar o .value) garante que o listener de busca de cada campo (que já
+// existe e roda a cada digitação) reaja exatamente como se a pessoa tivesse
+// apagado o texto na mão. Alguns campos (Relatórios) só buscam ao clicar um
+// botão "Filtrar" em vez de reagir à digitação — pra esses, data-buscar
+// aponta pro id desse botão, que é clicado logo em seguida.
+document.querySelectorAll('.btn-limpar-busca').forEach((botao) => {
+  botao.addEventListener('click', () => {
+    const alvo = document.getElementById(botao.dataset.alvo);
+    if (!alvo) return;
+    alvo.value = '';
+    alvo.dispatchEvent(new Event('input', { bubbles: true }));
+    alvo.focus();
+    if (botao.dataset.buscar) document.getElementById(botao.dataset.buscar)?.click();
+  });
+});
+
+// Mostra o toast certo depois de uma gravação de cadastro/pagamento: se o
+// modo totem offline-resiliente guardou a alteração numa fila local (porque
+// o Turso não respondeu na hora — ver filaCadastroOffline.service.js), avisa
+// isso em vez de dizer que já foi salvo; senão, mostra a mensagem normal de
+// sucesso.
+function avisarSincronizacaoOuSucesso(resp, mensagemSucesso) {
+  if (resp && resp.enfileirado) {
+    mostrarToast(resp.aviso || 'Sem conexão com o Turso agora — alteração guardada e será sincronizada quando a internet voltar.');
+  } else {
+    mostrarToast(mensagemSucesso);
+  }
+}
+
 // O SQLite grava `datetime('now')` como "AAAA-MM-DD HH:MM:SS" em UTC, sem 'Z' nem
 // deslocamento — sem essa marcação, o navegador interpreta a string como se já
 // fosse horário local (em vez de UTC), deixando a hora exibida errada (deslocada
@@ -139,7 +174,7 @@ function mostrarApp() {
   document.getElementById('nav-config').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
   document.getElementById('nav-catraca').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
   document.getElementById('btn-acessos-recentes').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
-  document.getElementById('btn-gerar-recorrentes').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
+  document.getElementById('grupo-gerar-recorrentes').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
   carregarSecao('alunos');
 }
 
@@ -295,7 +330,7 @@ function carregarSecao(nome) {
   if (nome === 'pagamentos') carregarPagamentos();
   if (nome === 'pagamento-rapido') iniciarPagamentoRapido();
   if (nome === 'usuarios') carregarUsuarios();
-  if (nome === 'config') carregarConfiguracoesForm();
+  if (nome === 'config') { carregarConfiguracoesForm(); carregarPendenciasSincronizacao(); }
   if (nome === 'relatorios') carregarSecaoRelatorios();
 }
 
@@ -395,6 +430,105 @@ document.getElementById('btn-baixar-backup').addEventListener('click', async () 
     await baixarArquivoAutenticado('/api/config/backup', `backup-academia-${hojeLocalISO()}.json`);
     mostrarToast('Backup baixado.');
   } catch (err) { mostrarToast(err.message, true); }
+});
+
+// ---------------- Pendências de sincronização (modo totem offline-resiliente) ----------------
+// Só aparece algo aqui em academias usando o processo "academia-gestao-totem"
+// (ver ecosystem.config.js) — o painel normal na nuvem nunca gera pendência
+// nenhuma. O painel busca sempre (é barato, uma linha na tabela config se
+// não houver nada) e só mostra o bloco quando existe pelo menos uma pendência.
+
+function descreverCampoPendencia(item) {
+  if (item.tipo === 'pagamento') {
+    return `Pagamento de ${formatarMoeda(item.pagamento?.valor_centavos)} (conta ${item.registroId})`;
+  }
+  return item.descricaoResumo || `Alteração em ${item.tabela} (${item.registroId})`;
+}
+
+function renderizarValorPendencia(valor) {
+  if (valor === null || valor === undefined || valor === '') return '<em>vazio</em>';
+  return String(valor);
+}
+
+async function carregarPendenciasSincronizacao() {
+  const painel = document.getElementById('painel-pendencias-sincronizacao');
+  const lista = document.getElementById('lista-pendencias-sincronizacao');
+  try {
+    const pendencias = await api('/api/alunos/pendencias-sincronizacao');
+    if (!pendencias.length) {
+      painel.classList.add('oculto');
+      lista.innerHTML = '';
+      return;
+    }
+    painel.classList.remove('oculto');
+    lista.innerHTML = pendencias.map((item) => {
+      const dataFormatada = parseDataHoraServidor(item.criadoEm).toLocaleString('pt-BR');
+      if (!item.conflito) {
+        return `
+          <div class="form-painel" style="margin-bottom:8px;background:#f9fafb">
+            <strong>${descreverCampoPendencia(item)}</strong>
+            <p style="margin:4px 0 0;color:#667085;font-size:13px">
+              Feito offline em ${dataFormatada} — ainda aguardando a próxima sincronização (nenhum conflito detectado até agora).
+            </p>
+          </div>`;
+      }
+
+      // Pra pagamento, o "editado offline" não é um valor de campo (é uma
+      // conta nova sendo inserida) — o que importa comparar é só o status da
+      // conta antes/agora. Pra edição de cadastro, mostra campo a campo.
+      const camposConflito = item.tipo === 'pagamento'
+        ? [{ nome: 'status da conta', atual: item.valoresAtuaisNoConflito?.status, editadoOffline: `(pagamento de ${formatarMoeda(item.pagamento?.valor_centavos)} pendente de aplicar)` }]
+        : Object.keys(item.campos || {}).map((campo) => ({
+          nome: campo,
+          atual: (item.valoresAtuaisNoConflito || {})[campo],
+          editadoOffline: item.campos[campo],
+        }));
+
+      const linhasConflito = camposConflito.map((c) => `
+        <tr>
+          <td>${c.nome}</td>
+          <td>${renderizarValorPendencia(c.atual)}</td>
+          <td>${renderizarValorPendencia(c.editadoOffline)}</td>
+        </tr>`).join('');
+
+      return `
+        <div class="form-painel" style="margin-bottom:8px;border:1px solid #f59e0b;background:#fffbeb">
+          <strong>⚠️ Conflito — ${descreverCampoPendencia(item)}</strong>
+          <p style="margin:4px 0 8px;color:#667085;font-size:13px">
+            Editado offline em ${dataFormatada}, mas o valor no sistema mudou por outro caminho enquanto a
+            academia estava sem internet. Confira abaixo e decida o que manter.
+          </p>
+          <table class="tabela" style="margin-bottom:8px">
+            <thead><tr><th>Campo</th><th>Valor atual no sistema</th><th>Valor editado offline</th></tr></thead>
+            <tbody>${linhasConflito}</tbody>
+          </table>
+          <div class="form-acoes">
+            <button type="button" class="btn-secundario" data-pendencia-descartar="${item.id}">Manter valor atual do sistema</button>
+            <button type="button" class="btn-primario" data-pendencia-aplicar="${item.id}">Aplicar edição feita offline</button>
+          </div>
+        </div>`;
+    }).join('');
+  } catch (err) {
+    painel.classList.add('oculto');
+  }
+}
+
+document.getElementById('lista-pendencias-sincronizacao').addEventListener('click', async (ev) => {
+  const idAplicar = ev.target.dataset.pendenciaAplicar;
+  const idDescartar = ev.target.dataset.pendenciaDescartar;
+  const id = idAplicar || idDescartar;
+  if (!id) return;
+
+  const decisao = idAplicar ? 'aplicar' : 'descartar';
+  ev.target.disabled = true;
+  try {
+    await api(`/api/alunos/pendencias-sincronizacao/${id}/resolver`, { method: 'POST', body: JSON.stringify({ decisao }) });
+    mostrarToast(decisao === 'aplicar' ? 'Edição offline aplicada.' : 'Mantido o valor atual do sistema.');
+    await carregarPendenciasSincronizacao();
+  } catch (err) {
+    mostrarToast(err.message, true);
+    ev.target.disabled = false;
+  }
 });
 
 // Sai do perfil do aluno e volta para a listagem, reativando o item de navegação.
@@ -622,8 +756,8 @@ document.getElementById('form-aluno').addEventListener('submit', async (ev) => {
   try {
     let alunoId = id;
     if (id) {
-      await api(`/api/alunos/${id}`, { method: 'PUT', body: JSON.stringify(dados) });
-      mostrarToast('Aluno atualizado.');
+      const respPut = await api(`/api/alunos/${id}`, { method: 'PUT', body: JSON.stringify(dados) });
+      avisarSincronizacaoOuSucesso(respPut, 'Aluno atualizado.');
     } else {
       const criado = await api('/api/alunos', { method: 'POST', body: JSON.stringify(dados) });
       alunoId = criado.id;
@@ -778,12 +912,15 @@ async function carregarPerfilAluno() {
           <td>${m.data_inicio}</td>
           <td>${m.data_fim || '—'}</td>
           <td><span class="badge ${m.status}">${m.status}</span></td>
-          <td>${m.status === 'ativa' ? '<button class="btn-linha perigo" data-acao="cancelar-matricula">Cancelar</button>' : '—'}</td>
+          <td>${(m.status === 'ativa' || m.status === 'pendente') ? '<button class="btn-linha perigo" data-acao="cancelar-matricula">Cancelar</button>' : '—'}</td>
         </tr>`);
       const botaoCancelar = tr.querySelector('[data-acao="cancelar-matricula"]');
       if (botaoCancelar) {
         botaoCancelar.addEventListener('click', async () => {
-          if (!confirmar(`Cancelar a matrícula de "${aluno.nome}" no plano "${m.plano_nome}"? Isso interrompe a geração automática das próximas mensalidades.`)) return;
+          const msg = m.status === 'pendente'
+            ? `Cancelar a pré-matrícula pendente de "${aluno.nome}" no plano "${m.plano_nome}" (aguardando 1º pagamento no totem)?`
+            : `Cancelar a matrícula de "${aluno.nome}" no plano "${m.plano_nome}"? Isso interrompe a geração automática das próximas mensalidades.`;
+          if (!confirmar(msg)) return;
           try {
             await api(`/api/planos/matriculas/${m.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'cancelada' }) });
             mostrarToast('Matrícula cancelada.');
@@ -844,7 +981,8 @@ document.querySelectorAll('input[name="treino-modo"]').forEach((radio) => {
     const modo = ev.target.value;
     atualizarPainelModoTreino(modo);
     try {
-      await api(`/api/alunos/${perfilAtualId}`, { method: 'PUT', body: JSON.stringify({ treino_modo: modo }) });
+      const respModo = await api(`/api/alunos/${perfilAtualId}`, { method: 'PUT', body: JSON.stringify({ treino_modo: modo }) });
+      if (respModo && respModo.enfileirado) mostrarToast(respModo.aviso);
       if (modo === 'nativo') carregarTreinosPerfil(); else atualizarLinkTreinoExterno();
     } catch (err) { mostrarToast(err.message, true); }
   });
@@ -1109,9 +1247,9 @@ document.getElementById('form-perfil-dados').addEventListener('submit', async (e
     observacoes: document.getElementById('perfil-observacoes').value.trim() || null,
   };
   try {
-    await api(`/api/alunos/${perfilAtualId}`, { method: 'PUT', body: JSON.stringify(dados) });
+    const respDados = await api(`/api/alunos/${perfilAtualId}`, { method: 'PUT', body: JSON.stringify(dados) });
     if (rascunhoNovoAlunoId === perfilAtualId) rascunhoNovoAlunoId = null; // confirmado: não é mais rascunho
-    mostrarToast('Dados do aluno atualizados.');
+    avisarSincronizacaoOuSucesso(respDados, 'Dados do aluno atualizados.');
     document.getElementById('perfil-nome-aluno').textContent = `Perfil de ${dados.nome}`;
   } catch (err) { mostrarToast(err.message, true); }
 });
@@ -1507,14 +1645,17 @@ async function carregarMatriculas() {
           <td>${m.data_inicio}</td>
           <td>${m.data_fim || '—'}</td>
           <td><span class="badge ${m.status}">${m.status}</span></td>
-          <td>${m.status === 'ativa' ? '<button class="btn-linha perigo" data-acao="cancelar">Cancelar</button>' : '—'}</td>
+          <td>${(m.status === 'ativa' || m.status === 'pendente') ? '<button class="btn-linha perigo" data-acao="cancelar">Cancelar</button>' : '—'}</td>
         </tr>
       `);
       tr.querySelector('.nome-clicavel').addEventListener('click', () => abrirPerfilAluno(m.aluno_id));
       const botaoCancelar = tr.querySelector('[data-acao="cancelar"]');
       if (botaoCancelar) {
         botaoCancelar.addEventListener('click', async () => {
-          if (!confirmar(`Cancelar a matrícula de "${m.aluno_nome}" no plano "${m.plano_nome}"? Isso interrompe a geração automática das próximas mensalidades.`)) return;
+          const msg = m.status === 'pendente'
+            ? `Cancelar a pré-matrícula pendente de "${m.aluno_nome}" no plano "${m.plano_nome}" (aguardando 1º pagamento no totem)?`
+            : `Cancelar a matrícula de "${m.aluno_nome}" no plano "${m.plano_nome}"? Isso interrompe a geração automática das próximas mensalidades.`;
+          if (!confirmar(msg)) return;
           try {
             await api(`/api/planos/matriculas/${m.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'cancelada' }) });
             mostrarToast('Matrícula cancelada.');
@@ -1735,17 +1876,33 @@ async function carregarPagamentos() {
   if (estado.usuario?.papel === 'admin') carregarStatusGeracaoCobrancas();
 }
 
-// ---------------- Gerar Contas a Receber (manual, estilo Secullum) ----------------
+// ---------------- Gerar Contas a Receber (manual, com escolha de período) ----------------
+// 2026-07: deixou de rodar sozinha (nem no boot, nem a cada 24h) — agora só
+// gera quando o admin clica o botão, escolhendo até qual mês gerar (mês
+// corrente ou um mês futuro, pra adiantar vários meses de uma vez).
+
+function mesAtualISO() {
+  const agora = new Date();
+  return `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}`;
+}
+
+// Preenche o seletor de mês com o mês corrente por padrão, na primeira vez
+// que a tela de Contas a Receber é aberta.
+(function inicializarSeletorPeriodoRecorrentes() {
+  const campoPeriodo = document.getElementById('gerar-recorrentes-periodo');
+  if (campoPeriodo && !campoPeriodo.value) campoPeriodo.value = mesAtualISO();
+})();
 
 async function carregarStatusGeracaoCobrancas() {
   const texto = document.getElementById('txt-ultima-geracao-cobrancas');
   try {
     const status = await api('/api/pagamentos/gerar-recorrentes/status');
     if (!status.executadoEm) {
-      texto.textContent = 'Ainda não rodou nenhuma geração de contas a receber neste sistema.';
+      texto.textContent = 'Ainda não foi feita nenhuma geração de contas a receber neste sistema.';
     } else {
       const data = parseDataHoraServidor(status.executadoEm).toLocaleString('pt-BR');
-      texto.textContent = `Última geração de contas a receber: ${data} (${status.geradas} cobrança(s) gerada(s) nessa execução). Roda sozinho a cada 24h; o botão só força rodar agora.`;
+      const periodo = status.ateData ? ` (até ${new Date(`${status.ateData}T00:00:00`).toLocaleDateString('pt-BR')})` : '';
+      texto.textContent = `Última geração de contas a receber: ${data}${periodo} — ${status.geradas} cobrança(s) gerada(s) nessa execução. Só roda quando você clicar no botão.`;
     }
     texto.classList.remove('oculto');
   } catch (err) {
@@ -1755,14 +1912,18 @@ async function carregarStatusGeracaoCobrancas() {
 
 document.getElementById('btn-gerar-recorrentes').addEventListener('click', async () => {
   const btn = document.getElementById('btn-gerar-recorrentes');
+  const campoPeriodo = document.getElementById('gerar-recorrentes-periodo');
+  const periodo = campoPeriodo.value || mesAtualISO(); // "YYYY-MM"
+  const [ano, mes] = periodo.split('-').map(Number);
+
   btn.disabled = true;
   const textoOriginal = btn.textContent;
   btn.textContent = 'Gerando...';
   try {
-    const resp = await api('/api/pagamentos/gerar-recorrentes', { method: 'POST' });
+    const resp = await api('/api/pagamentos/gerar-recorrentes', { method: 'POST', body: JSON.stringify({ ano, mes }) });
     mostrarToast(resp.geradas > 0
-      ? `${resp.geradas} conta(s) a receber gerada(s).`
-      : 'Nenhuma conta nova pra gerar agora — tudo em dia.');
+      ? `${resp.geradas} conta(s) a receber gerada(s) até ${new Date(`${resp.ateData}T00:00:00`).toLocaleDateString('pt-BR')}.`
+      : 'Nenhuma conta nova pra gerar nesse período — tudo em dia.');
     await carregarContas();
     carregarFinanceiroPerfil();
     await carregarStatusGeracaoCobrancas();
@@ -1976,12 +2137,20 @@ async function carregarContas() {
     const contas = ordenarContas(contasBrutas);
     atualizarSetasOrdenacaoContas();
     const tbody = document.getElementById('lista-contas');
+    const resumoEl = document.getElementById('contas-total-resumo');
     tbody.innerHTML = '';
 
     if (!contas.length) {
       tbody.innerHTML = '<tr><td colspan="8">Nenhuma conta encontrada.</td></tr>';
+      resumoEl.textContent = '';
       return;
     }
+
+    // Totais do período/filtro atual (mesmo formato já usado em Relatórios >
+    // Financeiro) — soma sempre o que está sendo mostrado na tabela, então
+    // acompanha qualquer combinação de filtros (data, status, aluno, busca).
+    let totalValor = 0;
+    let totalPago = 0;
 
     contas.forEach((c) => {
       // Fallback pra contas quitadas via webhook do gateway (Mercado Pago/InfinitePay) ou
@@ -1989,6 +2158,8 @@ async function carregarContas() {
       // pagamentos_cobranca — nesses casos usa o valor/data cheios da própria conta.
       const valorPago = Number(c.valor_pago_centavos || 0) || (c.status === 'pago' ? c.valor_centavos : 0);
       const dataPago = c.data_pago_calc || (c.status === 'pago' ? c.pago_em : null);
+      totalValor += c.valor_centavos;
+      totalPago += valorPago;
       const tr = el(`
         <tr>
           <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${c.aluno_nome}</span></td>
@@ -2019,6 +2190,8 @@ async function carregarContas() {
       });
       tbody.appendChild(tr);
     });
+
+    resumoEl.textContent = `${contas.length} conta(s) — total ${formatarMoeda(totalValor)}, pago ${formatarMoeda(totalPago)}`;
   } catch (err) { mostrarToast(err.message, true); }
 }
 
@@ -2362,7 +2535,11 @@ document.getElementById('form-modal-pagamento').addEventListener('submit', async
     }
 
     const resp = await api(`/api/pagamentos/cobrancas/${modalContaAtual.id}/pagamentos`, { method: 'POST', body: JSON.stringify(dados) });
-    mostrarToast(resp.cobranca?.status === 'pago' ? 'Pagamento lançado — conta quitada!' : 'Pagamento lançado.');
+    if (resp.enfileirado) {
+      mostrarToast(resp.aviso);
+    } else {
+      mostrarToast(resp.cobranca?.status === 'pago' ? 'Pagamento lançado — conta quitada!' : 'Pagamento lançado.');
+    }
     if (resp.cobranca) atualizarBadgeStatusModal(resp.cobranca.status);
     fecharModalPagamento();
     await carregarPagamentosModal();

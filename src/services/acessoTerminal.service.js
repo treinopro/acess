@@ -8,8 +8,11 @@
 const crypto = require('crypto');
 const { v4: uuid } = require('uuid');
 const db = require('../db/client');
+const dbOffline = require('../db/clientOffline');
 const catracaGateway = require('./catracaGateway.service');
 const agenteGateway = require('./agenteGateway.service');
+const dbResiliente = require('./dbResiliente.service');
+const filaAcessosOffline = require('./filaAcessosOffline.service');
 
 const FACE_MATCH_THRESHOLD = Number(process.env.FACE_MATCH_THRESHOLD || 0.6);
 
@@ -29,19 +32,54 @@ async function garantirCodigoAcesso(alunoId) {
   return codigo;
 }
 
-async function buscarAlunoPorCpf(cpf) {
-  const result = await db.execute({ sql: 'SELECT * FROM alunos WHERE cpf = ?', args: [cpf] });
+async function buscarAlunoPorCpfEm(cliente, cpf) {
+  const result = await cliente.execute({ sql: 'SELECT * FROM alunos WHERE cpf = ?', args: [cpf] });
   return result.rows[0] || null;
 }
 
-async function buscarAlunoPorCodigoAcesso(codigo) {
-  const result = await db.execute({ sql: 'SELECT * FROM alunos WHERE codigo_acesso = ?', args: [codigo] });
+async function buscarAlunoPorCodigoAcessoEm(cliente, codigo) {
+  const result = await cliente.execute({ sql: 'SELECT * FROM alunos WHERE codigo_acesso = ?', args: [codigo] });
   return result.rows[0] || null;
 }
 
 async function buscarAlunoPorBiometriaId(biometriaId) {
   const result = await db.execute({ sql: 'SELECT * FROM alunos WHERE biometria_id = ?', args: [biometriaId] });
   return result.rows[0] || null;
+}
+
+/**
+ * Variantes usadas SÓ pelo fluxo de ACESSO do totem (/api/terminal/acesso/cpf
+ * e /acesso/codigo — ver terminal.routes.js), nunca por cadastro/vinculação:
+ * tentam o Turso e caem pro local.db (modo totem offline-resiliente, ver
+ * dbResiliente.service.js) só quando MODO_TOTEM_OFFLINE=true e o Turso não
+ * responder. As versões acima (buscarAlunoPorCpf/buscarAlunoPorCodigoAcesso)
+ * continuam SEM fallback de propósito — cadastro/vinculação (rosto, código
+ * de acesso) sempre exige o Turso disponível, decisão confirmada com o dono
+ * do sistema (2026-07): não faz sentido cadastrar contra um cache
+ * desatualizado.
+ */
+async function buscarAlunoPorCpfParaAcesso(cpf) {
+  return dbResiliente.comFallback(
+    'buscarAlunoPorCpf',
+    () => buscarAlunoPorCpfEm(db, cpf),
+    () => buscarAlunoPorCpfEm(dbOffline, cpf),
+  );
+}
+
+async function buscarAlunoPorCodigoAcessoParaAcesso(codigo) {
+  return dbResiliente.comFallback(
+    'buscarAlunoPorCodigoAcesso',
+    () => buscarAlunoPorCodigoAcessoEm(db, codigo),
+    () => buscarAlunoPorCodigoAcessoEm(dbOffline, codigo),
+  );
+}
+
+async function buscarAlunoPorCpf(cpf) {
+  return buscarAlunoPorCpfEm(db, cpf);
+}
+
+async function buscarAlunoPorCodigoAcesso(codigo) {
+  return buscarAlunoPorCodigoAcessoEm(db, codigo);
 }
 
 function distanciaEuclidiana(a, b) {
@@ -55,8 +93,8 @@ function distanciaEuclidiana(a, b) {
  * têm face_descriptor cadastrado, e retorna o de menor distância dentro do
  * limiar aceito (ou null se ninguém bateu).
  */
-async function encontrarMelhorMatchFacial(descriptorRecebido) {
-  const result = await db.execute("SELECT * FROM alunos WHERE face_descriptor IS NOT NULL");
+async function encontrarMelhorMatchFacialEm(cliente, descriptorRecebido) {
+  const result = await cliente.execute("SELECT * FROM alunos WHERE face_descriptor IS NOT NULL");
   let melhor = null;
   let menorDistancia = Infinity;
   let candidatosComparados = 0;
@@ -88,6 +126,25 @@ async function encontrarMelhorMatchFacial(descriptorRecebido) {
     candidatosComparados,
     limite: FACE_MATCH_THRESHOLD,
   };
+}
+
+async function encontrarMelhorMatchFacial(descriptorRecebido) {
+  return encontrarMelhorMatchFacialEm(db, descriptorRecebido);
+}
+
+/**
+ * Variante usada SÓ pelo fluxo de acesso (/api/terminal/acesso/facial) —
+ * tenta o Turso e cai pro local.db (modo totem offline-resiliente) só se
+ * MODO_TOTEM_OFFLINE=true e o Turso não responder. Ver comentário em
+ * buscarAlunoPorCpfParaAcesso acima — o cadastro/vínculo de rosto
+ * (/vincular/facial) NUNCA usa esta variante, sempre exige o Turso.
+ */
+async function encontrarMelhorMatchFacialParaAcesso(descriptorRecebido) {
+  return dbResiliente.comFallback(
+    'encontrarMelhorMatchFacial',
+    () => encontrarMelhorMatchFacialEm(db, descriptorRecebido),
+    () => encontrarMelhorMatchFacialEm(dbOffline, descriptorRecebido),
+  );
 }
 
 /** Salva/atualiza o descritor facial de um aluno (cadastro ou re-cadastro). */
@@ -123,8 +180,8 @@ async function temMatriculaAtiva(alunoId) {
  * passou (uma cobrança pendente com vencimento futuro ainda não está em
  * atraso).
  */
-async function possuiCobrancaEmAtraso(alunoId) {
-  const result = await db.execute({
+async function possuiCobrancaEmAtrasoEm(cliente, alunoId) {
+  const result = await cliente.execute({
     sql: `SELECT COUNT(*) as total FROM cobrancas
           WHERE aluno_id = ? AND matricula_id IS NOT NULL AND (
             status = 'atrasado'
@@ -133,6 +190,74 @@ async function possuiCobrancaEmAtraso(alunoId) {
     args: [alunoId],
   });
   return Number(result.rows[0].total) > 0;
+}
+
+async function possuiCobrancaEmAtraso(alunoId) {
+  return possuiCobrancaEmAtrasoEm(db, alunoId);
+}
+
+/**
+ * Aviso de vencimento mostrado no totem/catraca a cada check-in (2026-07):
+ * busca a mensalidade em aberto (pendente ou atrasada, vinculada a matrícula)
+ * com o vencimento mais próximo, e monta a mensagem "faltam N dias" (ainda no
+ * prazo) ou "vencido há N dias" (a partir do dia seguinte ao vencimento — o
+ * front pinta essa em vermelho). Puramente informativo: mesmo quando o acesso
+ * já foi liberado, o aluno pode estar a poucos dias do vencimento e a ideia é
+ * avisar com antecedência, não só bloquear depois que já venceu.
+ */
+async function buscarProximaMensalidadeEmAbertoEm(cliente, alunoId) {
+  const result = await cliente.execute({
+    sql: `SELECT vencimento FROM cobrancas
+          WHERE aluno_id = ? AND matricula_id IS NOT NULL AND status IN ('pendente', 'atrasado') AND vencimento IS NOT NULL
+          ORDER BY vencimento ASC LIMIT 1`,
+    args: [alunoId],
+  });
+  return result.rows[0] ? result.rows[0].vencimento : null;
+}
+
+function diasEntreDatas(dataInicioISO, dataFimISO) {
+  const a = new Date(`${dataInicioISO}T00:00:00Z`);
+  const b = new Date(`${dataFimISO}T00:00:00Z`);
+  return Math.round((b - a) / (24 * 60 * 60 * 1000));
+}
+
+function montarAvisoVencimento(vencimentoISO) {
+  if (!vencimentoISO) return null;
+  const hojeISO = new Date().toISOString().slice(0, 10);
+  const dias = diasEntreDatas(hojeISO, vencimentoISO);
+
+  if (dias > 0) {
+    return { vencimento: vencimentoISO, dias, vencido: false, mensagem: `Faltam ${dias} dia${dias === 1 ? '' : 's'} para o vencimento da mensalidade.` };
+  }
+  if (dias === 0) {
+    return { vencimento: vencimentoISO, dias: 0, vencido: false, mensagem: 'Sua mensalidade vence hoje.' };
+  }
+  const diasVencido = Math.abs(dias);
+  return { vencimento: vencimentoISO, dias, vencido: true, mensagem: `Mensalidade vencida há ${diasVencido} dia${diasVencido === 1 ? '' : 's'}.` };
+}
+
+// Mesmo padrão fallback-aware das outras checagens usadas no fluxo de acesso
+// (ver buscarAlunoPorCpfParaAcesso e verificarAutorizacaoAluno acima): tenta o
+// Turso e cai pro local.db só quando MODO_TOTEM_OFFLINE=true e o Turso não
+// responder. Nunca deve travar a liberação de acesso por causa de si mesma —
+// por isso quem chama (tentarLiberar) sempre envolve isto num best-effort.
+async function buscarAvisoVencimento(alunoId) {
+  const vencimento = await dbResiliente.comFallback(
+    'buscarProximaMensalidadeEmAberto',
+    () => buscarProximaMensalidadeEmAbertoEm(db, alunoId),
+    () => buscarProximaMensalidadeEmAbertoEm(dbOffline, alunoId),
+  );
+  return montarAvisoVencimento(vencimento);
+}
+
+async function buscarAvisoVencimentoSeguro(alunoId) {
+  try {
+    return await buscarAvisoVencimento(alunoId);
+  } catch {
+    // Best-effort de propósito (ver comentário acima) — nunca deve impedir a
+    // liberação/negação normal de acesso.
+    return null;
+  }
 }
 
 /**
@@ -161,11 +286,24 @@ function motivoBloqueioPorStatus(aluno) {
  * conta em aberto continua liberado; só cancelar/trancar o cadastro ou ter
  * mensalidade vencida é que bloqueia.
  */
+/**
+ * A checagem de cobrança em atraso é sempre feita com fallback pro local.db
+ * (modo totem offline-resiliente) quando MODO_TOTEM_OFFLINE=true e o Turso
+ * não responder — diferente das leituras de cadastro, esta é uma decisão de
+ * ACESSO (o aluno já foi identificado antes de chegar aqui), então cai no
+ * mesmo caso de "risco aceito" combinado com o dono do sistema. Fora do modo
+ * totem offline-resiliente, comFallback() chama o Turso direto, sem nenhuma
+ * mudança de comportamento.
+ */
 async function verificarAutorizacaoAluno(aluno) {
   const motivoStatus = motivoBloqueioPorStatus(aluno);
   if (motivoStatus) return { autorizado: false, motivo: motivoStatus };
 
-  const emAtraso = await possuiCobrancaEmAtraso(aluno.id);
+  const emAtraso = await dbResiliente.comFallback(
+    'possuiCobrancaEmAtraso',
+    () => possuiCobrancaEmAtrasoEm(db, aluno.id),
+    () => possuiCobrancaEmAtrasoEm(dbOffline, aluno.id),
+  );
   if (emAtraso) return { autorizado: false, motivo: 'Existem mensalidades em atraso.' };
 
   return { autorizado: true, motivo: null };
@@ -240,11 +378,45 @@ async function notificarAgenteAtualizacaoAluno(alunoId) {
   }
 }
 
+/**
+ * Registra um acesso (log de "Últimos acessos"). Fora do modo totem
+ * offline-resiliente (MODO_TOTEM_OFFLINE não definido — cobre a produção
+ * normal na nuvem hoje), o comportamento é EXATAMENTE o de antes desta
+ * mudança: grava direto, deixa erro propagar.
+ *
+ * Com MODO_TOTEM_OFFLINE=true, tenta gravar direto no Turso; se falhar
+ * (internet caiu), o evento entra na fila local (ver
+ * filaAcessosOffline.service.js) em vez de se perder, e é reenviado sozinho
+ * assim que o Turso voltar a responder. Por isso esta função NUNCA lança
+ * nesse modo — quem chama não precisa (nem deve) tratar erro daqui.
+ */
 async function registrarAcesso({ alunoId, metodo, resultado, mensagem }) {
-  await db.execute({
-    sql: 'INSERT INTO acessos_catraca (id, aluno_id, metodo, resultado, mensagem) VALUES (?, ?, ?, ?, ?)',
-    args: [uuid(), alunoId || null, metodo, resultado, mensagem || null],
-  });
+  if (!dbResiliente.MODO_TOTEM_OFFLINE) {
+    await db.execute({
+      sql: 'INSERT INTO acessos_catraca (id, aluno_id, metodo, resultado, mensagem) VALUES (?, ?, ?, ?, ?)',
+      args: [uuid(), alunoId || null, metodo, resultado, mensagem || null],
+    });
+    return;
+  }
+
+  const evento = {
+    id: uuid(),
+    alunoId: alunoId || null,
+    metodo,
+    resultado,
+    mensagem: mensagem || null,
+    criadoEm: new Date().toISOString(),
+  };
+  try {
+    await dbResiliente.comTimeout(
+      registrarAcessoIdempotenteEm(db, evento),
+      dbResiliente.timeoutAtual(),
+    );
+    dbResiliente.registrarRecuperacaoSeNecessario();
+  } catch (err) {
+    dbResiliente.logAlertaOffline('registrarAcesso', err);
+    filaAcessosOffline.registrar(evento);
+  }
 }
 
 /**
@@ -264,18 +436,22 @@ async function registrarAcesso({ alunoId, metodo, resultado, mensagem }) {
  *    acessos" deve mostrar quando o aluno passou, não quando a fila foi
  *    esvaziada.
  */
-async function registrarAcessoIdempotente({ id, alunoId, metodo, resultado, mensagem, criadoEm }) {
+async function registrarAcessoIdempotenteEm(cliente, { id, alunoId, metodo, resultado, mensagem, criadoEm }) {
   if (criadoEm) {
-    await db.execute({
+    await cliente.execute({
       sql: 'INSERT OR IGNORE INTO acessos_catraca (id, aluno_id, metodo, resultado, mensagem, criado_em) VALUES (?, ?, ?, ?, ?, ?)',
       args: [id, alunoId || null, metodo, resultado, mensagem || null, criadoEm],
     });
   } else {
-    await db.execute({
+    await cliente.execute({
       sql: 'INSERT OR IGNORE INTO acessos_catraca (id, aluno_id, metodo, resultado, mensagem) VALUES (?, ?, ?, ?, ?)',
       args: [id, alunoId || null, metodo, resultado, mensagem || null],
     });
   }
+}
+
+async function registrarAcessoIdempotente(dados) {
+  return registrarAcessoIdempotenteEm(db, dados);
 }
 
 /**
@@ -296,6 +472,10 @@ async function liberarNaCatraca(mensagem) {
  */
 async function tentarLiberar({ aluno, metodo }) {
   const { autorizado, motivo } = await verificarAutorizacaoAluno(aluno);
+  // Aviso de vencimento (2026-07): calculado sempre, liberado ou negado — ver
+  // buscarAvisoVencimentoSeguro acima. Nunca lança, então nunca atrasa/impede
+  // a decisão de acesso em si.
+  const avisoVencimento = aluno ? await buscarAvisoVencimentoSeguro(aluno.id) : null;
 
   if (!autorizado) {
     await registrarAcesso({ alunoId: aluno ? aluno.id : null, metodo, resultado: 'negado', mensagem: motivo });
@@ -303,7 +483,7 @@ async function tentarLiberar({ aluno, metodo }) {
     // oferecer "Pagar contas em atraso" já com o CPF preenchido, sem o aluno
     // precisar digitar de novo (só faz sentido quando o motivo é financeiro,
     // mas não custa nada mandar sempre; o front decide quando mostrar o botão).
-    return { autorizado: false, motivo, aluno_nome: aluno ? aluno.nome : null, aluno_id: aluno ? aluno.id : null, cpf: aluno ? aluno.cpf : null };
+    return { autorizado: false, motivo, aluno_nome: aluno ? aluno.nome : null, aluno_id: aluno ? aluno.id : null, cpf: aluno ? aluno.cpf : null, aviso_vencimento: avisoVencimento };
   }
 
   try {
@@ -311,11 +491,11 @@ async function tentarLiberar({ aluno, metodo }) {
   } catch (err) {
     const motivoFalha = `Falha ao comunicar com a catraca: ${err.message}`;
     await registrarAcesso({ alunoId: aluno.id, metodo, resultado: 'negado', mensagem: motivoFalha });
-    return { autorizado: false, motivo: motivoFalha, aluno_nome: aluno.nome, aluno_id: aluno.id, cpf: aluno.cpf };
+    return { autorizado: false, motivo: motivoFalha, aluno_nome: aluno.nome, aluno_id: aluno.id, cpf: aluno.cpf, aviso_vencimento: avisoVencimento };
   }
 
   await registrarAcesso({ alunoId: aluno.id, metodo, resultado: 'liberado', mensagem: null });
-  return { autorizado: true, motivo: null, aluno_nome: aluno.nome, aluno_id: aluno.id, cpf: aluno.cpf };
+  return { autorizado: true, motivo: null, aluno_nome: aluno.nome, aluno_id: aluno.id, cpf: aluno.cpf, aviso_vencimento: avisoVencimento };
 }
 
 module.exports = {
@@ -331,7 +511,15 @@ module.exports = {
   notificarAgenteAtualizacaoAluno,
   temMatriculaAtiva,
   possuiCobrancaEmAtraso,
+  buscarAvisoVencimento,
+  buscarAvisoVencimentoSeguro,
   registrarAcesso,
   registrarAcessoIdempotente,
   tentarLiberar,
+  // Variantes fallback-aware (modo totem offline-resiliente, 2026-07) —
+  // usadas SÓ pelas rotas de acesso (CPF/QR/facial), nunca por
+  // cadastro/vinculação. Ver comentários junto das definições acima.
+  buscarAlunoPorCpfParaAcesso,
+  buscarAlunoPorCodigoAcessoParaAcesso,
+  encontrarMelhorMatchFacialParaAcesso,
 };

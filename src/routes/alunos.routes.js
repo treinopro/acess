@@ -2,9 +2,12 @@ const express = require('express');
 const { v4: uuid } = require('uuid');
 const { z } = require('zod');
 const db = require('../db/client');
+const dbOffline = require('../db/clientOffline');
 const { autenticar } = require('../middleware/auth');
 const acessoTerminal = require('../services/acessoTerminal.service');
 const catracaGateway = require('../services/catracaGateway.service');
+const dbResiliente = require('../services/dbResiliente.service');
+const filaCadastroOffline = require('../services/filaCadastroOffline.service');
 
 const router = express.Router();
 router.use(autenticar);
@@ -198,6 +201,12 @@ router.post('/importar', async (req, res, next) => {
 // (parcial, case-insensitive). Por padrão só retorna alunos com status='ativo'; passe
 // incluir_inativos=true (checkbox "mostrar inativos" na tela) pra ver todos os status,
 // ou status=<algo> pra filtrar por um status específico (tem prioridade sobre o padrão).
+//
+// Modo totem offline-resiliente (MODO_TOTEM_OFFLINE=true): se o Turso não
+// responder, cai pro cache local (local.db, sincronizado a cada poucos
+// minutos — ver syncOfflineCache.js), pra a recepção continuar conseguindo
+// consultar cadastro mesmo sem internet. Fora desse modo, comportamento
+// idêntico ao de sempre (sempre Turso, sem fallback).
 router.get('/', async (req, res, next) => {
   try {
     const { status, busca, incluir_inativos: incluirInativos } = req.query;
@@ -215,20 +224,61 @@ router.get('/', async (req, res, next) => {
     }
 
     const where = condicoes.length ? `WHERE ${condicoes.join(' AND ')}` : '';
-    const result = await db.execute({ sql: `SELECT * FROM alunos ${where} ORDER BY nome`, args });
+    const sql = `SELECT * FROM alunos ${where} ORDER BY nome`;
+    const result = await dbResiliente.comFallback(
+      'buscarAlunos',
+      () => db.execute({ sql, args }),
+      () => dbOffline.execute({ sql, args }),
+    );
     res.json(result.rows);
   } catch (err) {
     next(err);
   }
 });
 
-// GET /api/alunos/:id
+// ---------------------------------------------------------------------------
+// Pendências de sincronização (modo totem offline-resiliente) — edições de
+// cadastro e pagamentos que foram feitos offline e, ao tentar sincronizar,
+// encontraram o registro diferente do que estava quando a edição foi feita
+// (ver filaCadastroOffline.service.js). Ficam aqui esperando o admin decidir
+// manualmente qual valor manter. Vem ANTES de "GET /:id" de propósito —
+// senão "/pendencias-sincronizacao" seria capturado por essa rota genérica
+// como se fosse um ID de aluno.
+// ---------------------------------------------------------------------------
+
+// GET /api/alunos/pendencias-sincronizacao — lista tudo que está na fila
+// local (tanto os já resolvidos automaticamente na próxima sincronização
+// quanto os que travaram em conflito, aguardando decisão manual).
+router.get('/pendencias-sincronizacao', async (req, res, next) => {
+  try {
+    res.json(filaCadastroOffline.listarPendentes());
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/alunos/pendencias-sincronizacao/:pendenciaId/resolver { decisao: 'aplicar' | 'descartar' }
+// 'aplicar' = usa o valor editado offline mesmo assim, sobrescrevendo o que
+// está no Turso agora. 'descartar' = mantém o que já está no Turso, joga fora
+// a edição/pagamento feito offline.
+router.post('/pendencias-sincronizacao/:pendenciaId/resolver', async (req, res, next) => {
+  try {
+    const { decisao } = z.object({ decisao: z.enum(['aplicar', 'descartar']) }).parse(req.body);
+    const resultado = await filaCadastroOffline.resolverPendencia(req.params.pendenciaId, decisao);
+    res.json(resultado);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/alunos/:id — mesmo fallback offline da busca acima.
 router.get('/:id', async (req, res, next) => {
   try {
-    const result = await db.execute({
-      sql: 'SELECT * FROM alunos WHERE id = ?',
-      args: [req.params.id],
-    });
+    const result = await dbResiliente.comFallback(
+      'buscarAlunoPorId',
+      () => db.execute({ sql: 'SELECT * FROM alunos WHERE id = ?', args: [req.params.id] }),
+      () => dbOffline.execute({ sql: 'SELECT * FROM alunos WHERE id = ?', args: [req.params.id] }),
+    );
     if (!result.rows[0]) return res.status(404).json({ erro: 'Aluno não encontrado.' });
     res.json(result.rows[0]);
   } catch (err) {
@@ -267,17 +317,69 @@ router.post('/', async (req, res, next) => {
   }
 });
 
+// Lê do local.db (cache — pode estar desatualizado, é só o que temos offline)
+// os valores ATUAIS de um conjunto de colunas de um registro, pra usar como
+// "valor anterior conhecido" numa pendência da fila de cadastro. Se a leitura
+// do cache falhar por qualquer motivo, devolve um objeto vazio — pior caso,
+// o flush() trata como "divergiu" e pede confirmação manual em vez de
+// aplicar sozinho, o que é o lado seguro de errar aqui.
+async function snapshotOffline(tabela, id, colunas) {
+  try {
+    const result = await dbOffline.execute({ sql: `SELECT ${colunas.join(', ')} FROM ${tabela} WHERE id = ?`, args: [id] });
+    return result.rows[0] || {};
+  } catch {
+    return {};
+  }
+}
+
 // PUT /api/alunos/:id
+//
+// Modo totem offline-resiliente: se o Turso não responder, a edição não é
+// perdida — entra na fila local (filaCadastroOffline.service.js) com um
+// "retrato" de como os campos editados estavam no cache local no momento da
+// tentativa. Quando a internet voltar, só aplica automaticamente se ninguém
+// tiver mexido nesses campos por outro caminho nesse meio tempo; senão, fica
+// esperando o admin decidir no painel ("Pendências de sincronização").
 router.put('/:id', async (req, res, next) => {
   try {
     const dados = alunoSchema.partial().parse(req.body);
     const campos = Object.keys(dados);
     if (campos.length === 0) return res.status(400).json({ erro: 'Nenhum campo informado.' });
 
-    const sets = campos.map((c) => `${c} = ?`).join(', ');
-    const args = [...campos.map((c) => dados[c]), req.params.id];
+    async function aplicarOnline() {
+      const sets = campos.map((c) => `${c} = ?`).join(', ');
+      const args = [...campos.map((c) => dados[c]), req.params.id];
+      await db.execute({ sql: `UPDATE alunos SET ${sets} WHERE id = ?`, args });
+    }
 
-    await db.execute({ sql: `UPDATE alunos SET ${sets} WHERE id = ?`, args });
+    if (!dbResiliente.MODO_TOTEM_OFFLINE) {
+      await aplicarOnline();
+    } else {
+      try {
+        await dbResiliente.comTimeout(aplicarOnline(), dbResiliente.timeoutAtual());
+        dbResiliente.registrarRecuperacaoSeNecessario();
+      } catch (err) {
+        dbResiliente.logAlertaOffline('editar aluno', err);
+        const valoresAnterioresConhecidos = await snapshotOffline('alunos', req.params.id, campos);
+        filaCadastroOffline.registrar({
+          tipo: 'update_campo',
+          tabela: 'alunos',
+          registroId: req.params.id,
+          campos: dados,
+          valoresAnterioresConhecidos,
+          descricaoResumo: `Editar dados do aluno ${req.params.id} (${campos.join(', ')})`,
+          criadoPor: req.usuario?.email || null,
+        });
+        // Este endpoint genérico pode alterar biometria_id junto com o
+        // resto — best-effort, não bloqueia a resposta.
+        if (campos.includes('biometria_id')) acessoTerminal.notificarAgenteAtualizacaoAluno(req.params.id);
+        return res.status(202).json({
+          ok: true, enfileirado: true,
+          aviso: 'Sem conexão com o Turso agora — alteração guardada e será sincronizada automaticamente quando a internet voltar.',
+        });
+      }
+    }
+
     // Este endpoint genérico pode alterar biometria_id junto com o resto —
     // best-effort, não bloqueia a resposta (ver notificarAgenteAtualizacaoAluno).
     if (campos.includes('biometria_id')) acessoTerminal.notificarAgenteAtualizacaoAluno(req.params.id);
@@ -288,13 +390,41 @@ router.put('/:id', async (req, res, next) => {
 });
 
 // PATCH /api/alunos/:id/status  { status: 'ativo' | 'inativo' | 'trancado' | 'inadimplente' }
+// Mesmo mecanismo de fila/conflito do PUT acima, aplicado só ao campo status.
 router.patch('/:id/status', async (req, res, next) => {
   try {
     const status = z.enum(['ativo', 'inativo', 'trancado', 'inadimplente']).parse(req.body.status);
-    await db.execute({
-      sql: 'UPDATE alunos SET status = ? WHERE id = ?',
-      args: [status, req.params.id],
-    });
+
+    async function aplicarOnline() {
+      await db.execute({ sql: 'UPDATE alunos SET status = ? WHERE id = ?', args: [status, req.params.id] });
+    }
+
+    if (!dbResiliente.MODO_TOTEM_OFFLINE) {
+      await aplicarOnline();
+    } else {
+      try {
+        await dbResiliente.comTimeout(aplicarOnline(), dbResiliente.timeoutAtual());
+        dbResiliente.registrarRecuperacaoSeNecessario();
+      } catch (err) {
+        dbResiliente.logAlertaOffline('alterar status do aluno', err);
+        const valoresAnterioresConhecidos = await snapshotOffline('alunos', req.params.id, ['status']);
+        filaCadastroOffline.registrar({
+          tipo: 'update_campo',
+          tabela: 'alunos',
+          registroId: req.params.id,
+          campos: { status },
+          valoresAnterioresConhecidos,
+          descricaoResumo: `Alterar status do aluno ${req.params.id} para "${status}"`,
+          criadoPor: req.usuario?.email || null,
+        });
+        acessoTerminal.notificarAgenteAtualizacaoAluno(req.params.id);
+        return res.status(202).json({
+          ok: true, enfileirado: true,
+          aviso: 'Sem conexão com o Turso agora — alteração guardada e será sincronizada automaticamente quando a internet voltar.',
+        });
+      }
+    }
+
     // Best-effort, não bloqueia a resposta — atualiza o cache local do
     // agente da catraca (Fase 1 do modo offline/resiliente) sem esperar o
     // próximo pull periódico dele.
@@ -416,37 +546,77 @@ router.delete('/:id', async (req, res, next) => {
 
 // ---------------- Perfil agregado ----------------
 
-// GET /api/alunos/:id/perfil — tudo que a tela de perfil do aluno precisa em uma chamada só
+// GET /api/alunos/:id/perfil — tudo que a tela de perfil do aluno precisa em uma chamada só.
+//
+// Modo totem offline-resiliente: se o Turso não responder, cai pro cache
+// local (local.db), mas só consegue mostrar aluno/matrículas/cobranças (as
+// tabelas espelhadas — ver syncOfflineCache.js). Anamnese, avaliações físicas
+// e agendamentos NÃO são espelhados (dados menos urgentes de consultar numa
+// emergência de falta de internet) — voltam vazios nesse modo, com
+// `modo_offline: true` na resposta pro painel avisar o admin que os dados
+// podem estar incompletos/desatualizados.
 router.get('/:id/perfil', async (req, res, next) => {
   try {
     const alunoId = req.params.id;
-    const aluno = await db.execute({ sql: 'SELECT * FROM alunos WHERE id = ?', args: [alunoId] });
-    if (!aluno.rows[0]) return res.status(404).json({ erro: 'Aluno não encontrado.' });
+    let modoOffline = false;
 
-    const [anamnese, avaliacoes, matriculas, agendamentos, cobrancas] = await Promise.all([
-      db.execute({ sql: 'SELECT * FROM anamneses WHERE aluno_id = ? ORDER BY criado_em DESC LIMIT 1', args: [alunoId] }),
-      db.execute({ sql: 'SELECT * FROM avaliacoes_fisicas WHERE aluno_id = ? ORDER BY data_avaliacao DESC', args: [alunoId] }),
-      db.execute({
-        sql: `SELECT m.*, p.nome as plano_nome FROM matriculas m JOIN planos p ON p.id = m.plano_id
-              WHERE m.aluno_id = ? ORDER BY m.data_inicio DESC`,
-        args: [alunoId],
-      }),
-      db.execute({
-        sql: `SELECT ag.*, t.nome as turma_nome FROM agendamentos ag JOIN turmas t ON t.id = ag.turma_id
-              WHERE ag.aluno_id = ? ORDER BY ag.data_aula DESC LIMIT 15`,
-        args: [alunoId],
-      }),
-      db.execute({ sql: 'SELECT * FROM cobrancas WHERE aluno_id = ? ORDER BY criado_em DESC', args: [alunoId] }),
-    ]);
+    async function buscarOnline() {
+      const aluno = await db.execute({ sql: 'SELECT * FROM alunos WHERE id = ?', args: [alunoId] });
+      if (!aluno.rows[0]) return null;
 
-    res.json({
-      aluno: aluno.rows[0],
-      anamnese: anamnese.rows[0] || null,
-      avaliacoes: avaliacoes.rows,
-      matriculas: matriculas.rows,
-      agendamentos: agendamentos.rows,
-      cobrancas: cobrancas.rows,
-    });
+      const [anamnese, avaliacoes, matriculas, agendamentos, cobrancas] = await Promise.all([
+        db.execute({ sql: 'SELECT * FROM anamneses WHERE aluno_id = ? ORDER BY criado_em DESC LIMIT 1', args: [alunoId] }),
+        db.execute({ sql: 'SELECT * FROM avaliacoes_fisicas WHERE aluno_id = ? ORDER BY data_avaliacao DESC', args: [alunoId] }),
+        db.execute({
+          sql: `SELECT m.*, p.nome as plano_nome FROM matriculas m JOIN planos p ON p.id = m.plano_id
+                WHERE m.aluno_id = ? ORDER BY m.data_inicio DESC`,
+          args: [alunoId],
+        }),
+        db.execute({
+          sql: `SELECT ag.*, t.nome as turma_nome FROM agendamentos ag JOIN turmas t ON t.id = ag.turma_id
+                WHERE ag.aluno_id = ? ORDER BY ag.data_aula DESC LIMIT 15`,
+          args: [alunoId],
+        }),
+        db.execute({ sql: 'SELECT * FROM cobrancas WHERE aluno_id = ? ORDER BY criado_em DESC', args: [alunoId] }),
+      ]);
+
+      return {
+        aluno: aluno.rows[0],
+        anamnese: anamnese.rows[0] || null,
+        avaliacoes: avaliacoes.rows,
+        matriculas: matriculas.rows,
+        agendamentos: agendamentos.rows,
+        cobrancas: cobrancas.rows,
+      };
+    }
+
+    async function buscarOffline() {
+      modoOffline = true;
+      const aluno = await dbOffline.execute({ sql: 'SELECT * FROM alunos WHERE id = ?', args: [alunoId] });
+      if (!aluno.rows[0]) return null;
+
+      const [matriculas, cobrancas] = await Promise.all([
+        dbOffline.execute({
+          sql: `SELECT m.*, p.nome as plano_nome FROM matriculas m JOIN planos p ON p.id = m.plano_id
+                WHERE m.aluno_id = ? ORDER BY m.data_inicio DESC`,
+          args: [alunoId],
+        }),
+        dbOffline.execute({ sql: 'SELECT * FROM cobrancas WHERE aluno_id = ? ORDER BY criado_em DESC', args: [alunoId] }),
+      ]);
+
+      return {
+        aluno: aluno.rows[0],
+        anamnese: null,
+        avaliacoes: [],
+        matriculas: matriculas.rows,
+        agendamentos: [],
+        cobrancas: cobrancas.rows,
+      };
+    }
+
+    const resultado = await dbResiliente.comFallback('buscarPerfilAluno', buscarOnline, buscarOffline);
+    if (!resultado) return res.status(404).json({ erro: 'Aluno não encontrado.' });
+    res.json({ ...resultado, modo_offline: modoOffline });
   } catch (err) {
     next(err);
   }

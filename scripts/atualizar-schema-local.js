@@ -41,6 +41,11 @@ const COLUNAS = [
   { tabela: 'planos', coluna: 'desconto_valor_centavos', definicao: 'INTEGER' },
   { tabela: 'planos', coluna: 'desconto_forma_pagamento', definicao: 'TEXT' },
   { tabela: 'alunos', coluna: 'treino_modo', definicao: "TEXT DEFAULT 'nativo'" },
+  // 2026-07: senha do portal remoto (ver schema.sql e portal.routes.js) —
+  // sem essa coluna, o job de sincronização offline (syncOfflineCache.js,
+  // que copia TODAS as colunas de alunos do Turso pro local.db) quebra do
+  // mesmo jeito que quebrou com "treino_modo" antes desta coluna existir aqui.
+  { tabela: 'alunos', coluna: 'portal_senha_revelada', definicao: 'INTEGER NOT NULL DEFAULT 0' },
 ];
 
 const TABELAS = [
@@ -80,6 +85,10 @@ const TABELAS = [
 const INDICES = [
   `CREATE INDEX IF NOT EXISTS idx_treinos_aluno ON treinos(aluno_id)`,
   `CREATE INDEX IF NOT EXISTS idx_treino_exercicios_treino ON treino_exercicios(treino_id)`,
+  // 2026-07: biometria_id agora também vira senha do portal — precisa ser
+  // único de verdade (parcial: só quando preenchido, já que a maioria dos
+  // alunos ainda não tem).
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_alunos_biometria_id ON alunos(biometria_id) WHERE biometria_id IS NOT NULL`,
 ];
 
 async function colunaExiste(tabela, coluna) {

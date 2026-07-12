@@ -84,8 +84,19 @@
     <div class="cartao" id="painel-hub-cpf">
       <h3>Digite seu CPF</h3>
       <input class="campo" id="input-cpf-hub" placeholder="Somente números" inputmode="numeric" maxlength="14" />
+      <input class="campo oculto" id="input-senha-hub" type="password" placeholder="Sua senha de acesso" inputmode="numeric" />
       <div class="erro-msg" id="hub-cpf-erro"></div>
       <button class="botao-grande primario" id="btn-buscar-hub" style="margin-bottom:0">Continuar</button>
+    </div>
+
+    <!-- Revelação da senha (só aparece no 1o acesso do aluno ao portal) -->
+    <div class="cartao oculto" id="painel-hub-primeiro-acesso">
+      <div class="resultado-icone" style="color:#10b981">🔑</div>
+      <h3>Guarde sua senha de acesso</h3>
+      <p>Da próxima vez que entrar no portal, você vai precisar do seu CPF <strong>e</strong> desta senha:</p>
+      <div class="aviso-caixa" id="primeiro-acesso-senha-valor" style="font-size:28px;font-weight:700;text-align:center;letter-spacing:3px"></div>
+      <p style="font-size:13px;color:#94a3b8">Anote em um lugar seguro — essa senha não vai ser mostrada de novo.</p>
+      <button class="botao-grande primario" id="btn-primeiro-acesso-continuar" style="margin-top:12px;margin-bottom:0">Já anotei, continuar</button>
     </div>
 
     <div id="painel-hub-dashboard" class="oculto" style="width:100%;max-width:440px">
@@ -194,6 +205,8 @@
     <div class="cartao oculto" id="painel-cadastro-portal-sucesso">
       <div class="resultado-icone" style="color:#10b981">✅</div>
       <div class="subtitulo" id="portal-cadastro-sucesso-msg" style="margin-bottom:8px"></div>
+      <p style="font-size:13px;color:#94a3b8;margin-bottom:4px">Sua senha de acesso ao portal (guarde bem — vai precisar dela com seu CPF nas próximas visitas):</p>
+      <div class="aviso-caixa" id="portal-cadastro-senha-caixa" style="font-size:26px;font-weight:700;text-align:center;letter-spacing:3px;margin-bottom:12px"></div>
       <p>Quer que a catraca já reconheça seu rosto na próxima visita?</p>
       <button class="botao-grande secundario" id="btn-portal-cadastro-facial" style="margin:0 0 8px">Cadastrar reconhecimento facial agora</button>
       <button class="botao-grande primario" id="btn-portal-cadastro-concluir" style="margin:0">Concluir</button>

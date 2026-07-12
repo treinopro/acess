@@ -32,6 +32,58 @@ async function garantirCodigoAcesso(alunoId) {
   return codigo;
 }
 
+// Maior código conhecido do "cartão" da catraca Henry em 2026-07 (ver
+// scripts/importar-biometria-catraca.js) — piso de segurança pra nunca gerar
+// um código sequencial menor que isso, mesmo que o banco ainda não tenha
+// nenhum biometria_id numérico salvo (ex.: banco de testes zerado).
+const MENOR_CODIGO_ALUNO_BASE = 1538;
+
+/**
+ * Calcula (sem reservar/salvar) o próximo código sequencial disponível, no
+ * mesmo padrão do "cartão" da catraca Henry — olha o maior biometria_id
+ * numérico já em uso e soma 1. Usado tanto pela senha do portal (ver
+ * atribuirCodigoAluno) quanto, futuramente, pelo cadastro automático de
+ * cartão na catraca (ver conversa 2026-07-12 — ainda não implementado).
+ */
+async function calcularProximoCodigoAluno() {
+  const result = await db.execute(
+    "SELECT biometria_id FROM alunos WHERE biometria_id IS NOT NULL AND biometria_id GLOB '[0-9]*'",
+  );
+  let maior = MENOR_CODIGO_ALUNO_BASE;
+  for (const row of result.rows) {
+    const n = Number(row.biometria_id);
+    if (Number.isFinite(n) && n > maior) maior = n;
+  }
+  return String(maior + 1);
+}
+
+/**
+ * Gera e salva um novo código sequencial pro aluno (ver
+ * calcularProximoCodigoAluno) — usado como senha do portal remoto (ver
+ * portal.routes.js). Nunca sobrescreve um biometria_id já existente (ex.:
+ * aluno que já tinha sido enrolado fisicamente na catraca antes desse
+ * recurso existir — nesse caso o código dele já é esse, só reaproveita).
+ * Tenta de novo (recalculando o próximo número) se colidir com outro
+ * cadastro simultâneo — biometria_id tem índice único parcial no schema.
+ */
+async function atribuirCodigoAluno(alunoId, tentativasRestantes = 5) {
+  const atual = await db.execute({ sql: 'SELECT biometria_id FROM alunos WHERE id = ?', args: [alunoId] });
+  if (!atual.rows[0]) throw Object.assign(new Error('Aluno não encontrado.'), { status: 404 });
+  if (atual.rows[0].biometria_id) return atual.rows[0].biometria_id;
+
+  const codigo = await calcularProximoCodigoAluno();
+  try {
+    await db.execute({
+      sql: 'UPDATE alunos SET biometria_id = ? WHERE id = ? AND biometria_id IS NULL',
+      args: [codigo, alunoId],
+    });
+    return codigo;
+  } catch (err) {
+    if (tentativasRestantes > 0) return atribuirCodigoAluno(alunoId, tentativasRestantes - 1);
+    throw err;
+  }
+}
+
 async function buscarAlunoPorCpfEm(cliente, cpf) {
   const result = await cliente.execute({ sql: 'SELECT * FROM alunos WHERE cpf = ?', args: [cpf] });
   return result.rows[0] || null;
@@ -547,6 +599,8 @@ async function tentarLiberar({ aluno, metodo }) {
 module.exports = {
   gerarCodigoAcesso,
   garantirCodigoAcesso,
+  calcularProximoCodigoAluno,
+  atribuirCodigoAluno,
   buscarAlunoPorCpf,
   buscarAlunoPorCodigoAcesso,
   buscarAlunoPorBiometriaId,

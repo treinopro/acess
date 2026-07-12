@@ -8,7 +8,11 @@ async function api(caminho, opcoes = {}) {
     headers: { 'Content-Type': 'application/json', ...(opcoes.headers || {}) },
   });
   const dados = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(dados.erro || dados.motivo || 'Erro na requisição.');
+  if (!resp.ok) {
+    const erro = new Error(dados.erro || dados.motivo || 'Erro na requisição.');
+    erro.dados = dados; // preserva campos extras (ex.: precisa_senha) pra quem chamou decidir o que fazer
+    throw erro;
+  }
   return dados;
 }
 
@@ -74,7 +78,7 @@ async function detectarRosto(video) {
 }
 
 // Cadastro facial genérico (usado tanto no hub quanto no fim do cadastro novo).
-async function iniciarCadastroFacial({ video, statusEl, cpf, aoConcluir }) {
+async function iniciarCadastroFacial({ video, statusEl, cpf, senha, aoConcluir }) {
   try {
     statusEl.textContent = 'Carregando...';
     await carregarModelosFaciais();
@@ -93,7 +97,7 @@ async function iniciarCadastroFacial({ video, statusEl, cpf, aoConcluir }) {
       try {
         await api('/api/portal/vincular/facial', {
           method: 'POST',
-          body: JSON.stringify({ cpf, descriptor: Array.from(deteccao.descriptor) }),
+          body: JSON.stringify({ cpf, senha, descriptor: Array.from(deteccao.descriptor) }),
         });
         statusEl.textContent = 'Rosto cadastrado com sucesso!';
         setTimeout(() => { if (aoConcluir) aoConcluir(); }, 2500);
@@ -122,19 +126,25 @@ document.getElementById('btn-ir-cadastro-portal').addEventListener('click', () =
 // ---------------- Hub do aluno ----------------
 
 let cpfHubAtual = null;
+let senhaHubAtual = null; // senha do portal (mesmo código do biometria_id) — ver análise de segurança 2026-07
 let alunoHubTreinoModo = 'nativo';
 let contasSelecionadasHub = {};
 let pixHubPollTimer = null;
+let infoHubPendentePrimeiroAcesso = null; // guarda os dados do dashboard enquanto a tela de "guarde sua senha" está aberta
 
 function resetHub() {
   pararPollPixHub();
   pararCamera();
   cpfHubAtual = null;
+  senhaHubAtual = null;
+  infoHubPendentePrimeiroAcesso = null;
   contasSelecionadasHub = {};
   document.getElementById('input-cpf-hub').value = '';
+  document.getElementById('input-senha-hub').value = '';
+  document.getElementById('input-senha-hub').classList.add('oculto');
   document.getElementById('hub-cpf-erro').textContent = '';
   document.getElementById('painel-hub-cpf').classList.remove('oculto');
-  ['painel-hub-dashboard', 'painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-comprovante', 'painel-hub-facial']
+  ['painel-hub-primeiro-acesso', 'painel-hub-dashboard', 'painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-comprovante', 'painel-hub-facial']
     .forEach((id) => document.getElementById(id).classList.add('oculto'));
 }
 
@@ -159,51 +169,84 @@ document.getElementById('btn-voltar-hub').addEventListener('click', () => {
   mostrarPagina('pagina-inicio');
 });
 
+function preencherDashboardHub(info) {
+  alunoHubTreinoModo = info.treino_modo || 'nativo';
+
+  document.getElementById('hub-saudacao').textContent = `Olá, ${info.aluno_nome}!`;
+  document.getElementById('painel-hub-cpf').classList.add('oculto');
+  document.getElementById('painel-hub-primeiro-acesso').classList.add('oculto');
+  document.getElementById('painel-hub-dashboard').classList.remove('oculto');
+
+  document.getElementById('card-plano-resumo').textContent = info.plano_atual
+    ? `${info.plano_atual.plano_nome} — ${formatarMoeda(info.plano_atual.valor_centavos)}/ciclo`
+    : 'Nenhum plano ativo no momento.';
+
+  document.getElementById('card-treino-resumo').textContent = alunoHubTreinoModo === 'app_externo'
+    ? 'Seu treino é acompanhado em outro aplicativo.'
+    : 'Toque para ver seus treinos cadastrados.';
+
+  const cardFacial = document.getElementById('card-facial');
+  if (info.tem_rosto_cadastrado) cardFacial.classList.add('oculto');
+  else cardFacial.classList.remove('oculto');
+
+  const cardAvaliacao = document.getElementById('card-avaliacao');
+  if (configApp.whatsapp_contato) {
+    cardAvaliacao.classList.remove('oculto');
+    const texto = encodeURIComponent(`Olá! Sou aluno(a) ${info.aluno_nome} e gostaria de agendar/renovar minha avaliação física.`);
+    document.getElementById('link-agendar-avaliacao').href = `https://wa.me/${configApp.whatsapp_contato}?text=${texto}`;
+  } else {
+    cardAvaliacao.classList.add('oculto');
+  }
+
+  carregarResumoContasHub();
+}
+
 document.getElementById('btn-buscar-hub').addEventListener('click', async () => {
   const cpf = document.getElementById('input-cpf-hub').value.trim();
+  const senhaDigitada = document.getElementById('input-senha-hub').value.trim();
   const erroEl = document.getElementById('hub-cpf-erro');
   erroEl.textContent = '';
   if (!cpf) return;
 
   try {
-    const info = await api(`/api/portal/aluno?cpf=${encodeURIComponent(cpf)}`);
+    const qs = new URLSearchParams({ cpf });
+    if (senhaDigitada) qs.set('senha', senhaDigitada);
+    const info = await api(`/api/portal/aluno?${qs.toString()}`);
     cpfHubAtual = cpf;
-    alunoHubTreinoModo = info.treino_modo || 'nativo';
 
-    document.getElementById('hub-saudacao').textContent = `Olá, ${info.aluno_nome}!`;
-    document.getElementById('painel-hub-cpf').classList.add('oculto');
-    document.getElementById('painel-hub-dashboard').classList.remove('oculto');
-
-    document.getElementById('card-plano-resumo').textContent = info.plano_atual
-      ? `${info.plano_atual.plano_nome} — ${formatarMoeda(info.plano_atual.valor_centavos)}/ciclo`
-      : 'Nenhum plano ativo no momento.';
-
-    document.getElementById('card-treino-resumo').textContent = alunoHubTreinoModo === 'app_externo'
-      ? 'Seu treino é acompanhado em outro aplicativo.'
-      : 'Toque para ver seus treinos cadastrados.';
-
-    const cardFacial = document.getElementById('card-facial');
-    if (info.tem_rosto_cadastrado) cardFacial.classList.add('oculto');
-    else cardFacial.classList.remove('oculto');
-
-    const cardAvaliacao = document.getElementById('card-avaliacao');
-    if (configApp.whatsapp_contato) {
-      cardAvaliacao.classList.remove('oculto');
-      const texto = encodeURIComponent(`Olá! Sou aluno(a) ${info.aluno_nome} e gostaria de agendar/renovar minha avaliação física.`);
-      document.getElementById('link-agendar-avaliacao').href = `https://wa.me/${configApp.whatsapp_contato}?text=${texto}`;
-    } else {
-      cardAvaliacao.classList.add('oculto');
+    if (info.primeiro_acesso) {
+      // 1o acesso deste aluno ao portal: mostra a senha gerada/recuperada
+      // antes de entrar no dashboard — só aparece esta vez.
+      senhaHubAtual = info.senha_gerada;
+      infoHubPendentePrimeiroAcesso = info;
+      document.getElementById('painel-hub-cpf').classList.add('oculto');
+      document.getElementById('primeiro-acesso-senha-valor').textContent = info.senha_gerada;
+      document.getElementById('painel-hub-primeiro-acesso').classList.remove('oculto');
+      return;
     }
 
-    carregarResumoContasHub();
+    senhaHubAtual = senhaDigitada;
+    preencherDashboardHub(info);
   } catch (err) {
-    erroEl.textContent = err.message;
+    if (err.dados && err.dados.precisa_senha) {
+      document.getElementById('input-senha-hub').classList.remove('oculto');
+      erroEl.textContent = 'Informe também sua senha de acesso.';
+    } else {
+      erroEl.textContent = err.message;
+    }
   }
+});
+
+document.getElementById('btn-primeiro-acesso-continuar').addEventListener('click', () => {
+  if (!infoHubPendentePrimeiroAcesso) return;
+  const info = infoHubPendentePrimeiroAcesso;
+  infoHubPendentePrimeiroAcesso = null;
+  preencherDashboardHub(info);
 });
 
 async function carregarResumoContasHub() {
   try {
-    const resp = await api('/api/portal/contas/consultar', { method: 'POST', body: JSON.stringify({ cpf: cpfHubAtual }) });
+    const resp = await api('/api/portal/contas/consultar', { method: 'POST', body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual }) });
     const resumoEl = document.getElementById('card-contas-resumo');
     if (!resp.contas.length) {
       resumoEl.textContent = 'Nenhuma conta em aberto. Tudo em dia!';
@@ -225,7 +268,7 @@ function ocultarPaineisHub() {
 
 document.getElementById('btn-abrir-contas').addEventListener('click', async () => {
   try {
-    const resp = await api('/api/portal/contas/consultar', { method: 'POST', body: JSON.stringify({ cpf: cpfHubAtual }) });
+    const resp = await api('/api/portal/contas/consultar', { method: 'POST', body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual }) });
     if (!resp.contas.length) return;
     ocultarPaineisHub();
     document.getElementById('painel-hub-contas').classList.remove('oculto');
@@ -272,7 +315,7 @@ document.getElementById('btn-pagar-contas-hub').addEventListener('click', async 
   try {
     const resp = await api('/api/portal/contas/pagar', {
       method: 'POST',
-      body: JSON.stringify({ cpf: cpfHubAtual, cobranca_ids: ids }),
+      body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, cobranca_ids: ids }),
     });
     abrirPagamentoPixHub({
       titulo: `Pagar ${formatarMoeda(resp.valor_centavos)}`,
@@ -302,7 +345,7 @@ document.getElementById('btn-abrir-treino').addEventListener('click', async () =
     return;
   }
   try {
-    const treinos = await api(`/api/portal/treino?cpf=${encodeURIComponent(cpfHubAtual)}`);
+    const treinos = await api(`/api/portal/treino?cpf=${encodeURIComponent(cpfHubAtual)}&senha=${encodeURIComponent(senhaHubAtual)}`);
     ocultarPaineisHub();
     document.getElementById('painel-hub-treino').classList.remove('oculto');
     const DIAS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
@@ -359,7 +402,7 @@ async function assinarPlanoHub(planoId) {
   try {
     const resp = await api('/api/portal/upgrade', {
       method: 'POST',
-      body: JSON.stringify({ cpf: cpfHubAtual, plano_id: planoId }),
+      body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, plano_id: planoId }),
     });
     abrirPagamentoPixHub({
       titulo: `Assinar plano — ${formatarMoeda(resp.valor_centavos)}`,
@@ -466,6 +509,7 @@ document.getElementById('btn-abrir-facial-hub').addEventListener('click', async 
     video: document.getElementById('video-facial-hub'),
     statusEl: document.getElementById('status-facial-hub'),
     cpf: cpfHubAtual,
+    senha: senhaHubAtual,
     aoConcluir: () => {
       ocultarPaineisHub();
       document.getElementById('painel-hub-dashboard').classList.remove('oculto');
@@ -477,17 +521,20 @@ document.getElementById('btn-abrir-facial-hub').addEventListener('click', async 
 // ---------------- Cadastro novo ----------------
 
 let cadastroPortalCpfAtual = null;
+let cadastroPortalSenhaAtual = null; // senha do portal já gerada no cadastro (ver POST /api/portal/cadastro)
 let cadastroPortalPollTimer = null;
 
 function resetCadastroPortal() {
   pararPollCadastroPortal();
   pararCamera();
   cadastroPortalCpfAtual = null;
+  cadastroPortalSenhaAtual = null;
   document.getElementById('portal-cadastro-nome').value = '';
   document.getElementById('portal-cadastro-cpf').value = '';
   document.getElementById('portal-cadastro-telefone').value = '';
   document.getElementById('portal-cadastro-email').value = '';
   document.getElementById('portal-cadastro-erro').textContent = '';
+  document.getElementById('portal-cadastro-senha-caixa').textContent = '';
   document.getElementById('painel-cadastro-portal-form').classList.remove('oculto');
   document.getElementById('painel-cadastro-portal-pagamento').classList.add('oculto');
   document.getElementById('painel-cadastro-portal-sucesso').classList.add('oculto');
@@ -534,6 +581,7 @@ document.getElementById('btn-portal-cadastro-continuar').addEventListener('click
       body: JSON.stringify({ nome, cpf, telefone: telefone || null, email: email || null, plano_id: planoId }),
     });
     cadastroPortalCpfAtual = cpf;
+    cadastroPortalSenhaAtual = resp.senha_acesso;
     document.getElementById('painel-cadastro-portal-form').classList.add('oculto');
     document.getElementById('painel-cadastro-portal-pagamento').classList.remove('oculto');
     document.getElementById('portal-cadastro-valor').textContent = `Valor: ${formatarMoeda(resp.valor_centavos)}`;
@@ -587,6 +635,7 @@ function iniciarPollCadastroPortal(cobrancaId) {
         document.getElementById('painel-cadastro-portal-pagamento').classList.add('oculto');
         document.getElementById('painel-cadastro-portal-sucesso').classList.remove('oculto');
         document.getElementById('portal-cadastro-sucesso-msg').textContent = `Pagamento confirmado! Bem-vindo(a), ${resp.aluno_nome || ''}. Sua matrícula já está ativa.`;
+        document.getElementById('portal-cadastro-senha-caixa').textContent = cadastroPortalSenhaAtual || '';
       }
     } catch (err) {
       statusEl.textContent = `Erro ao consultar pagamento: ${err.message}`;
@@ -608,6 +657,7 @@ document.getElementById('btn-portal-cadastro-facial').addEventListener('click', 
     video: document.getElementById('video-cadastro-portal-facial'),
     statusEl: document.getElementById('status-cadastro-portal-facial'),
     cpf: cadastroPortalCpfAtual,
+    senha: cadastroPortalSenhaAtual,
     aoConcluir: () => { resetCadastroPortal(); mostrarPagina('pagina-inicio'); },
   });
 });

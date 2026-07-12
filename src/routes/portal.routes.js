@@ -10,13 +10,19 @@
 // IMPORTANTE sobre autenticação: diferente do totem — cujo TERMINAL_TOKEN fica
 // só num dispositivo fisicamente controlado pela academia — este portal é uma
 // página pública na internet, então não dá pra proteger com um segredo fixo
-// embutido no HTML/JS (qualquer um veria o código-fonte). A "prova de
-// identidade" aqui é o próprio CPF, no mesmo espírito do totem físico (onde
-// digitar o CPF já libera a consulta). Isso significa que quem souber o CPF
-// de outra pessoa consegue ver as contas em aberto e o treino dela — uma
-// limitação aceita conscientemente pelo escopo pedido; se precisar de mais
-// privacidade no futuro, um segundo fator (ex: confirmação por WhatsApp/SMS)
-// pode ser adicionado aqui sem mudar o resto do sistema.
+// embutido no HTML/JS (qualquer um veria o código-fonte).
+//
+// 2026-07: a prova de identidade deixou de ser só o CPF. No 1o acesso de cada
+// aluno, o CPF sozinho ainda basta (mesmo espírito do totem físico) — mas
+// nesse momento o portal gera (ou reaproveita, se ele já tiver sido enrolado
+// na catraca) um código sequencial e o entrega como "senha", pedindo pro
+// aluno guardar. A partir daí, CPF sozinho não abre mais nada — todo acesso
+// exige CPF + essa senha (ver autenticarAlunoPortal() logo abaixo). Ideia do
+// dono do sistema: reaproveitar um identificador que o aluno já tem/recebe
+// fisicamente (o mesmo biometria_id da catraca Henry), sem custo de SMS/
+// WhatsApp. Ainda assim, como esse código é sequencial (fácil de tentar por
+// força bruta), o rate limit por IP abaixo continua valendo como camada
+// adicional — e /vincular/facial tem um limite ainda mais apertado por CPF.
 // ---------------------------------------------------------------------------
 
 const express = require('express');
@@ -52,14 +58,68 @@ router.get('/planos', async (req, res, next) => {
   }
 });
 
-// GET /api/portal/aluno?cpf=... — tela "hub" depois de identificar o CPF:
-// nome, modo de treino (pra decidir se mostra a lista nativa ou o link do
-// app externo) e o plano atual (pra tela de upgrade saber o que já tem).
-router.get('/aluno', async (req, res, next) => {
+// ---------------- Senha do portal (2026-07) ----------------
+// A partir do 1o acesso de cada aluno ao portal, CPF sozinho deixa de bastar
+// — passa a exigir também a "senha", que é o mesmo código sequencial usado
+// como biometria_id na catraca (ideia do dono do sistema: reaproveitar um
+// código que o aluno já recebe/conhece fisicamente, sem custo de SMS/
+// WhatsApp). Ver GET /aluno abaixo pro fluxo de "revelar" a senha na
+// primeira vez, e autenticarAlunoPortal() pra exigi-la depois disso.
+//
+// Só GET /aluno tem a lógica de "revelar" — todas as outras rotas abaixo
+// (treino, contas, upgrade, vincular facial) já assumem que o front-end tem
+// a senha em mãos (revelada nessa primeira tela, ou digitada pelo aluno) e
+// só validam normalmente.
+// Limite por CPF (além do limite geral por IP lá em cima) pras rotas que
+// validam senha: o código é sequencial (baixa entropia — 4 dígitos), então
+// alguém trocando de IP/rede ainda conseguiria ficar tentando várias senhas
+// contra o MESMO CPF sem isso. Generoso o bastante pro uso normal (aluno
+// errando a senha uma ou duas vezes).
+const limitadorSenhaPortal = criarLimitador({
+  janelaMs: 15 * 60 * 1000,
+  maximo: 8,
+  mensagem: 'Muitas tentativas de acesso para este CPF. Aguarde alguns minutos ou procure a recepção.',
+  chavePor: (req) => `senha-portal:${req.body?.cpf || req.query?.cpf || ''}`,
+});
+
+async function autenticarAlunoPortal(cpf, senha) {
+  const aluno = await acessoTerminal.buscarAlunoPorCpf(cpf);
+  if (!aluno) return { status: 404, erro: 'CPF não encontrado. Use "Quero me cadastrar" se ainda não tem cadastro.' };
+  if (!aluno.biometria_id || senha !== aluno.biometria_id) {
+    return { status: 401, erro: 'CPF ou senha incorretos.' };
+  }
+  return { aluno };
+}
+
+// GET /api/portal/aluno?cpf=...&senha=... — tela "hub" depois de identificar
+// o CPF: nome, modo de treino (pra decidir se mostra a lista nativa ou o
+// link do app externo) e o plano atual (pra tela de upgrade saber o que já
+// tem).
+//
+// Único ponto de entrada com a lógica de 1o acesso: se este aluno ainda
+// nunca "viu" a senha do portal (portal_senha_revelada = 0), este endpoint
+// libera com CPF sozinho, gera o código se ele ainda não tiver um (aluno
+// nunca enrolado na catraca) e devolve a senha na resposta pra tela mostrar
+// e o aluno guardar — só essa vez. Nos acessos seguintes, exige `senha`
+// batendo com o biometria_id, senão 401.
+router.get('/aluno', limitadorSenhaPortal, async (req, res, next) => {
   try {
-    const { cpf } = z.object({ cpf: z.string().min(1) }).parse(req.query);
+    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().trim().optional() }).parse(req.query);
     const aluno = await acessoTerminal.buscarAlunoPorCpf(cpf);
     if (!aluno) return res.status(404).json({ erro: 'CPF não encontrado. Use "Quero me cadastrar" se ainda não tem cadastro.' });
+
+    let primeiroAcesso = false;
+    let senhaGerada = null;
+
+    if (!aluno.portal_senha_revelada) {
+      senhaGerada = aluno.biometria_id || await acessoTerminal.atribuirCodigoAluno(aluno.id);
+      await db.execute({ sql: 'UPDATE alunos SET portal_senha_revelada = 1 WHERE id = ?', args: [aluno.id] });
+      primeiroAcesso = true;
+    } else if (!senha) {
+      return res.status(401).json({ erro: 'Informe também sua senha de acesso.', precisa_senha: true });
+    } else if (senha !== aluno.biometria_id) {
+      return res.status(401).json({ erro: 'CPF ou senha incorretos.' });
+    }
 
     const matricula = await db.execute({
       sql: `SELECT m.id, m.plano_id, p.nome as plano_nome, p.valor_centavos FROM matriculas m
@@ -73,19 +133,22 @@ router.get('/aluno', async (req, res, next) => {
       treino_modo: aluno.treino_modo || 'nativo',
       tem_rosto_cadastrado: Boolean(aluno.face_descriptor),
       plano_atual: matricula.rows[0] || null,
+      primeiro_acesso: primeiroAcesso,
+      senha_gerada: senhaGerada,
     });
   } catch (err) {
     next(err);
   }
 });
 
-// GET /api/portal/treino?cpf=... — só usada quando treino_modo = 'nativo'
-// (o link do app externo já vem em GET /api/config, campo treino_app_url).
-router.get('/treino', async (req, res, next) => {
+// GET /api/portal/treino?cpf=...&senha=... — só usada quando treino_modo =
+// 'nativo' (o link do app externo já vem em GET /api/config, campo treino_app_url).
+router.get('/treino', limitadorSenhaPortal, async (req, res, next) => {
   try {
-    const { cpf } = z.object({ cpf: z.string().min(1) }).parse(req.query);
-    const aluno = await acessoTerminal.buscarAlunoPorCpf(cpf);
-    if (!aluno) return res.status(404).json({ erro: 'CPF não encontrado.' });
+    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(req.query);
+    const autenticado = await autenticarAlunoPortal(cpf, senha);
+    if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
+    const aluno = autenticado.aluno;
 
     const treinos = await db.execute({
       sql: `SELECT * FROM treinos WHERE aluno_id = ? AND ativo = 1 ORDER BY ordem, criado_em`,
@@ -134,9 +197,14 @@ const limitadorVincularFacial = criarLimitador({
 // aba "Biometria & acesso" -> remover e recadastrar pela câmera do PC).
 router.post('/vincular/facial', limitadorVincularFacial, async (req, res, next) => {
   try {
-    const { cpf, descriptor } = z.object({ cpf: z.string().min(1), descriptor: z.array(z.number()).min(16) }).parse(req.body);
-    const aluno = await acessoTerminal.buscarAlunoPorCpf(cpf);
-    if (!aluno) return res.status(404).json({ erro: 'CPF não encontrado.' });
+    const { cpf, senha, descriptor } = z.object({
+      cpf: z.string().min(1),
+      senha: z.string().min(1),
+      descriptor: z.array(z.number()).min(16),
+    }).parse(req.body);
+    const autenticado = await autenticarAlunoPortal(cpf, senha);
+    if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
+    const aluno = autenticado.aluno;
 
     if (aluno.face_descriptor) {
       await acessoTerminal.registrarAcesso({
@@ -168,9 +236,12 @@ router.post('/vincular/facial', limitadorVincularFacial, async (req, res, next) 
 // Única diferença: liberarAcesso é SEMPRE false aqui — o valor vindo do corpo
 // da requisição (se houver) é ignorado de propósito, por segurança.
 
-router.post('/contas/consultar', async (req, res, next) => {
+router.post('/contas/consultar', limitadorSenhaPortal, async (req, res, next) => {
   try {
-    const { cpf } = z.object({ cpf: z.string().min(1) }).parse(req.body);
+    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(req.body);
+    const autenticado = await autenticarAlunoPortal(cpf, senha);
+    if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
+
     const resultado = await pagamentoContas.consultarContasAbertas(cpf);
     if (!resultado) return res.status(404).json({ erro: 'CPF não encontrado.' });
     res.json({ aluno_id: resultado.aluno.id, aluno_nome: resultado.aluno.nome, contas: resultado.contas });
@@ -179,9 +250,16 @@ router.post('/contas/consultar', async (req, res, next) => {
   }
 });
 
-router.post('/contas/pagar', async (req, res, next) => {
+router.post('/contas/pagar', limitadorSenhaPortal, async (req, res, next) => {
   try {
-    const dados = z.object({ cpf: z.string().min(1), cobranca_ids: z.array(z.string()).min(1) }).parse(req.body);
+    const dados = z.object({
+      cpf: z.string().min(1),
+      senha: z.string().min(1),
+      cobranca_ids: z.array(z.string()).min(1),
+    }).parse(req.body);
+    const autenticado = await autenticarAlunoPortal(dados.cpf, dados.senha);
+    if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
+
     const resultado = await pagamentoContas.criarPagamentoAgregado({
       cpf: dados.cpf,
       cobrancaIds: dados.cobranca_ids,
@@ -267,12 +345,20 @@ router.post('/cadastro', async (req, res, next) => {
       args: [cobrancaId, alunoId, matriculaId, p.valor_centavos, String(order.id), descricao, hoje],
     });
 
+    // Senha do portal (2026-07): já gera o código sequencial de uma vez
+    // (mesmo padrão do "cartão" da catraca, ver acessoTerminal.service.js) e
+    // marca como revelada — o aluno já sai do cadastro sabendo sua senha,
+    // sem precisar de um "primeiro acesso" separado depois.
+    const senhaAcesso = await acessoTerminal.atribuirCodigoAluno(alunoId);
+    await db.execute({ sql: 'UPDATE alunos SET portal_senha_revelada = 1 WHERE id = ?', args: [alunoId] });
+
     res.status(201).json({
       cobranca_id: cobrancaId,
       qr_code_pix: metodoPix.qr_code || null,
       qr_code_pix_imagem: metodoPix.qr_code_base64 || null,
       valor_centavos: p.valor_centavos,
       aluno_nome: dados.nome,
+      senha_acesso: senhaAcesso,
     });
   } catch (err) {
     next(err);
@@ -333,11 +419,16 @@ router.get('/cadastro/status/:cobrancaId', async (req, res, next) => {
 // até o Pix confirmar) — não mexe na matrícula atual, então a equipe decide
 // depois se cancela a antiga (evita encerrar um plano em dia sem querer).
 
-router.post('/upgrade', async (req, res, next) => {
+router.post('/upgrade', limitadorSenhaPortal, async (req, res, next) => {
   try {
-    const dados = z.object({ cpf: z.string().min(1), plano_id: z.string().min(1) }).parse(req.body);
-    const aluno = await acessoTerminal.buscarAlunoPorCpf(dados.cpf);
-    if (!aluno) return res.status(404).json({ erro: 'CPF não encontrado.' });
+    const dados = z.object({
+      cpf: z.string().min(1),
+      senha: z.string().min(1),
+      plano_id: z.string().min(1),
+    }).parse(req.body);
+    const autenticado = await autenticarAlunoPortal(dados.cpf, dados.senha);
+    if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
+    const aluno = autenticado.aluno;
 
     const plano = await db.execute({ sql: 'SELECT * FROM planos WHERE id = ? AND ativo = 1', args: [dados.plano_id] });
     const p = plano.rows[0];

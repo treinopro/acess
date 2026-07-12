@@ -25,6 +25,13 @@ CREATE TABLE IF NOT EXISTS alunos (
   codigo_acesso TEXT, -- codigo estavel para QR/"cartao de embarque" e fallback manual no totem
   face_descriptor TEXT, -- descritor facial (JSON, 128 floats do face-api.js) para reconhecimento facial recorrente no totem
   treino_modo TEXT DEFAULT 'nativo', -- nativo | app_externo (ver tabela "treinos" mais abaixo)
+  -- Senha do portal remoto (2026-07): a partir do 1o acesso do aluno ao
+  -- portal (GET /api/portal/aluno), ele passa a precisar de CPF + biometria_id
+  -- (o mesmo codigo sequencial da catraca) pra entrar. Esta flag marca se
+  -- esse codigo ja foi revelado pra ele alguma vez - antes disso, so o CPF
+  -- basta (e o codigo e gerado/mostrado nesse momento, se ainda nao existir).
+  -- Ver src/routes/portal.routes.js e acessoTerminal.service.js.
+  portal_senha_revelada INTEGER NOT NULL DEFAULT 0,
   -- Identificador da PESSOA no Secullum Academia.Net (campo "Nº Identificador"
   -- na tela de Contas a Receber). NULL para alunos cadastrados direto aqui,
   -- nunca importados. Usado pela migracao pra decidir "ja existe, so
@@ -259,6 +266,10 @@ CREATE INDEX IF NOT EXISTS idx_cobrancas_status ON cobrancas(status);
 CREATE INDEX IF NOT EXISTS idx_cobrancas_aluno ON cobrancas(aluno_id);
 CREATE INDEX IF NOT EXISTS idx_avaliacoes_aluno ON avaliacoes_fisicas(aluno_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_alunos_codigo_acesso ON alunos(codigo_acesso);
+-- Parcial (so quando preenchido) porque a maioria dos alunos ainda nao tem
+-- biometria_id - e agora que ele tambem serve de senha do portal, precisa
+-- ser unico de verdade pra nunca duas pessoas caírem no mesmo login/cartao.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_alunos_biometria_id ON alunos(biometria_id) WHERE biometria_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_acessos_catraca_aluno ON acessos_catraca(aluno_id);
 CREATE INDEX IF NOT EXISTS idx_pagamentos_cobranca_cobranca ON pagamentos_cobranca(cobranca_id);
 CREATE INDEX IF NOT EXISTS idx_anamnese_respostas_anamnese ON anamnese_respostas(anamnese_id);

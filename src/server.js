@@ -19,6 +19,7 @@ const portalRoutes = require('./routes/portal.routes');
 const treinosRoutes = require('./routes/treinos.routes');
 const { router: configRoutes } = require('./routes/config.routes');
 const { rodar: rodarBackup } = require('./jobs/backup');
+const { atualizarCobrancasVencidas } = require('./services/cobrancas.service');
 const agenteGateway = require('./services/agenteGateway.service');
 const dbResiliente = require('./services/dbResiliente.service');
 const filaAcessosOffline = require('./services/filaAcessosOffline.service');
@@ -127,6 +128,25 @@ server.listen(PORT, () => {
     }, 24 * 60 * 60 * 1000);
   } else {
     console.log('[server] EXECUTAR_JOBS_AGENDADOS=false — pulando backup agendado neste processo (esperado no processo "modo totem").');
+  }
+
+  // Atualização de cobranças vencidas (2026-07): cobranças ficavam 'pendente'
+  // pra sempre no banco mesmo depois de vencidas — o status só era
+  // recalculado quando alguém lançava/removia um pagamento ou editava a
+  // conta manualmente (ver recalcularStatusCobranca em
+  // src/routes/pagamentos.routes.js). Este job roda uma vez ao subir e
+  // depois a cada 1h, marcando como 'atrasado' toda cobrança 'pendente' cujo
+  // vencimento já passou — mesmo UPDATE que a rota GET /api/pagamentos/
+  // inadimplentes já calculava dinamicamente, só que agora gravado de
+  // verdade na coluna status (ver src/services/cobrancas.service.js).
+  // Reaproveita o guard EXECUTAR_JOBS_AGENDADOS do backup pra não rodar em
+  // dobro no processo "modo totem", que aponta pro mesmo Turso do processo
+  // principal.
+  if (EXECUTAR_JOBS_AGENDADOS) {
+    atualizarCobrancasVencidas().catch((err) => console.error('[cobrancas] erro ao atualizar vencidas na execução inicial:', err));
+    setInterval(() => {
+      atualizarCobrancasVencidas().catch((err) => console.error('[cobrancas] erro ao atualizar vencidas na execução agendada:', err));
+    }, 60 * 60 * 1000); // de hora em hora
   }
 
   // "Modo totem offline-resiliente" (2026-07): só ativa quando

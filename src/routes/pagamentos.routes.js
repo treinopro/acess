@@ -6,7 +6,7 @@ const db = require('../db/client');
 const dbOffline = require('../db/clientOffline');
 const { autenticar, apenasAdmin } = require('../middleware/auth');
 const mercadopago = require('../services/payment/mercadopago.service');
-const { gerarCobrancasRecorrentes, ultimoDiaDoMes } = require('../services/cobrancas.service');
+const { gerarCobrancasRecorrentes, ultimoDiaDoMes, atualizarCobrancasVencidas } = require('../services/cobrancas.service');
 const { criarLimitador } = require('../middleware/rateLimit');
 const acessoTerminal = require('../services/acessoTerminal.service');
 const dbResiliente = require('../services/dbResiliente.service');
@@ -615,6 +615,21 @@ router.post('/webhook/mercadopago', limitadorWebhook, express.json(), async (req
       }
     }
     res.sendStatus(200); // Mercado Pago espera 200 rapidamente
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/pagamentos/atualizar-vencidas — força na hora a atualização de
+// status das cobranças vencidas (marca 'pendente' -> 'atrasado' quando o
+// vencimento já passou), sem esperar o job agendado do server.js. Existe
+// como botão manual no painel pelo mesmo motivo de "Gerar Contas a
+// Receber": é uma ação financeira, então também fica disponível sob
+// demanda, e não só automática.
+router.post('/atualizar-vencidas', autenticar, apenasAdmin, async (req, res, next) => {
+  try {
+    const resultado = await atualizarCobrancasVencidas();
+    res.json(resultado);
   } catch (err) {
     next(err);
   }

@@ -170,4 +170,30 @@ async function gerarCobrancasRecorrentes({ ateData } = {}) {
   return geradas;
 }
 
-module.exports = { ehRecorrente, criarCobrancaDoCiclo, gerarCobrancasRecorrentes, ultimoDiaDoMes };
+// Atualiza no banco o status de cobranças vencidas: quando uma cobrança
+// ainda está 'pendente' mas o vencimento já passou, passa a valer como
+// 'atrasado' de fato (e não só na hora de exibir na tela — ver GET
+// /api/pagamentos/cobrancas em src/routes/pagamentos.routes.js, que devolve
+// c.status cru do banco, sem recalcular nada). Não mexe em cobranças 'pago',
+// 'cancelado' ou 'estornado' — só no ciclo pendente/atrasado, o mesmo que
+// recalcularStatusCobranca já respeita.
+//
+// date('now') no SQLite/Turso é UTC. Se quiserem que o corte do dia siga o
+// horário de Brasília (evitando marcar como atrasado ~3h antes da meia-noite
+// local), troquem "date('now')" por "date('now', '-3 hours')" abaixo.
+async function atualizarCobrancasVencidas() {
+  const resultado = await db.execute(`
+    UPDATE cobrancas
+    SET status = 'atrasado'
+    WHERE status = 'pendente' AND vencimento < date('now')
+  `);
+  return { atualizadas: resultado.rowsAffected || 0 };
+}
+
+module.exports = {
+  ehRecorrente,
+  criarCobrancaDoCiclo,
+  gerarCobrancasRecorrentes,
+  ultimoDiaDoMes,
+  atualizarCobrancasVencidas,
+};

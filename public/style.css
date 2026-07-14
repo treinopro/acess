@@ -119,20 +119,39 @@ body {
 .painel-lateral-corpo { padding: 16px 20px; overflow-y: auto; flex: 1; }
 .painel-lateral-corpo .tabela th, .painel-lateral-corpo .tabela td { padding: 8px 10px; font-size: 12.5px; }
 
-/* ---------- Janela flutuante e arrastável (ex.: Catraca) ---------- */
+/* ---------- Janela flutuante e arrastável (ex.: Catraca, Acompanhamento de acessos) ----------
+   2026-07: ganhou redimensionar (arrastando o canto inferior direito), minimizar
+   (recolhe pra só a barra do topo) e maximizar (aumenta pra um tamanho maior,
+   NÃO tela cheia de verdade - fica com uma margem, só "grande"). */
 .janela-flutuante {
   position: fixed; top: 70px; left: calc(50% - 260px); width: 520px; max-width: 92vw;
   max-height: 82vh; background: #fff; border-radius: 12px; box-shadow: 0 20px 50px rgba(0,0,0,0.35);
   z-index: 400; display: flex; flex-direction: column; overflow: hidden;
+  resize: both; min-width: 320px; min-height: 160px;
 }
 .janela-flutuante-topo {
   display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
   padding: 14px 18px; background: #111827; color: #fff; cursor: move; user-select: none;
 }
 .janela-flutuante-topo h3 { margin: 0; font-size: 15px; }
-.janela-flutuante-topo .btn-fechar-painel { color: #cbd5e1; }
-.janela-flutuante-topo .btn-fechar-painel:hover { color: #fff; }
+.janela-flutuante-topo .btn-fechar-painel,
+.janela-flutuante-topo .btn-minimizar-painel,
+.janela-flutuante-topo .btn-maximizar-painel { color: #cbd5e1; }
+.janela-flutuante-topo .btn-fechar-painel:hover,
+.janela-flutuante-topo .btn-minimizar-painel:hover,
+.janela-flutuante-topo .btn-maximizar-painel:hover { color: #fff; }
+.janela-flutuante-topo .btn-minimizar-painel,
+.janela-flutuante-topo .btn-maximizar-painel { font-size: 14px; margin-right: 2px; }
 .janela-flutuante-corpo { padding: 18px 20px; overflow-y: auto; flex: 1; }
+
+/* Minimizada: só a barra do topo fica visível (recolhe, não fecha de fato). */
+.janela-flutuante-minimizada { resize: none; }
+.janela-flutuante-minimizada .janela-flutuante-corpo { display: none; }
+
+/* Maximizada: o tamanho/posição em si é aplicado via JS (alternarMaximizarJanela),
+   isso aqui só desliga o redimensionar manual enquanto estiver maximizada
+   (igual qualquer janela de sistema operacional). */
+.janela-flutuante-maximizada { resize: none; }
 
 /* Variante compacta (ex.: janela "Liberar Equipamentos" da catraca) — menor e mais enxuta */
 .janela-flutuante-compacta { width: 360px; top: 60px; left: calc(50% - 180px); max-height: 88vh; }

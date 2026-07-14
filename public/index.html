@@ -818,6 +818,13 @@
                 <button type="button" class="btn-limpar-busca" data-alvo="rel-diario-busca" data-buscar="btn-rel-diario-buscar" title="Limpar busca">&times;</button>
               </span>
             </div>
+            <div>
+              <label>Mostrar</label>
+              <select id="rel-diario-modo">
+                <option value="todos">Todos os acessos</option>
+                <option value="primeiro">Só o 1º acesso de cada um no dia</option>
+              </select>
+            </div>
             <button type="button" class="btn-primario" id="btn-rel-diario-buscar">Filtrar</button>
           </div>
           <table class="tabela">
@@ -1135,13 +1142,15 @@
     </div>
   </div>
 
-  <!-- PAINEL LATERAL - ACESSOS RECENTES (persiste entre abas, estilo catraca/totem) -->
-  <div id="painel-acessos" class="painel-lateral">
-    <div class="painel-lateral-topo">
+  <!-- JANELA FLUTUANTE - ACOMPANHAMENTO DE ACESSOS (visualização, somente leitura;
+       2026-07: convertida de painel lateral fixo pra janela flutuante/arrastável/
+       redimensionável/minimizável/maximizável, igual a da catraca) -->
+  <div id="painel-acessos" class="janela-flutuante oculto">
+    <div class="janela-flutuante-topo" id="painel-acessos-alca">
       <h3>Acompanhamento de acessos</h3>
       <button id="btn-fechar-acessos" class="btn-fechar-painel" title="Fechar">&times;</button>
     </div>
-    <div class="painel-lateral-corpo">
+    <div class="janela-flutuante-corpo">
       <table class="tabela">
         <thead><tr><th>Data</th><th>Hora</th><th>Nome</th><th>Tipo</th></tr></thead>
         <tbody id="lista-acessos-recentes"><tr><td colspan="4">Carregando...</td></tr></tbody>

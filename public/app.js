@@ -379,7 +379,65 @@ function tornarArrastavel(janela, alca) {
   document.addEventListener('mouseup', () => { arrastando = false; });
 }
 
+// Adiciona os botões de minimizar/maximizar na barra do topo de uma janela
+// flutuante (o fechar já existe em cada janela, esse aqui é genérico/reaproveitável).
+// Minimizar recolhe pra só a barra do topo continuar visível (não fecha de fato).
+// Maximizar aumenta pra um tamanho maior - NÃO é tela cheia de verdade, só "grande",
+// com margem - clicando de novo volta pro tamanho/posição de antes.
+function adicionarControlesJanela(janela) {
+  if (!janela) return;
+  const topo = janela.querySelector('.janela-flutuante-topo');
+  const botaoFechar = topo ? topo.querySelector('.btn-fechar-painel') : null;
+  if (!topo || !botaoFechar) return;
+
+  const btnMinimizar = document.createElement('button');
+  btnMinimizar.type = 'button';
+  btnMinimizar.className = 'btn-minimizar-painel';
+  btnMinimizar.title = 'Minimizar';
+  btnMinimizar.innerHTML = '&#8211;';
+  btnMinimizar.addEventListener('click', () => janela.classList.toggle('janela-flutuante-minimizada'));
+
+  const btnMaximizar = document.createElement('button');
+  btnMaximizar.type = 'button';
+  btnMaximizar.className = 'btn-maximizar-painel';
+  btnMaximizar.title = 'Maximizar';
+  btnMaximizar.innerHTML = '&#9633;';
+  btnMaximizar.addEventListener('click', () => alternarMaximizarJanela(janela));
+
+  topo.insertBefore(btnMinimizar, botaoFechar);
+  topo.insertBefore(btnMaximizar, botaoFechar);
+}
+
+function alternarMaximizarJanela(janela) {
+  if (janela.classList.contains('janela-flutuante-maximizada')) {
+    janela.classList.remove('janela-flutuante-maximizada');
+    const anterior = janela.dataset.antesMaximizar ? JSON.parse(janela.dataset.antesMaximizar) : null;
+    janela.style.width = anterior?.width || '';
+    janela.style.height = anterior?.height || '';
+    janela.style.top = anterior?.top || '';
+    janela.style.left = anterior?.left || '';
+    delete janela.dataset.antesMaximizar;
+  } else {
+    janela.dataset.antesMaximizar = JSON.stringify({
+      width: janela.style.width || '',
+      height: janela.style.height || '',
+      top: janela.style.top || '',
+      left: janela.style.left || '',
+    });
+    janela.classList.remove('janela-flutuante-minimizada');
+    janela.classList.add('janela-flutuante-maximizada');
+    janela.style.width = '90vw';
+    janela.style.height = '85vh';
+    janela.style.top = '6vh';
+    janela.style.left = '5vw';
+  }
+}
+
 tornarArrastavel(document.getElementById('janela-catraca'), document.getElementById('janela-catraca-alca'));
+adicionarControlesJanela(document.getElementById('janela-catraca'));
+
+tornarArrastavel(document.getElementById('painel-acessos'), document.getElementById('painel-acessos-alca'));
+adicionarControlesJanela(document.getElementById('painel-acessos'));
 
 // ---------------- Configurações (nome do app, licenciado para, backup) ----------------
 
@@ -3193,9 +3251,11 @@ async function buscarRelatorioAcessoDiario() {
   try {
     const data = document.getElementById('rel-diario-data').value;
     const busca = document.getElementById('rel-diario-busca').value.trim();
+    const modo = document.getElementById('rel-diario-modo').value;
     const params = new URLSearchParams();
     if (data) params.set('data', data);
     if (busca) params.set('busca', busca);
+    if (modo === 'primeiro') params.set('apenas_primeiro', 'true');
 
     const lista = await api(`/api/terminal/acessos${params.toString() ? '?' + params.toString() : ''}`);
     const tbody = document.getElementById('rel-diario-lista');
@@ -3327,21 +3387,22 @@ async function carregarAcessosRecentes() {
 }
 
 function abrirPainelAcessos() {
-  document.getElementById('painel-acessos').classList.add('aberto');
+  document.getElementById('painel-acessos').classList.remove('oculto');
+  document.getElementById('painel-acessos').classList.remove('janela-flutuante-minimizada');
   carregarAcessosRecentes();
   clearInterval(acessosRecentesTimer);
   acessosRecentesTimer = setInterval(carregarAcessosRecentes, 8000);
 }
 
 function fecharPainelAcessos() {
-  document.getElementById('painel-acessos').classList.remove('aberto');
+  document.getElementById('painel-acessos').classList.add('oculto');
   clearInterval(acessosRecentesTimer);
   acessosRecentesTimer = null;
 }
 
 document.getElementById('btn-acessos-recentes').addEventListener('click', () => {
   const painel = document.getElementById('painel-acessos');
-  if (painel.classList.contains('aberto')) fecharPainelAcessos();
+  if (!painel.classList.contains('oculto')) fecharPainelAcessos();
   else abrirPainelAcessos();
 });
 document.getElementById('btn-fechar-acessos').addEventListener('click', fecharPainelAcessos);

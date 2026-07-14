@@ -702,14 +702,22 @@ admin.post('/catraca/liberar', async (req, res, next) => {
   }
 });
 
-// GET /api/terminal/acessos?aluno_id=&data=&data_inicio=&data_fim=&busca= — histórico de
-// tentativas de acesso pelo totem/catraca. Usado pelo painel "Acessos recentes", pela janela
-// da catraca e pelos relatórios "Acesso Diário" (usa "data") e "Acesso Pessoal" (usa
-// "aluno_id" + "data_inicio"/"data_fim").
+// GET /api/terminal/acessos?aluno_id=&data=&data_inicio=&data_fim=&busca=&apenas_primeiro=
+// histórico de tentativas de acesso pelo totem/catraca. Usado pelo painel "Acessos recentes",
+// pela janela da catraca e pelos relatórios "Acesso Diário" (usa "data") e "Acesso Pessoal"
+// (usa "aluno_id" + "data_inicio"/"data_fim").
+//
+// "apenas_primeiro=true" (2026-07, pedido do usuário pra contabilizar quem realmente veio no
+// dia, sem contar cada toque repetido na catraca como se fosse gente diferente): em vez de
+// devolver todas as tentativas, devolve só a PRIMEIRA tentativa de cada aluno em cada dia
+// (usando ROW_NUMBER() particionado por aluno+dia, ordenado por horário). Tentativas sem aluno
+// reconhecido (aluno_id nulo) nunca são agrupadas entre si - cada uma conta como um evento
+// próprio, já que não dá pra saber se são a mesma pessoa.
 admin.get('/acessos', async (req, res, next) => {
   try {
     const {
       aluno_id: alunoId, data, data_inicio: dataInicio, data_fim: dataFim, busca,
+      apenas_primeiro: apenasPrimeiro,
     } = req.query;
     const condicoes = [];
     const args = [];
@@ -720,11 +728,21 @@ admin.get('/acessos', async (req, res, next) => {
     if (busca) { condicoes.push('a.nome LIKE ?'); args.push(`%${busca}%`); }
     const where = condicoes.length ? `WHERE ${condicoes.join(' AND ')}` : '';
 
-    const result = await db.execute({
-      sql: `SELECT ac.*, a.nome as aluno_nome FROM acessos_catraca ac LEFT JOIN alunos a ON a.id = ac.aluno_id
-            ${where} ORDER BY ac.criado_em DESC LIMIT 500`,
-      args,
-    });
+    const somentePrimeiroDoDia = apenasPrimeiro === 'true' || apenasPrimeiro === '1';
+    const sql = somentePrimeiroDoDia
+      ? `SELECT * FROM (
+           SELECT ac.*, a.nome as aluno_nome,
+             ROW_NUMBER() OVER (
+               PARTITION BY COALESCE(ac.aluno_id, 'sem-aluno-' || ac.id), date(ac.criado_em)
+               ORDER BY ac.criado_em ASC
+             ) as rn_primeiro_do_dia
+           FROM acessos_catraca ac LEFT JOIN alunos a ON a.id = ac.aluno_id
+           ${where}
+         ) WHERE rn_primeiro_do_dia = 1 ORDER BY criado_em DESC LIMIT 500`
+      : `SELECT ac.*, a.nome as aluno_nome FROM acessos_catraca ac LEFT JOIN alunos a ON a.id = ac.aluno_id
+         ${where} ORDER BY ac.criado_em DESC LIMIT 500`;
+
+    const result = await db.execute({ sql, args });
     res.json(result.rows);
   } catch (err) {
     next(err);

@@ -332,6 +332,16 @@ async function snapshotOffline(tabela, id, colunas) {
   }
 }
 
+// 2026-07-14: as pendências de sincronização mostravam só o id bruto do
+// registro (ex.: "conta e780aa0c-2016-43b4-..."), sem nenhum jeito de saber
+// de qual aluno se tratava — obrigando a caçar no banco manualmente pra
+// identificar quem era. Esse helper busca o nome no cache local (mesmo
+// "melhor esforço, nunca quebra" do snapshotOffline acima) só pra exibição.
+async function nomeAlunoOffline(alunoId) {
+  const linha = await snapshotOffline('alunos', alunoId, ['nome']);
+  return linha.nome || null;
+}
+
 // PUT /api/alunos/:id
 //
 // Modo totem offline-resiliente: se o Turso não responder, a edição não é
@@ -361,13 +371,17 @@ router.put('/:id', async (req, res, next) => {
       } catch (err) {
         dbResiliente.logAlertaOffline('editar aluno', err);
         const valoresAnterioresConhecidos = await snapshotOffline('alunos', req.params.id, campos);
+        const alunoNome = await nomeAlunoOffline(req.params.id);
         filaCadastroOffline.registrar({
           tipo: 'update_campo',
           tabela: 'alunos',
           registroId: req.params.id,
           campos: dados,
           valoresAnterioresConhecidos,
-          descricaoResumo: `Editar dados do aluno ${req.params.id} (${campos.join(', ')})`,
+          alunoNome,
+          descricaoResumo: alunoNome
+            ? `Editar dados de ${alunoNome} (${campos.join(', ')})`
+            : `Editar dados do aluno ${req.params.id} (${campos.join(', ')})`,
           criadoPor: req.usuario?.email || null,
         });
         // Este endpoint genérico pode alterar biometria_id junto com o
@@ -408,13 +422,17 @@ router.patch('/:id/status', async (req, res, next) => {
       } catch (err) {
         dbResiliente.logAlertaOffline('alterar status do aluno', err);
         const valoresAnterioresConhecidos = await snapshotOffline('alunos', req.params.id, ['status']);
+        const alunoNome = await nomeAlunoOffline(req.params.id);
         filaCadastroOffline.registrar({
           tipo: 'update_campo',
           tabela: 'alunos',
           registroId: req.params.id,
           campos: { status },
           valoresAnterioresConhecidos,
-          descricaoResumo: `Alterar status do aluno ${req.params.id} para "${status}"`,
+          alunoNome,
+          descricaoResumo: alunoNome
+            ? `Alterar status de ${alunoNome} para "${status}"`
+            : `Alterar status do aluno ${req.params.id} para "${status}"`,
           criadoPor: req.usuario?.email || null,
         });
         acessoTerminal.notificarAgenteAtualizacaoAluno(req.params.id);

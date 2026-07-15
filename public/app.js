@@ -599,8 +599,15 @@ document.getElementById('btn-baixar-backup').addEventListener('click', async () 
 // não houver nada) e só mostra o bloco quando existe pelo menos uma pendência.
 
 function descreverCampoPendencia(item) {
+  // 2026-07-14: prioriza o nome do aluno (item.alunoNome, resolvido no
+  // servidor no momento em que a pendência foi criada) quando disponível.
+  // Pendências criadas ANTES dessa correção não têm esse campo — nesses
+  // casos cai pro texto antigo (descricaoResumo com o id bruto), que
+  // continua funcionando igual, só sem o nome.
   if (item.tipo === 'pagamento') {
-    return `Pagamento de ${formatarMoeda(item.pagamento?.valor_centavos)} (conta ${item.registroId})`;
+    return item.alunoNome
+      ? `Pagamento de ${formatarMoeda(item.pagamento?.valor_centavos)} de ${item.alunoNome}`
+      : (item.descricaoResumo || `Pagamento de ${formatarMoeda(item.pagamento?.valor_centavos)} (conta ${item.registroId})`);
   }
   return item.descricaoResumo || `Alteração em ${item.tabela} (${item.registroId})`;
 }

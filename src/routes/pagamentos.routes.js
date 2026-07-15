@@ -6,7 +6,7 @@ const db = require('../db/client');
 const dbOffline = require('../db/clientOffline');
 const { autenticar, apenasAdmin } = require('../middleware/auth');
 const mercadopago = require('../services/payment/mercadopago.service');
-const { gerarCobrancasRecorrentes, ultimoDiaDoMes, atualizarCobrancasVencidas } = require('../services/cobrancas.service');
+const { gerarCobrancasRecorrentes, ultimoDiaDoMes } = require('../services/cobrancas.service');
 const { criarLimitador } = require('../middleware/rateLimit');
 const acessoTerminal = require('../services/acessoTerminal.service');
 const dbResiliente = require('../services/dbResiliente.service');
@@ -328,13 +328,24 @@ router.post('/cobrancas/:id/pagamentos', autenticar, async (req, res, next) => {
       return res.status(201).json({ id, cobranca: cobrancaAtualizada });
     } catch (err) {
       dbResiliente.logAlertaOffline('registrar pagamento', err);
+      // 2026-07-14: a pendência mostrava só o id da conta, sem indicar de
+      // qual aluno era — busca o nome no cache local (melhor esforço, nunca
+      // quebra o fluxo principal) só pra exibição no painel.
+      let alunoNome = null;
+      try {
+        const linhaAluno = await dbOffline.execute({ sql: 'SELECT nome FROM alunos WHERE id = ?', args: [cobranca.aluno_id] });
+        alunoNome = linhaAluno.rows[0]?.nome || null;
+      } catch { /* mantém alunoNome = null — pendência ainda funciona, só sem nome */ }
       filaCadastroOffline.registrar({
         tipo: 'pagamento',
         registroId: req.params.id,
         pagamentoId: id,
         pagamento: dados,
         statusConhecidoAntes: cobranca.status,
-        descricaoResumo: `Pagamento de R$ ${(dados.valor_centavos / 100).toFixed(2)} na conta ${req.params.id}`,
+        alunoNome,
+        descricaoResumo: alunoNome
+          ? `Pagamento de R$ ${(dados.valor_centavos / 100).toFixed(2)} de ${alunoNome}`
+          : `Pagamento de R$ ${(dados.valor_centavos / 100).toFixed(2)} na conta ${req.params.id}`,
         criadoPor: req.usuario?.email || null,
       });
       return res.status(202).json({
@@ -615,21 +626,6 @@ router.post('/webhook/mercadopago', limitadorWebhook, express.json(), async (req
       }
     }
     res.sendStatus(200); // Mercado Pago espera 200 rapidamente
-  } catch (err) {
-    next(err);
-  }
-});
-
-// POST /api/pagamentos/atualizar-vencidas — força na hora a atualização de
-// status das cobranças vencidas (marca 'pendente' -> 'atrasado' quando o
-// vencimento já passou), sem esperar o job agendado do server.js. Existe
-// como botão manual no painel pelo mesmo motivo de "Gerar Contas a
-// Receber": é uma ação financeira, então também fica disponível sob
-// demanda, e não só automática.
-router.post('/atualizar-vencidas', autenticar, apenasAdmin, async (req, res, next) => {
-  try {
-    const resultado = await atualizarCobrancasVencidas();
-    res.json(resultado);
   } catch (err) {
     next(err);
   }

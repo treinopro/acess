@@ -259,6 +259,63 @@ CREATE TABLE IF NOT EXISTS treino_exercicios (
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- ================= Recuperação de clientes / prevenção de evasão (2026-07) =================
+-- Ver STATUS-PROJETO.md, seção "Recuperação de clientes / prevenção de evasão".
+
+-- Modelos reutilizáveis de mensagem (e-mail e/ou WhatsApp manual), usados na
+-- tela "Recuperação de Clientes" pra não redigitar o texto toda vez. {nome} na
+-- saudação é substituído pelo nome do aluno no momento do envio.
+CREATE TABLE IF NOT EXISTS mensagens_templates (
+  id TEXT PRIMARY KEY,
+  nome TEXT NOT NULL, -- nome interno pra identificar o modelo na lista (ex: "Oferta 5 dias grátis")
+  saudacao TEXT NOT NULL DEFAULT 'Olá {nome}!',
+  corpo TEXT NOT NULL,
+  link_tipo TEXT NOT NULL DEFAULT 'portal', -- portal (link de acesso do aluno) | oferta (url customizada) | nenhum
+  link_oferta_url TEXT, -- usado só quando link_tipo = 'oferta'
+  link_oferta_texto TEXT, -- texto do link/botão quando link_tipo = 'oferta' (ex: "Aproveitar oferta")
+  conceder_dias_gratis INTEGER, -- se preenchido, ENVIAR este modelo também concede N dias de acesso grátis (ver concessoes_acesso) — admin confirma isso na hora do envio
+  ativo INTEGER NOT NULL DEFAULT 1,
+  criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Concessões de acesso especial/gratuito (ex: "5 dias grátis pra retomar os
+-- treinos"). Libera a catraca/totem temporariamente mesmo com mensalidade em
+-- atraso, SEM mexer no cadastro financeiro real (nenhuma cobrança é criada,
+-- alterada ou marcada como paga). Ver acessoTerminal.service.js
+-- (verificarAutorizacaoAluno/listarAutorizacoesBiometricas): uma concessão
+-- ativa só ignora bloqueio por INADIMPLÊNCIA (status='inadimplente' ou
+-- cobrança vencida) — cadastro trancado ou inativo continua bloqueando mesmo
+-- com concessão ativa, porque essas são decisões manuais do admin, não
+-- relacionadas a pagamento.
+CREATE TABLE IF NOT EXISTS concessoes_acesso (
+  id TEXT PRIMARY KEY,
+  aluno_id TEXT NOT NULL REFERENCES alunos(id) ON DELETE CASCADE,
+  dias INTEGER NOT NULL,
+  valido_de TEXT NOT NULL, -- YYYY-MM-DD
+  valido_ate TEXT NOT NULL, -- YYYY-MM-DD (inclusive)
+  motivo TEXT,
+  criado_por TEXT REFERENCES usuarios(id),
+  criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Histórico de mensagens enviadas/geradas: e-mail de verdade (via SMTP) tem
+-- status enviado/erro; WhatsApp é sempre "manual" (só gera o link wa.me pro
+-- admin clicar e mandar ele mesmo), então status fica 'link_gerado' — não há
+-- confirmação de entrega nesse canal.
+CREATE TABLE IF NOT EXISTS mensagens_enviadas (
+  id TEXT PRIMARY KEY,
+  aluno_id TEXT NOT NULL REFERENCES alunos(id) ON DELETE CASCADE,
+  canal TEXT NOT NULL, -- email | whatsapp
+  template_id TEXT REFERENCES mensagens_templates(id) ON DELETE SET NULL,
+  assunto TEXT,
+  mensagem TEXT NOT NULL, -- texto final, já com {nome}/link substituídos
+  destino TEXT, -- e-mail ou telefone usado no envio
+  status TEXT NOT NULL DEFAULT 'enviado', -- enviado | erro | link_gerado
+  erro TEXT,
+  criado_por TEXT REFERENCES usuarios(id),
+  criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_alunos_status ON alunos(status);
 CREATE INDEX IF NOT EXISTS idx_matriculas_aluno ON matriculas(aluno_id);
 CREATE INDEX IF NOT EXISTS idx_agendamentos_turma_data ON agendamentos(turma_id, data_aula);
@@ -290,3 +347,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_alunos_secullum_id ON alunos(secullum_id) 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_planos_secullum_id ON planos(secullum_id) WHERE secullum_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_matriculas_secullum_id ON matriculas(secullum_id) WHERE secullum_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_cobrancas_secullum_numero ON cobrancas(secullum_numero) WHERE secullum_numero IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_concessoes_acesso_aluno ON concessoes_acesso(aluno_id);
+CREATE INDEX IF NOT EXISTS idx_concessoes_acesso_validade ON concessoes_acesso(aluno_id, valido_ate);
+CREATE INDEX IF NOT EXISTS idx_mensagens_enviadas_aluno ON mensagens_enviadas(aluno_id);
+CREATE INDEX IF NOT EXISTS idx_mensagens_enviadas_criado_em ON mensagens_enviadas(criado_em);

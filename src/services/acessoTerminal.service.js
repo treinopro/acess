@@ -249,6 +249,28 @@ async function possuiCobrancaEmAtraso(alunoId) {
 }
 
 /**
+ * Concessão de acesso especial/gratuito (2026-07, feature de recuperação de
+ * clientes — ver src/routes/recuperacao.routes.js e tabela
+ * concessoes_acesso): permite liberar a catraca temporariamente pra um aluno
+ * inadimplente, sem tocar em nenhuma cobrança de verdade (ex.: "5 dias
+ * grátis pra retomar aos treinos" mandado por e-mail/WhatsApp). Só é
+ * consultada quando o bloqueio seria por INADIMPLÊNCIA — ver
+ * verificarAutorizacaoAluno logo abaixo.
+ */
+async function possuiConcessaoAcessoAtivaEm(cliente, alunoId) {
+  const hojeISO = new Date().toISOString().slice(0, 10);
+  const result = await cliente.execute({
+    sql: 'SELECT COUNT(*) as total FROM concessoes_acesso WHERE aluno_id = ? AND valido_ate >= ?',
+    args: [alunoId, hojeISO],
+  });
+  return Number(result.rows[0].total) > 0;
+}
+
+async function possuiConcessaoAcessoAtiva(alunoId) {
+  return possuiConcessaoAcessoAtivaEm(db, alunoId);
+}
+
+/**
  * Aviso de vencimento mostrado no totem/catraca a cada check-in (2026-07):
  * busca a mensalidade em aberto (pendente ou atrasada, vinculada a matrícula)
  * com o vencimento mais próximo, e monta a mensagem "faltam N dias" (ainda no
@@ -391,16 +413,33 @@ function motivoBloqueioPorStatus(aluno) {
  */
 async function verificarAutorizacaoAluno(aluno) {
   const motivoStatus = motivoBloqueioPorStatus(aluno);
-  if (motivoStatus) return { autorizado: false, motivo: motivoStatus };
 
-  const emAtraso = await dbResiliente.comFallback(
-    'possuiCobrancaEmAtraso',
-    () => possuiCobrancaEmAtrasoEm(db, aluno.id),
-    () => possuiCobrancaEmAtrasoEm(dbOffline, aluno.id),
+  // Cadastro trancado/inativo/outro status manual: bloqueia sempre, concessão
+  // especial NÃO reativa (é uma decisão do admin não relacionada a
+  // pagamento). Só o caso "inadimplente" é potencialmente contornável por uma
+  // concessão de acesso especial.
+  if (motivoStatus && motivoStatus !== 'Existem mensalidades em atraso.') {
+    return { autorizado: false, motivo: motivoStatus };
+  }
+
+  const emAtraso = motivoStatus
+    ? true // status já diz 'inadimplente' — trata como em atraso sem precisar consultar cobrancas de novo
+    : await dbResiliente.comFallback(
+      'possuiCobrancaEmAtraso',
+      () => possuiCobrancaEmAtrasoEm(db, aluno.id),
+      () => possuiCobrancaEmAtrasoEm(dbOffline, aluno.id),
+    );
+
+  if (!emAtraso) return { autorizado: true, motivo: null };
+
+  const concessaoAtiva = await dbResiliente.comFallback(
+    'possuiConcessaoAcessoAtiva',
+    () => possuiConcessaoAcessoAtivaEm(db, aluno.id),
+    () => possuiConcessaoAcessoAtivaEm(dbOffline, aluno.id),
   );
-  if (emAtraso) return { autorizado: false, motivo: 'Existem mensalidades em atraso.' };
+  if (concessaoAtiva) return { autorizado: true, motivo: null };
 
-  return { autorizado: true, motivo: null };
+  return { autorizado: false, motivo: 'Existem mensalidades em atraso.' };
 }
 
 /**
@@ -412,23 +451,29 @@ async function verificarAutorizacaoAluno(aluno) {
  * só que em lote.
  */
 async function listarAutorizacoesBiometricas() {
-  const [resultAlunos, resultAtraso] = await Promise.all([
+  const hojeISO = new Date().toISOString().slice(0, 10);
+  const [resultAlunos, resultAtraso, resultConcessoes] = await Promise.all([
     db.execute("SELECT id, nome, status, biometria_id FROM alunos WHERE biometria_id IS NOT NULL AND biometria_id != ''"),
     db.execute(`SELECT DISTINCT aluno_id FROM cobrancas
                 WHERE matricula_id IS NOT NULL AND (
                   status = 'atrasado'
                   OR (status = 'pendente' AND vencimento IS NOT NULL AND vencimento < date('now'))
                 )`),
+    db.execute({ sql: 'SELECT DISTINCT aluno_id FROM concessoes_acesso WHERE valido_ate >= ?', args: [hojeISO] }),
   ]);
 
   const idsEmAtraso = new Set(resultAtraso.rows.map((linha) => linha.aluno_id));
+  const idsComConcessao = new Set(resultConcessoes.rows.map((linha) => linha.aluno_id));
 
   return resultAlunos.rows.map((aluno) => {
     const motivoStatus = motivoBloqueioPorStatus(aluno);
-    if (motivoStatus) {
+    // Mesma regra de verificarAutorizacaoAluno: concessão só contorna
+    // inadimplência (status ou cobrança em atraso), nunca trancamento/inatividade.
+    if (motivoStatus && motivoStatus !== 'Existem mensalidades em atraso.') {
       return { biometria_id: aluno.biometria_id, autorizado: false, aluno_nome: aluno.nome, motivo: motivoStatus };
     }
-    if (idsEmAtraso.has(aluno.id)) {
+    const emAtraso = motivoStatus ? true : idsEmAtraso.has(aluno.id);
+    if (emAtraso && !idsComConcessao.has(aluno.id)) {
       return { biometria_id: aluno.biometria_id, autorizado: false, aluno_nome: aluno.nome, motivo: 'Existem mensalidades em atraso.' };
     }
     return { biometria_id: aluno.biometria_id, autorizado: true, aluno_nome: aluno.nome, motivo: null };
@@ -453,16 +498,8 @@ async function notificarAgenteAtualizacaoAluno(alunoId) {
     const aluno = result.rows[0];
     if (!aluno || !aluno.biometria_id) return;
 
-    const motivoStatus = motivoBloqueioPorStatus(aluno);
-    let item;
-    if (motivoStatus) {
-      item = { biometria_id: aluno.biometria_id, autorizado: false, aluno_nome: aluno.nome, motivo: motivoStatus };
-    } else {
-      const emAtraso = await possuiCobrancaEmAtraso(aluno.id);
-      item = emAtraso
-        ? { biometria_id: aluno.biometria_id, autorizado: false, aluno_nome: aluno.nome, motivo: 'Existem mensalidades em atraso.' }
-        : { biometria_id: aluno.biometria_id, autorizado: true, aluno_nome: aluno.nome, motivo: null };
-    }
+    const { autorizado, motivo } = await verificarAutorizacaoAluno(aluno);
+    const item = { biometria_id: aluno.biometria_id, autorizado, aluno_nome: aluno.nome, motivo };
 
     await agenteGateway.enviarComando('atualizar_cache', { itens: [item], substituir_tudo: false });
   } catch {
@@ -611,6 +648,7 @@ module.exports = {
   notificarAgenteAtualizacaoAluno,
   temMatriculaAtiva,
   possuiCobrancaEmAtraso,
+  possuiConcessaoAcessoAtiva,
   buscarAvisoVencimento,
   buscarAvisoVencimentoSeguro,
   registrarAcesso,

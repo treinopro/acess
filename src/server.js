@@ -17,6 +17,7 @@ const usuariosRoutes = require('./routes/usuarios.routes');
 const terminalRoutes = require('./routes/terminal.routes');
 const portalRoutes = require('./routes/portal.routes');
 const treinosRoutes = require('./routes/treinos.routes');
+const recuperacaoRoutes = require('./routes/recuperacao.routes');
 const { router: configRoutes } = require('./routes/config.routes');
 const { rodar: rodarBackup } = require('./jobs/backup');
 const { atualizarCobrancasVencidas } = require('./services/cobrancas.service');
@@ -85,6 +86,7 @@ app.use('/api/terminal', terminalRoutes);
 app.use('/api/portal', portalRoutes);
 app.use('/api/treinos', treinosRoutes);
 app.use('/api/config', configRoutes);
+app.use('/api/recuperacao', recuperacaoRoutes);
 
 app.use(errorHandler);
 

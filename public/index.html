@@ -38,6 +38,7 @@
         <button class="nav-btn" data-secao="pagamentos">Contas a Receber</button>
         <button class="nav-btn" data-secao="pagamento-rapido">Pagamento Rápido</button>
         <button class="nav-btn" data-secao="relatorios">Relatórios</button>
+        <button class="nav-btn oculto" id="nav-recuperacao" data-secao="recuperacao">Recuperação de Clientes</button>
         <button class="nav-btn oculto" id="nav-usuarios" data-secao="usuarios">Usuários</button>
         <button class="nav-btn oculto" id="nav-config" data-secao="config">Configurações</button>
         <button class="nav-btn oculto" id="nav-catraca" data-secao="catraca">Catraca</button>
@@ -127,7 +128,6 @@
           </thead>
           <tbody id="lista-alunos"></tbody>
         </table>
-        <p id="alunos-total-resumo" style="font-size:13px;color:#667085;margin-top:8px"></p>
       </section>
 
       <!-- PERFIL DO ALUNO -->
@@ -352,7 +352,6 @@
             </thead>
             <tbody id="perfil-lista-cobrancas"></tbody>
           </table>
-          <p id="perfil-financeiro-total-resumo" style="font-size:13px;color:#667085;margin-top:8px"></p>
         </div>
 
         <!-- ABA: Treino -->
@@ -615,7 +614,6 @@
             </thead>
             <tbody id="pr-lista-contas"></tbody>
           </table>
-          <p id="pr-contas-total-resumo" style="font-size:13px;color:#667085;margin-top:8px"></p>
         </div>
       </section>
 
@@ -680,32 +678,6 @@
         </div>
         <p style="margin:0 0 12px;color:#667085;font-size:13px">Mostrando contas do período selecionado acima. O período escolhido fica valendo até você trocar por outro.</p>
 
-        <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap;background:#fff7ed;border:1px solid #fdba74">
-          <div>
-            <label title="Filtra a coluna 'Último acesso' abaixo: mostra a data mais recente em que cada aluno passou pela catraca dentro desse período.">Último acesso entre</label>
-            <input type="date" id="conta-acesso-de" />
-          </div>
-          <div>
-            <label>até</label>
-            <input type="date" id="conta-acesso-ate" />
-          </div>
-          <div>
-            <label>Atalho</label>
-            <select id="conta-acesso-atalho">
-              <option value="">Período do último acesso...</option>
-              <option value="7">Sem acesso há mais de 7 dias</option>
-              <option value="15">Sem acesso há mais de 15 dias</option>
-              <option value="30">Sem acesso há mais de 30 dias</option>
-              <option value="60">Sem acesso há mais de 60 dias</option>
-              <option value="90">Sem acesso há mais de 90 dias</option>
-            </select>
-          </div>
-          <button type="button" class="btn-secundario" id="btn-limpar-filtro-acesso">Limpar filtro de acesso</button>
-          <p style="margin:0;color:#9a3412;font-size:12.5px;flex-basis:100%">
-            Use para identificar alunos com contas em atraso que também pararam de frequentar a academia — sinal de risco de cancelamento.
-          </p>
-        </div>
-
         <table class="tabela">
           <thead>
             <tr>
@@ -716,7 +688,6 @@
               <th class="th-ordenavel" data-sort="status" style="cursor:pointer;user-select:none">Status <span class="seta-ordenacao" data-seta="status"></span></th>
               <th class="th-ordenavel" data-sort="data_pago" style="cursor:pointer;user-select:none">Data Pago <span class="seta-ordenacao" data-seta="data_pago"></span></th>
               <th class="th-ordenavel" data-sort="valor_pago" style="cursor:pointer;user-select:none">Valor Pago <span class="seta-ordenacao" data-seta="valor_pago"></span></th>
-              <th title="Data mais recente de acesso à academia dentro do período selecionado acima (em branco = qualquer período / desde sempre).">Último acesso</th>
               <th>Ações</th>
             </tr>
           </thead>
@@ -788,7 +759,6 @@
           <button class="relatorio-tab-btn" data-relatorio="acesso-diario">Acesso Diário</button>
           <button class="relatorio-tab-btn" data-relatorio="acesso-pessoal">Acesso Pessoal</button>
           <button class="relatorio-tab-btn" data-relatorio="ultimo-acesso">Último Acesso</button>
-          <button class="relatorio-tab-btn" data-relatorio="pessoas">Pessoas</button>
         </div>
 
         <!-- Relatório: Contas a Receber -->
@@ -906,32 +876,135 @@
             <tbody id="rel-ultimo-lista"></tbody>
           </table>
         </div>
+      </section>
 
-        <!-- Relatório: Pessoas (dados cadastrais básicos, pra achar quem está com cadastro incompleto) -->
-        <div class="relatorio-painel oculto" data-relatorio-painel="pessoas">
+      <!-- RECUPERAÇÃO DE CLIENTES (evasão / retenção — 2026-07) -->
+      <section id="secao-recuperacao" class="secao oculto">
+        <div class="secao-topo">
+          <h2>Recuperação de Clientes</h2>
+          <span class="badge risco-evasao oculto" id="recup-aviso-aniversariantes-hoje"></span>
+        </div>
+
+        <div class="perfil-tabs">
+          <button class="recup-tab-btn ativo" data-recup="dias-sem-acesso">Dias sem acesso</button>
+          <button class="recup-tab-btn" data-recup="aniversariantes">Aniversariantes</button>
+          <button class="recup-tab-btn" data-recup="templates">Modelos de mensagem</button>
+          <button class="recup-tab-btn" data-recup="historico">Histórico</button>
+        </div>
+
+        <!-- Painel: Dias sem acesso -->
+        <div class="recup-painel" data-recup-painel="dias-sem-acesso">
+          <p style="font-size:13px;color:#667085;margin:0 0 14px">
+            Alunos que pararam de aparecer — quanto maior o número de dias, maior o risco de cancelamento
+            (principalmente combinado com contas em atraso, destacado em laranja abaixo).
+          </p>
           <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
-            <div style="flex:1;min-width:200px">
+            <div style="flex:1;min-width:180px">
               <label>Buscar por nome</label>
               <span class="campo-busca-wrap" style="display:block">
-                <input type="text" id="rel-pessoas-busca" placeholder="Nome do aluno..." />
-                <button type="button" class="btn-limpar-busca" data-alvo="rel-pessoas-busca" data-buscar="btn-rel-pessoas-buscar" title="Limpar busca">&times;</button>
+                <input type="text" id="recup-dias-busca" placeholder="Nome do aluno..." />
+                <button type="button" class="btn-limpar-busca" data-alvo="recup-dias-busca" data-buscar="btn-recup-dias-buscar" title="Limpar busca">&times;</button>
               </span>
             </div>
+            <div>
+              <label>Mínimo de dias sem acesso</label>
+              <select id="recup-dias-minimo">
+                <option value="">Todos</option>
+                <option value="7">7+ dias</option>
+                <option value="15" selected>15+ dias</option>
+                <option value="30">30+ dias</option>
+                <option value="60">60+ dias</option>
+                <option value="90">90+ dias</option>
+              </select>
+            </div>
             <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#667085;padding-bottom:9px">
-              <input type="checkbox" id="rel-pessoas-mostrar-inativos" style="width:auto" /> Mostrar inativos
+              <input type="checkbox" id="recup-dias-mostrar-inativos" style="width:auto" /> Mostrar inativos
             </label>
-            <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#667085;padding-bottom:9px">
-              <input type="checkbox" id="rel-pessoas-so-incompletos" style="width:auto" /> Só com cadastro incompleto
-            </label>
-            <button type="button" class="btn-primario" id="btn-rel-pessoas-buscar">Filtrar</button>
+            <button type="button" class="btn-primario" id="btn-recup-dias-buscar">Filtrar</button>
           </div>
+
+          <div style="display:flex;gap:14px;align-items:center;margin:14px 0;flex-wrap:wrap">
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px">
+              <input type="checkbox" id="recup-dias-selecionar-todos" style="width:auto" /> Selecionar todos
+            </label>
+            <button type="button" class="btn-secundario" id="btn-recup-dias-enviar-selecionados" disabled>Enviar mensagem aos selecionados</button>
+            <span id="recup-dias-selecionados-contagem" style="font-size:13px;color:#667085"></span>
+          </div>
+
           <table class="tabela">
             <thead>
-              <tr><th>Nome</th><th>Biometria</th><th>CPF</th><th>Telefone</th><th>E-mail</th><th>Status</th><th>Pendências</th></tr>
+              <tr>
+                <th style="width:30px"></th>
+                <th>Aluno</th>
+                <th>Dias sem acesso</th>
+                <th>Status</th>
+                <th>Ações</th>
+              </tr>
             </thead>
-            <tbody id="rel-pessoas-lista"></tbody>
+            <tbody id="recup-dias-lista"></tbody>
           </table>
-          <p id="rel-pessoas-total" style="font-size:13px;color:#667085;margin-top:8px"></p>
+          <p id="recup-dias-total" style="font-size:13px;color:#667085;margin-top:8px"></p>
+        </div>
+
+        <!-- Painel: Aniversariantes -->
+        <div class="recup-painel oculto" data-recup-painel="aniversariantes">
+          <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
+            <div>
+              <label>Mês</label>
+              <select id="recup-aniv-mes"></select>
+            </div>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#667085;padding-bottom:9px">
+              <input type="checkbox" id="recup-aniv-mostrar-inativos" style="width:auto" /> Mostrar inativos
+            </label>
+            <button type="button" class="btn-primario" id="btn-recup-aniv-buscar">Filtrar</button>
+          </div>
+
+          <div id="recup-aniv-calendario" class="recup-aniv-calendario"></div>
+
+          <div style="display:flex;gap:14px;align-items:center;margin:14px 0;flex-wrap:wrap">
+            <span id="recup-aniv-filtro-dia-label" style="font-size:13px;color:#667085"></span>
+            <button type="button" class="btn-secundario" id="btn-recup-aniv-enviar-selecionados" disabled>Enviar mensagem aos selecionados</button>
+          </div>
+
+          <table class="tabela">
+            <thead><tr><th style="width:30px"></th><th>Dia</th><th>Aluno</th><th>Telefone</th><th>E-mail</th></tr></thead>
+            <tbody id="recup-aniv-lista"></tbody>
+          </table>
+        </div>
+
+        <!-- Painel: Modelos de mensagem -->
+        <div class="recup-painel oculto" data-recup-painel="templates">
+          <div class="secao-topo">
+            <h3 style="margin:0">Modelos de mensagem</h3>
+            <button type="button" class="btn-primario" id="btn-novo-recup-template">+ Novo modelo</button>
+          </div>
+          <table class="tabela">
+            <thead><tr><th>Nome</th><th>Link</th><th>Dias grátis</th><th>Ativo</th><th>Ações</th></tr></thead>
+            <tbody id="recup-templates-lista"></tbody>
+          </table>
+        </div>
+
+        <!-- Painel: Histórico -->
+        <div class="recup-painel oculto" data-recup-painel="historico">
+          <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
+            <div style="flex:1;min-width:180px">
+              <label>Aluno</label>
+              <select id="recup-hist-aluno"><option value="">Todos os alunos</option></select>
+            </div>
+            <div>
+              <label>Canal</label>
+              <select id="recup-hist-canal">
+                <option value="">Todos</option>
+                <option value="email">E-mail</option>
+                <option value="whatsapp">WhatsApp</option>
+              </select>
+            </div>
+            <button type="button" class="btn-primario" id="btn-recup-hist-buscar">Filtrar</button>
+          </div>
+          <table class="tabela">
+            <thead><tr><th>Data</th><th>Aluno</th><th>Canal</th><th>Status</th><th>Mensagem</th></tr></thead>
+            <tbody id="recup-hist-lista"></tbody>
+          </table>
         </div>
       </section>
 
@@ -1372,6 +1445,115 @@
           <button type="button" class="btn-secundario" id="btn-cancelar-modal-parcelamento">Cancelar</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- MODAL: Modelo de mensagem (Recuperação de Clientes) -->
+  <div id="modal-recup-template" class="modal-overlay oculto">
+    <div class="modal-card">
+      <div class="modal-topo">
+        <h3 id="recup-template-titulo">Novo modelo</h3>
+        <button type="button" class="btn-fechar-painel" id="btn-fechar-modal-recup-template" title="Fechar">&times;</button>
+      </div>
+      <form id="form-recup-template">
+        <input type="hidden" id="rtpl-id" />
+        <label>Nome do modelo</label>
+        <input id="rtpl-nome" required placeholder="Ex: Oferta 5 dias grátis" />
+        <label>Saudação</label>
+        <input id="rtpl-saudacao" placeholder="Olá {nome}!" value="Olá {nome}!" />
+        <label>Corpo da mensagem</label>
+        <textarea id="rtpl-corpo" rows="4" required placeholder="Sentimos sua falta! Que tal voltar a treinar com a gente?"></textarea>
+        <label>Link</label>
+        <select id="rtpl-link-tipo">
+          <option value="portal">Link de acesso do aluno (padrão)</option>
+          <option value="oferta">Link/oferta personalizada</option>
+          <option value="nenhum">Sem link</option>
+        </select>
+        <div id="rtpl-oferta-campos" class="oculto grid-2">
+          <div><label>Texto do link</label><input id="rtpl-link-oferta-texto" placeholder="Aproveitar oferta" /></div>
+          <div><label>URL</label><input id="rtpl-link-oferta-url" placeholder="https://..." /></div>
+        </div>
+        <label style="display:flex;align-items:center;gap:6px;margin-top:12px">
+          <input type="checkbox" id="rtpl-conceder-check" style="width:auto" /> Este modelo concede acesso especial (dias grátis) ao ser enviado
+        </label>
+        <div id="rtpl-conceder-campos" class="oculto">
+          <label>Dias grátis</label>
+          <input type="number" id="rtpl-conceder-dias" min="1" max="90" value="5" style="max-width:120px" />
+        </div>
+        <label style="display:flex;align-items:center;gap:6px;margin-top:12px">
+          <input type="checkbox" id="rtpl-ativo" style="width:auto" checked /> Ativo
+        </label>
+        <div class="form-acoes">
+          <button type="submit" class="btn-primario">Salvar</button>
+          <button type="button" class="btn-secundario perigo oculto" id="btn-excluir-recup-template">Excluir</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: Enviar mensagem (Recuperação de Clientes) -->
+  <div id="modal-recup-enviar" class="modal-overlay oculto">
+    <div class="modal-card">
+      <div class="modal-topo">
+        <h3>Enviar mensagem</h3>
+        <button type="button" class="btn-fechar-painel" id="btn-fechar-modal-recup-enviar" title="Fechar">&times;</button>
+      </div>
+      <p style="margin:0 0 12px;color:#667085;font-size:13px" id="recup-enviar-destinatarios">—</p>
+
+      <label>Canal</label>
+      <div style="display:flex;gap:16px;margin-bottom:6px">
+        <label style="display:flex;align-items:center;gap:6px;font-size:14px">
+          <input type="radio" name="recup-enviar-canal" value="whatsapp" style="width:auto" checked /> WhatsApp (manual — você confirma o envio)
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:14px">
+          <input type="radio" name="recup-enviar-canal" value="email" style="width:auto" /> E-mail
+        </label>
+      </div>
+      <p class="erro oculto" id="recup-enviar-email-indisponivel" style="font-size:12px;margin:0 0 10px">
+        E-mail não configurado no servidor (variáveis GMAIL_USER / GMAIL_APP_PASSWORD). Veja o .env.example.
+      </p>
+
+      <label>Modelo (opcional)</label>
+      <select id="recup-enviar-template">
+        <option value="">Escrever mensagem manualmente</option>
+      </select>
+
+      <div class="grid-2">
+        <div><label>Saudação</label><input id="recup-enviar-saudacao" placeholder="Olá {nome}!" value="Olá {nome}!" /></div>
+        <div><label>Assunto (só e-mail)</label><input id="recup-enviar-assunto" placeholder="Sentimos sua falta na Academia Superação!" /></div>
+      </div>
+      <label>Mensagem</label>
+      <textarea id="recup-enviar-corpo" rows="4" placeholder="Corpo da mensagem..."></textarea>
+
+      <label>Link</label>
+      <select id="recup-enviar-link-tipo">
+        <option value="portal">Link de acesso do aluno (padrão)</option>
+        <option value="oferta">Link/oferta personalizada</option>
+        <option value="nenhum">Sem link</option>
+      </select>
+      <div id="recup-enviar-oferta-campos" class="oculto grid-2">
+        <div><label>Texto do link</label><input id="recup-enviar-link-oferta-texto" placeholder="Aproveitar oferta" /></div>
+        <div><label>URL</label><input id="recup-enviar-link-oferta-url" placeholder="https://..." /></div>
+      </div>
+
+      <label style="display:flex;align-items:center;gap:6px;margin-top:14px">
+        <input type="checkbox" id="recup-enviar-conceder-check" style="width:auto" /> Conceder acesso especial (dias grátis) ao enviar
+      </label>
+      <div id="recup-enviar-conceder-campos" class="oculto" style="margin-top:6px">
+        <label>Quantos dias de acesso grátis?</label>
+        <input type="number" id="recup-enviar-conceder-dias" min="1" max="90" value="5" style="max-width:120px" />
+        <p style="font-size:12px;color:#b54708;margin:6px 0 0">
+          ⚠️ Libera a catraca mesmo com mensalidade em atraso, pelo período informado, para cada aluno selecionado — sem criar nenhuma cobrança nova. Cadastro trancado/inativo continua bloqueado mesmo assim.
+        </p>
+      </div>
+
+      <p style="font-size:12px;color:#667085;margin-top:14px">Prévia (1º destinatário):</p>
+      <pre id="recup-enviar-preview" style="white-space:pre-wrap;background:#f9fafb;border:1px solid #e4e7ec;border-radius:8px;padding:10px;font-size:13px;max-height:160px;overflow:auto;font-family:inherit"></pre>
+
+      <div class="form-acoes">
+        <button type="button" class="btn-primario" id="btn-recup-enviar-confirmar">Enviar</button>
+      </div>
+      <div id="recup-enviar-resultado" style="margin-top:14px"></div>
     </div>
   </div>
 

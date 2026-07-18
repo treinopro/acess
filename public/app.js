@@ -173,9 +173,13 @@ function mostrarApp() {
   document.getElementById('nav-usuarios').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
   document.getElementById('nav-config').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
   document.getElementById('nav-catraca').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
+  document.getElementById('nav-recuperacao').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
   document.getElementById('btn-acessos-recentes').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
   document.getElementById('grupo-gerar-recorrentes').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
   carregarSecao('alunos');
+  // Aviso de aniversariantes de hoje (feature de Recuperação de Clientes) —
+  // roda logo após o login, sem precisar abrir a aba, pra quem tem permissão vê-la.
+  if (estado.usuario?.papel === 'admin') verificarAniversariantesHoje(true);
 }
 
 // ---------------- Identidade do app (nome + "licenciado para") ----------------
@@ -210,11 +214,12 @@ const LABELS_MENU = {
   pagamentos: 'Contas a Receber',
   'pagamento-rapido': 'Pagamento Rápido',
   relatorios: 'Relatórios',
+  recuperacao: 'Recuperação de Clientes',
   usuarios: 'Usuários',
   config: 'Configurações',
   catraca: 'Catraca',
 };
-const ORDEM_MENU_PADRAO = ['alunos', 'planos', 'agenda', 'pagamentos', 'pagamento-rapido', 'relatorios', 'usuarios', 'config', 'catraca'];
+const ORDEM_MENU_PADRAO = ['alunos', 'planos', 'agenda', 'pagamentos', 'pagamento-rapido', 'relatorios', 'recuperacao', 'usuarios', 'config', 'catraca'];
 let ordemMenuAtual = [...ORDEM_MENU_PADRAO];
 
 // Reordena os botões <nav> de verdade na barra lateral (move os elementos já
@@ -331,6 +336,7 @@ function carregarSecao(nome) {
   if (nome === 'pagamento-rapido') iniciarPagamentoRapido();
   if (nome === 'usuarios') carregarUsuarios();
   if (nome === 'config') { carregarConfiguracoesForm(); carregarPendenciasSincronizacao(); }
+  if (nome === 'recuperacao') carregarSecaoRecuperacao();
   if (nome === 'relatorios') carregarSecaoRelatorios();
 }
 
@@ -769,14 +775,7 @@ async function carregarAlunos() {
     const alunos = ordenarAlunos(alunosBrutos);
     atualizarSetasOrdenacaoAlunos();
     const tbody = document.getElementById('lista-alunos');
-    const resumoEl = document.getElementById('alunos-total-resumo');
     tbody.innerHTML = '';
-    if (resumoEl) {
-      const totalAtivos = alunos.filter((a) => a.status === 'ativo').length;
-      resumoEl.textContent = alunos.length
-        ? `${alunos.length} aluno(s) no total — ${totalAtivos} ativo(s)`
-        : '';
-    }
     alunos.forEach((aluno) => {
       const contato = [aluno.email, aluno.telefone].filter(Boolean).join(' · ') || '—';
       const tr = el(`
@@ -1059,7 +1058,7 @@ async function carregarPerfilAluno() {
     avaliacoes.forEach((av) => {
       const tr = el(`
         <tr>
-          <td>${formatarDataOuDataHora(av.data_avaliacao)}</td>
+          <td>${av.data_avaliacao}</td>
           <td>${av.peso_kg ? av.peso_kg + ' kg' : '—'}</td>
           <td>${av.percentual_gordura ? av.percentual_gordura + '%' : '—'}</td>
           <td>${av.objetivo || '—'}</td>
@@ -1083,8 +1082,8 @@ async function carregarPerfilAluno() {
       const tr = el(`
         <tr>
           <td>${m.plano_nome}</td>
-          <td>${formatarDataOuDataHora(m.data_inicio)}</td>
-          <td>${m.data_fim ? formatarDataOuDataHora(m.data_fim) : '—'}</td>
+          <td>${m.data_inicio}</td>
+          <td>${m.data_fim || '—'}</td>
           <td><span class="badge ${m.status}">${m.status}</span></td>
           <td>${(m.status === 'ativa' || m.status === 'pendente') ? '<button class="btn-linha perigo" data-acao="cancelar-matricula">Cancelar</button>' : '—'}</td>
         </tr>`);
@@ -1113,7 +1112,7 @@ async function carregarPerfilAluno() {
     document.getElementById('perfil-lista-agendamentos').innerHTML = agendamentos.length
       ? agendamentos.map((a) => `
         <tr>
-          <td>${formatarDataOuDataHora(a.data_aula)}</td>
+          <td>${a.data_aula}</td>
           <td>${a.turma_nome}</td>
           <td><span class="badge ${a.status}">${a.status}</span></td>
         </tr>`).join('')
@@ -1342,24 +1341,18 @@ document.getElementById('form-exercicio').addEventListener('submit', async (ev) 
 async function carregarFinanceiroPerfil() {
   const alunoId = document.getElementById('perfil-aluno-id').value;
   const tbody = document.getElementById('perfil-lista-cobrancas');
-  const resumoEl = document.getElementById('perfil-financeiro-total-resumo');
-  if (!alunoId) { tbody.innerHTML = ''; if (resumoEl) resumoEl.textContent = ''; return; }
+  if (!alunoId) { tbody.innerHTML = ''; return; }
   try {
     const contas = await api(`/api/pagamentos/cobrancas?aluno_id=${alunoId}`);
     tbody.innerHTML = contas.length ? '' : '<tr><td colspan="7">Nenhuma conta encontrada.</td></tr>';
-    if (!contas.length) { if (resumoEl) resumoEl.textContent = ''; return; }
-    let totalValor = 0;
-    let totalPago = 0;
     contas.forEach((c) => {
       const valorPago = Number(c.valor_pago_centavos || 0) || (c.status === 'pago' ? c.valor_centavos : 0);
       const dataPago = c.data_pago_calc || (c.status === 'pago' ? c.pago_em : null);
-      totalValor += c.valor_centavos;
-      totalPago += valorPago;
       const tr = el(`
         <tr>
           <td>${c.descricao || '—'}</td>
           <td>${formatarMoeda(c.valor_centavos)}</td>
-          <td>${c.vencimento ? formatarDataOuDataHora(c.vencimento) : '—'}</td>
+          <td>${c.vencimento || '—'}</td>
           <td><span class="badge ${c.status}">${c.status}</span></td>
           <td>${formatarDataOuDataHora(dataPago)}</td>
           <td>${valorPago > 0 ? formatarMoeda(valorPago) : '—'}</td>
@@ -1382,7 +1375,6 @@ async function carregarFinanceiroPerfil() {
       });
       tbody.appendChild(tr);
     });
-    if (resumoEl) resumoEl.textContent = `${contas.length} conta(s) — total ${formatarMoeda(totalValor)}, pago ${formatarMoeda(totalPago)}`;
   } catch (err) { mostrarToast(err.message, true); }
 }
 
@@ -1823,8 +1815,8 @@ async function carregarMatriculas() {
         <tr>
           <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${m.aluno_nome}</span></td>
           <td>${m.plano_nome}</td>
-          <td>${formatarDataOuDataHora(m.data_inicio)}</td>
-          <td>${m.data_fim ? formatarDataOuDataHora(m.data_fim) : '—'}</td>
+          <td>${m.data_inicio}</td>
+          <td>${m.data_fim || '—'}</td>
           <td><span class="badge ${m.status}">${m.status}</span></td>
           <td>${(m.status === 'ativa' || m.status === 'pendente') ? '<button class="btn-linha perigo" data-acao="cancelar">Cancelar</button>' : '—'}</td>
         </tr>
@@ -1943,7 +1935,7 @@ async function carregarAgendamentos() {
     agendamentos.forEach((a) => {
       const tr = el(`
         <tr>
-          <td>${formatarDataOuDataHora(a.data_aula)}</td>
+          <td>${a.data_aula}</td>
           <td>${a.turma_nome}</td>
           <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${a.aluno_nome}</span></td>
           <td><span class="badge ${a.status}">${a.status}</span></td>
@@ -2201,9 +2193,7 @@ async function selecionarAlunoPagamentoRapido(aluno) {
 
 async function carregarContasPagamentoRapido(alunoId) {
   const tbody = document.getElementById('pr-lista-contas');
-  const resumoEl = document.getElementById('pr-contas-total-resumo');
   tbody.innerHTML = '<tr><td colspan="5">Carregando...</td></tr>';
-  if (resumoEl) resumoEl.textContent = '';
   try {
     const contas = await api(`/api/pagamentos/cobrancas?aluno_id=${alunoId}`);
     if (!contas.length) {
@@ -2218,17 +2208,13 @@ async function carregarContasPagamentoRapido(alunoId) {
       return (b.vencimento || '').localeCompare(a.vencimento || '');
     });
     tbody.innerHTML = '';
-    let totalValor = 0;
-    let totalEmAberto = 0;
     ordenadas.forEach((c) => {
       const aberta = c.status === 'pendente' || c.status === 'atrasado';
-      totalValor += c.valor_centavos;
-      if (aberta) totalEmAberto += c.valor_centavos;
       const tr = el(`
         <tr>
           <td>${c.descricao || '—'}</td>
           <td>${formatarMoeda(c.valor_centavos)}</td>
-          <td>${c.vencimento ? formatarDataOuDataHora(c.vencimento) : '—'}</td>
+          <td>${c.vencimento || '—'}</td>
           <td><span class="badge ${c.status}">${c.status}</span></td>
           <td><button class="btn-linha ${aberta ? 'btn-primario' : ''}" data-acao="abrir">${aberta ? 'Pagar' : 'Ver'}</button></td>
         </tr>
@@ -2236,9 +2222,6 @@ async function carregarContasPagamentoRapido(alunoId) {
       tr.querySelector('[data-acao="abrir"]').addEventListener('click', () => abrirModalConta(c));
       tbody.appendChild(tr);
     });
-    if (resumoEl) {
-      resumoEl.textContent = `${contas.length} conta(s) — total ${formatarMoeda(totalValor)}, em aberto ${formatarMoeda(totalEmAberto)}`;
-    }
   } catch (err) {
     mostrarToast(err.message, true);
   }
@@ -2306,28 +2289,6 @@ document.querySelectorAll('#secao-pagamentos .th-ordenavel').forEach((th) => {
   th.addEventListener('click', () => alternarOrdenacaoContas(th.dataset.sort));
 });
 
-// Busca a data do último acesso de cada aluno (via catraca/totem), dentro do período
-// selecionado no filtro "Último acesso entre/até" da tela de Contas a Receber. Retorna
-// um Map aluno_id -> ultimo_acesso (string do servidor) só com quem tem pelo menos um
-// acesso no período; quem não aparece no Map não acessou (ou nunca acessou) nesse período.
-// Esse endpoint é restrito a admin — se falhar por permissão (usuário não-admin), retorna
-// null pra distinguir "sem permissão de ver a coluna" de "aluno realmente sem acesso".
-async function buscarMapaUltimoAcessoParaContas() {
-  const de = document.getElementById('conta-acesso-de')?.value;
-  const ate = document.getElementById('conta-acesso-ate')?.value;
-  const params = new URLSearchParams({ incluir_inativos: 'true' });
-  if (de) params.set('data_inicio', de);
-  if (ate) params.set('data_fim', ate);
-  try {
-    const lista = await api(`/api/terminal/acessos/ultimo-por-aluno?${params.toString()}`);
-    return new Map(lista.map((a) => [a.aluno_id, a.ultimo_acesso]));
-  } catch (err) {
-    // Não trava a listagem de contas se a busca de acessos falhar (ex.: sem permissão) —
-    // só fica sem a coluna preenchida.
-    return null;
-  }
-}
-
 async function carregarContas() {
   try {
     const alunoId = document.getElementById('filtro-conta-aluno').value;
@@ -2337,8 +2298,6 @@ async function carregarContas() {
     const campoData = document.getElementById('conta-filtro-data-campo').value || 'vencimento';
     const periodoDe = document.getElementById('conta-periodo-de').value;
     const periodoAte = document.getElementById('conta-periodo-ate').value;
-    const acessoDe = document.getElementById('conta-acesso-de').value;
-    const acessoAte = document.getElementById('conta-acesso-ate').value;
     const params = new URLSearchParams();
     if (alunoId) params.set('aluno_id', alunoId);
     if (status) params.set('status', status);
@@ -2347,11 +2306,7 @@ async function carregarContas() {
     if (periodoDe) params.set(campoData === 'pagamento' ? 'pagamento_de' : 'vencimento_de', periodoDe);
     if (periodoAte) params.set(campoData === 'pagamento' ? 'pagamento_ate' : 'vencimento_ate', periodoAte);
 
-    const [contasBrutas, mapaUltimoAcesso] = await Promise.all([
-      api(`/api/pagamentos/cobrancas${params.toString() ? '?' + params.toString() : ''}`),
-      buscarMapaUltimoAcessoParaContas(),
-    ]);
-    const periodoAcessoAtivo = !!(acessoDe || acessoAte);
+    const contasBrutas = await api(`/api/pagamentos/cobrancas${params.toString() ? '?' + params.toString() : ''}`);
     const contas = ordenarContas(contasBrutas);
     atualizarSetasOrdenacaoContas();
     const tbody = document.getElementById('lista-contas');
@@ -2359,7 +2314,7 @@ async function carregarContas() {
     tbody.innerHTML = '';
 
     if (!contas.length) {
-      tbody.innerHTML = '<tr><td colspan="9">Nenhuma conta encontrada.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8">Nenhuma conta encontrada.</td></tr>';
       resumoEl.textContent = '';
       return;
     }
@@ -2378,39 +2333,15 @@ async function carregarContas() {
       const dataPago = c.data_pago_calc || (c.status === 'pago' ? c.pago_em : null);
       totalValor += c.valor_centavos;
       totalPago += valorPago;
-
-      // Coluna "Último acesso": se não tem nenhum acesso registrado no período escolhido
-      // acima, e a conta está atrasada, isso é o sinal de risco de cancelamento que a
-      // recepção quer enxergar (parou de vir + tem conta em aberto). Se mapaUltimoAcesso
-      // for null, a busca falhou (ex.: usuário sem permissão de admin) — mostra "—" em
-      // vez de dizer "nunca acessou", que seria enganoso.
-      const ultimoAcesso = mapaUltimoAcesso ? mapaUltimoAcesso.get(c.aluno_id) : undefined;
-      const semAcessoNoPeriodo = mapaUltimoAcesso !== null && !ultimoAcesso;
-      const riscoCancelamento = c.status === 'atrasado' && semAcessoNoPeriodo;
-      let celulaAcesso;
-      if (ultimoAcesso) {
-        celulaAcesso = formatarDataOuDataHora(ultimoAcesso);
-      } else if (mapaUltimoAcesso === null) {
-        celulaAcesso = '—';
-      } else if (periodoAcessoAtivo) {
-        celulaAcesso = '<span style="color:#c2410c;font-weight:600">Sem acesso no período</span>';
-      } else {
-        celulaAcesso = '<span style="color:#c2410c;font-weight:600">Nunca acessou</span>';
-      }
-      if (riscoCancelamento) {
-        celulaAcesso += ' ⚠️';
-      }
-
       const tr = el(`
-        <tr${riscoCancelamento ? ' style="background:#fff7ed"' : ''}>
+        <tr>
           <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${c.aluno_nome}</span></td>
           <td>${c.descricao || '—'}</td>
           <td>${formatarMoeda(c.valor_centavos)}</td>
-          <td>${c.vencimento ? formatarDataOuDataHora(c.vencimento) : '—'}</td>
+          <td>${c.vencimento || '—'}</td>
           <td><span class="badge ${c.status}">${c.status}</span></td>
           <td>${formatarDataOuDataHora(dataPago)}</td>
           <td>${valorPago > 0 ? formatarMoeda(valorPago) : '—'}</td>
-          <td title="${riscoCancelamento ? 'Conta em atraso e sem acesso no período selecionado — possível risco de cancelamento.' : ''}">${celulaAcesso}</td>
           <td>
             <button class="btn-linha" data-acao="editar">Alterar</button>
             <button class="btn-linha" data-acao="parcelar">Parcelar</button>
@@ -2466,38 +2397,6 @@ let buscaContaTimeout = null;
 document.getElementById('busca-conta-nome').addEventListener('input', () => {
   clearTimeout(buscaContaTimeout);
   buscaContaTimeout = setTimeout(carregarContas, 300);
-});
-
-// Filtro "Último acesso" (identificar quem parou de frequentar) — período manual
-// (datas) ou atalho pronto ("sem acesso há mais de N dias", que preenche o campo
-// "até" com hoje-N e limpa o "de", pra pegar todo mundo sem acesso desde então).
-document.getElementById('conta-acesso-de').addEventListener('change', () => {
-  document.getElementById('conta-acesso-atalho').value = '';
-  carregarContas();
-});
-document.getElementById('conta-acesso-ate').addEventListener('change', () => {
-  document.getElementById('conta-acesso-atalho').value = '';
-  carregarContas();
-});
-document.getElementById('conta-acesso-atalho').addEventListener('change', (ev) => {
-  const dias = ev.target.value;
-  const campoDe = document.getElementById('conta-acesso-de');
-  const campoAte = document.getElementById('conta-acesso-ate');
-  if (!dias) { campoDe.value = ''; campoAte.value = ''; carregarContas(); return; }
-  // Janela de hoje até N dias atrás: quem NÃO tiver nenhum acesso dentro dela é
-  // quem está "sem acesso há mais de N dias" — não basta olhar só até uma data no
-  // passado, senão um aluno que veio ontem apareceria como "sem acesso" também.
-  const limite = new Date();
-  limite.setDate(limite.getDate() - Number(dias));
-  campoDe.value = `${limite.getFullYear()}-${String(limite.getMonth() + 1).padStart(2, '0')}-${String(limite.getDate()).padStart(2, '0')}`;
-  campoAte.value = hojeLocalISO();
-  carregarContas();
-});
-document.getElementById('btn-limpar-filtro-acesso').addEventListener('click', () => {
-  document.getElementById('conta-acesso-de').value = '';
-  document.getElementById('conta-acesso-ate').value = '';
-  document.getElementById('conta-acesso-atalho').value = '';
-  carregarContas();
 });
 
 // Mostrar/ocultar os formulários de "conta manual" e "gerar cobrança" (ficam
@@ -3292,10 +3191,7 @@ async function carregarAcessosCatraca() {
 // data/período, conforme pedido.
 
 document.querySelectorAll('.relatorio-tab-btn').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    trocarAbaRelatorio(btn.dataset.relatorio);
-    if (btn.dataset.relatorio === 'pessoas') buscarRelatorioPessoas();
-  });
+  btn.addEventListener('click', () => trocarAbaRelatorio(btn.dataset.relatorio));
 });
 
 function trocarAbaRelatorio(nome) {
@@ -3346,7 +3242,7 @@ async function buscarRelatorioFinanceiro() {
           <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${c.aluno_nome}</span></td>
           <td>${c.descricao || '—'}</td>
           <td>${formatarMoeda(c.valor_centavos)}</td>
-          <td>${c.vencimento ? formatarDataOuDataHora(c.vencimento) : '—'}</td>
+          <td>${c.vencimento || '—'}</td>
           <td><span class="badge ${c.status}">${c.status}</span></td>
           <td>${formatarDataOuDataHora(dataPago)}</td>
           <td>${valorPago > 0 ? formatarMoeda(valorPago) : '—'}</td>
@@ -3465,68 +3361,6 @@ async function buscarRelatorioUltimoAcesso() {
 document.getElementById('btn-rel-ultimo-buscar').addEventListener('click', buscarRelatorioUltimoAcesso);
 document.getElementById('rel-ultimo-mostrar-inativos').addEventListener('change', buscarRelatorioUltimoAcesso);
 
-// ---- Relatório: Pessoas (dados cadastrais básicos, pra achar cadastro incompleto) ----
-// Não é um relatório financeiro nem de acesso — reaproveita GET /api/alunos (que já
-// devolve todas as colunas) só pra dar uma visão rápida de quem está faltando CPF,
-// telefone, e-mail ou biometria, sem precisar abrir o perfil de cada aluno um por um.
-async function buscarRelatorioPessoas() {
-  try {
-    const busca = document.getElementById('rel-pessoas-busca').value.trim();
-    const mostrarInativos = document.getElementById('rel-pessoas-mostrar-inativos').checked;
-    const soIncompletos = document.getElementById('rel-pessoas-so-incompletos').checked;
-    const params = new URLSearchParams();
-    if (busca) params.set('busca', busca);
-    if (mostrarInativos) params.set('incluir_inativos', 'true');
-
-    const alunosBrutos = await api(`/api/alunos${params.toString() ? '?' + params.toString() : ''}`);
-    const alunos = [...alunosBrutos].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
-    const tbody = document.getElementById('rel-pessoas-lista');
-    const resumoEl = document.getElementById('rel-pessoas-total');
-
-    const CAMPOS = [
-      { chave: 'biometria_id', rotulo: 'Biometria' },
-      { chave: 'cpf', rotulo: 'CPF' },
-      { chave: 'telefone', rotulo: 'Telefone' },
-      { chave: 'email', rotulo: 'E-mail' },
-    ];
-    const celulaCampo = (valor) => (valor
-      ? valor
-      : '<span style="color:#c2410c;font-weight:600">— faltando</span>');
-
-    let linhas = alunos.map((a) => {
-      const faltando = CAMPOS.filter((c) => !a[c.chave]).map((c) => c.rotulo);
-      return { aluno: a, faltando };
-    });
-    if (soIncompletos) linhas = linhas.filter((l) => l.faltando.length > 0);
-
-    tbody.innerHTML = linhas.length ? '' : '<tr><td colspan="7">Nenhuma pessoa encontrada.</td></tr>';
-    let totalIncompletos = 0;
-    linhas.forEach(({ aluno: a, faltando }) => {
-      if (faltando.length) totalIncompletos += 1;
-      const trPessoa = el(`
-        <tr>
-          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${a.nome}</span></td>
-          <td>${celulaCampo(a.biometria_id)}</td>
-          <td>${celulaCampo(a.cpf)}</td>
-          <td>${celulaCampo(a.telefone)}</td>
-          <td>${celulaCampo(a.email)}</td>
-          <td><span class="badge ${a.status}">${a.status}</span></td>
-          <td>${faltando.length ? `<span style="color:#c2410c;font-weight:600">${faltando.join(', ')}</span>` : '<span style="color:#15803d">Completo</span>'}</td>
-        </tr>
-      `);
-      trPessoa.querySelector('.nome-clicavel').addEventListener('click', () => abrirPerfilAluno(a.id));
-      tbody.appendChild(trPessoa);
-    });
-
-    resumoEl.textContent = linhas.length
-      ? `${linhas.length} pessoa(s) — ${totalIncompletos} com cadastro incompleto`
-      : '';
-  } catch (err) { mostrarToast(err.message, true); }
-}
-document.getElementById('btn-rel-pessoas-buscar').addEventListener('click', buscarRelatorioPessoas);
-document.getElementById('rel-pessoas-mostrar-inativos').addEventListener('change', buscarRelatorioPessoas);
-document.getElementById('rel-pessoas-so-incompletos').addEventListener('change', buscarRelatorioPessoas);
-
 // ---------------- Painel lateral "Acessos recentes" (persiste entre abas) ----------------
 // Reaproveita o mesmo endpoint /api/terminal/acessos usado na aba Catraca. O painel fica
 // fora das <section class="secao">, então trocar de aba não fecha ele; só o botão de X fecha.
@@ -3585,6 +3419,603 @@ document.getElementById('btn-acessos-recentes').addEventListener('click', () => 
   else abrirPainelAcessos();
 });
 document.getElementById('btn-fechar-acessos').addEventListener('click', fecharPainelAcessos);
+
+// ---------------- Recuperação de clientes / prevenção de evasão (2026-07) ----------------
+// Ver STATUS-PROJETO.md e src/routes/recuperacao.routes.js. Cobre: lista de
+// "dias sem acesso" (quem sumiu), aniversariantes do mês (calendário + lista),
+// modelos de mensagem reutilizáveis, envio por e-mail (Gmail SMTP) ou geração
+// de link do WhatsApp (SEMPRE manual — o admin clica e manda ele mesmo, nunca
+// dispara sozinho) e concessão opcional de acesso especial/gratuito (dias
+// grátis) junto do envio.
+
+const recupEstado = {
+  diasSelecionados: new Set(),
+  diasCache: new Map(), // aluno_id -> linha (evita nova requisição só pra montar a prévia)
+  anivSelecionados: new Set(),
+  anivCache: new Map(),
+  anivMesAtual: new Date().getMonth() + 1,
+  anivDiaFiltro: null,
+  templates: [],
+  enviarContexto: null, // { alunoIds: [...], origem: 'dias' | 'aniversariantes' }
+  emailConfigurado: false,
+};
+
+async function carregarSecaoRecuperacao() {
+  trocarAbaRecuperacao('dias-sem-acesso');
+  try {
+    const status = await api('/api/recuperacao/status');
+    recupEstado.emailConfigurado = Boolean(status?.email_configurado);
+  } catch (err) { /* não trava a tela — o composer avisa de novo na hora de enviar */ }
+  await carregarRecupTemplates();
+  await carregarDiasSemAcesso();
+  verificarAniversariantesHoje();
+}
+
+document.querySelectorAll('.recup-tab-btn').forEach((btn) => {
+  btn.addEventListener('click', () => trocarAbaRecuperacao(btn.dataset.recup));
+});
+
+function trocarAbaRecuperacao(nome) {
+  document.querySelectorAll('.recup-tab-btn').forEach((b) => b.classList.toggle('ativo', b.dataset.recup === nome));
+  document.querySelectorAll('.recup-painel').forEach((p) => p.classList.toggle('oculto', p.dataset.recupPainel !== nome));
+  if (nome === 'dias-sem-acesso') carregarDiasSemAcesso();
+  if (nome === 'aniversariantes') carregarAniversariantes();
+  if (nome === 'templates') carregarRecupTemplates();
+  if (nome === 'historico') carregarRecupHistorico();
+}
+
+// ---------- Dias sem acesso ----------
+
+async function carregarDiasSemAcesso() {
+  try {
+    const busca = document.getElementById('recup-dias-busca').value.trim();
+    const diasMinimo = document.getElementById('recup-dias-minimo').value;
+    const mostrarInativos = document.getElementById('recup-dias-mostrar-inativos').checked;
+    const params = new URLSearchParams();
+    if (busca) params.set('busca', busca);
+    if (diasMinimo) params.set('dias_minimo', diasMinimo);
+    if (mostrarInativos) params.set('incluir_inativos', 'true');
+
+    const linhas = await api(`/api/recuperacao/dias-sem-acesso${params.toString() ? `?${params.toString()}` : ''}`);
+    recupEstado.diasCache.clear();
+    recupEstado.diasSelecionados.clear();
+    atualizarBotaoEnviarSelecionadosDias();
+    document.getElementById('recup-dias-selecionar-todos').checked = false;
+
+    const tbody = document.getElementById('recup-dias-lista');
+    tbody.innerHTML = '';
+    if (!linhas.length) {
+      tbody.innerHTML = '<tr><td colspan="5">Nenhum aluno encontrado com esse filtro.</td></tr>';
+      document.getElementById('recup-dias-total').textContent = '';
+      return;
+    }
+
+    linhas.forEach((linha) => {
+      recupEstado.diasCache.set(linha.aluno_id, linha);
+      const statusTexto = linha.nunca_acessou
+        ? 'Nunca acessou'
+        : `${linha.dias_sem_acesso} dia${linha.dias_sem_acesso === 1 ? '' : 's'} sem acesso`;
+      const risco = linha.em_atraso && (linha.dias_sem_acesso === null || linha.dias_sem_acesso >= 15);
+      const tr = el(`
+        <tr style="${risco ? 'background:#fff7ed' : ''}">
+          <td><input type="checkbox" class="recup-dias-check" style="width:auto" /></td>
+          <td>
+            <span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${linha.nome}</span>${risco ? ' ⚠️' : ''}
+            ${linha.concessao_ativa ? ' <span class="badge ativo" title="Já tem acesso especial ativo">acesso grátis ativo</span>' : ''}
+          </td>
+          <td>${statusTexto}</td>
+          <td>
+            ${linha.em_atraso ? '<span class="badge atrasado">Em atraso</span>' : ''}
+            ${linha.status !== 'ativo' ? `<span class="badge ${linha.status}">${linha.status}</span>` : ''}
+          </td>
+          <td>
+            <button type="button" class="btn-linha" data-acao="enviar">Enviar mensagem</button>
+            <button type="button" class="btn-linha" data-acao="conceder">Conceder acesso</button>
+          </td>
+        </tr>
+      `);
+      tr.querySelector('.nome-clicavel').addEventListener('click', () => abrirPerfilAluno(linha.aluno_id));
+      tr.querySelector('.recup-dias-check').addEventListener('change', (ev) => {
+        if (ev.target.checked) recupEstado.diasSelecionados.add(linha.aluno_id);
+        else recupEstado.diasSelecionados.delete(linha.aluno_id);
+        atualizarBotaoEnviarSelecionadosDias();
+      });
+      tr.querySelector('[data-acao="enviar"]').addEventListener('click', () => abrirModalRecupEnviar([linha.aluno_id], 'dias'));
+      tr.querySelector('[data-acao="conceder"]').addEventListener('click', async () => {
+        const diasStr = prompt('Quantos dias de acesso especial conceder?', '5');
+        if (diasStr === null) return;
+        const dias = Number(diasStr);
+        if (!Number.isInteger(dias) || dias < 1 || dias > 90) { mostrarToast('Informe um número inteiro de dias entre 1 e 90.', true); return; }
+        const motivo = prompt('Motivo (opcional, aparece no histórico):', 'Recuperação de cliente');
+        if (!confirmar(`Conceder ${dias} dia(s) de acesso especial para ${linha.nome}, liberando a catraca mesmo com mensalidade em atraso?`)) return;
+        try {
+          await api('/api/recuperacao/conceder-acesso', { method: 'POST', body: JSON.stringify({ aluno_id: linha.aluno_id, dias, motivo: motivo || null }) });
+          mostrarToast('Acesso especial concedido.');
+          carregarDiasSemAcesso();
+        } catch (err) { mostrarToast(err.message, true); }
+      });
+      tbody.appendChild(tr);
+    });
+
+    document.getElementById('recup-dias-total').textContent = `${linhas.length} aluno(s) encontrado(s).`;
+  } catch (err) { mostrarToast(err.message, true); }
+}
+
+function atualizarBotaoEnviarSelecionadosDias() {
+  const n = recupEstado.diasSelecionados.size;
+  document.getElementById('btn-recup-dias-enviar-selecionados').disabled = n === 0;
+  document.getElementById('recup-dias-selecionados-contagem').textContent = n ? `${n} selecionado(s)` : '';
+}
+
+document.getElementById('btn-recup-dias-buscar').addEventListener('click', carregarDiasSemAcesso);
+document.getElementById('recup-dias-busca').addEventListener('input', () => {
+  clearTimeout(carregarDiasSemAcesso._t);
+  carregarDiasSemAcesso._t = setTimeout(carregarDiasSemAcesso, 400);
+});
+document.getElementById('recup-dias-minimo').addEventListener('change', carregarDiasSemAcesso);
+document.getElementById('recup-dias-mostrar-inativos').addEventListener('change', carregarDiasSemAcesso);
+document.getElementById('recup-dias-selecionar-todos').addEventListener('change', (ev) => {
+  document.querySelectorAll('.recup-dias-check').forEach((chk) => {
+    chk.checked = ev.target.checked;
+    chk.dispatchEvent(new Event('change'));
+  });
+});
+document.getElementById('btn-recup-dias-enviar-selecionados').addEventListener('click', () => {
+  abrirModalRecupEnviar([...recupEstado.diasSelecionados], 'dias');
+});
+
+// ---------- Aniversariantes ----------
+
+const NOMES_MESES_RECUP = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+
+function popularSelectMesAniversario() {
+  const select = document.getElementById('recup-aniv-mes');
+  if (select.options.length) return;
+  select.innerHTML = NOMES_MESES_RECUP.map((nome, idx) => `<option value="${idx + 1}">${nome}</option>`).join('');
+  select.value = String(new Date().getMonth() + 1);
+}
+
+async function carregarAniversariantes() {
+  try {
+    popularSelectMesAniversario();
+    const mes = document.getElementById('recup-aniv-mes').value || String(new Date().getMonth() + 1);
+    const mostrarInativos = document.getElementById('recup-aniv-mostrar-inativos').checked;
+    recupEstado.anivMesAtual = Number(mes);
+    const params = new URLSearchParams({ mes });
+    if (mostrarInativos) params.set('incluir_inativos', 'true');
+
+    const linhas = await api(`/api/recuperacao/aniversariantes?${params.toString()}`);
+    recupEstado.anivCache.clear();
+    linhas.forEach((l) => recupEstado.anivCache.set(l.aluno_id, l));
+    recupEstado.anivSelecionados.clear();
+    atualizarBotaoEnviarSelecionadosAniv();
+
+    renderizarCalendarioAniversariantes(linhas);
+    renderizarListaAniversariantes(linhas);
+  } catch (err) { mostrarToast(err.message, true); }
+}
+
+function diasNoMesRecup(mes, ano) {
+  return new Date(ano, mes, 0).getDate();
+}
+
+function renderizarCalendarioAniversariantes(linhas) {
+  const container = document.getElementById('recup-aniv-calendario');
+  container.innerHTML = '';
+  const ano = new Date().getFullYear();
+  const totalDias = diasNoMesRecup(recupEstado.anivMesAtual, ano);
+  // Quantas células vazias antes do dia 1, pra alinhar com o dia da semana certo (0=domingo).
+  const primeiroDiaSemana = new Date(ano, recupEstado.anivMesAtual - 1, 1).getDay();
+
+  const porDia = new Map();
+  linhas.forEach((l) => {
+    if (!porDia.has(l.dia_aniversario)) porDia.set(l.dia_aniversario, []);
+    porDia.get(l.dia_aniversario).push(l);
+  });
+
+  for (let i = 0; i < primeiroDiaSemana; i += 1) {
+    container.appendChild(el('<div class="recup-aniv-dia vazio">-</div>'));
+  }
+
+  for (let dia = 1; dia <= totalDias; dia += 1) {
+    const nomesDoDia = porDia.get(dia) || [];
+    const celula = el(`
+      <div class="recup-aniv-dia ${nomesDoDia.length ? 'tem-aniversariante' : ''}">
+        <span class="recup-aniv-dia-num">${dia}</span>
+        <span class="recup-aniv-dia-nomes">${nomesDoDia.slice(0, 2).map((n) => n.nome.split(' ')[0]).join(', ')}${nomesDoDia.length > 2 ? ` +${nomesDoDia.length - 2}` : ''}</span>
+      </div>
+    `);
+    if (recupEstado.anivDiaFiltro === dia) celula.classList.add('selecionado');
+    celula.addEventListener('click', () => {
+      recupEstado.anivDiaFiltro = recupEstado.anivDiaFiltro === dia ? null : dia;
+      renderizarCalendarioAniversariantes(linhas);
+      renderizarListaAniversariantes(linhas);
+    });
+    container.appendChild(celula);
+  }
+}
+
+function renderizarListaAniversariantes(linhas) {
+  const tbody = document.getElementById('recup-aniv-lista');
+  tbody.innerHTML = '';
+  const filtradas = recupEstado.anivDiaFiltro
+    ? linhas.filter((l) => l.dia_aniversario === recupEstado.anivDiaFiltro)
+    : linhas;
+
+  document.getElementById('recup-aniv-filtro-dia-label').textContent = recupEstado.anivDiaFiltro
+    ? `Mostrando dia ${recupEstado.anivDiaFiltro} (clique de novo no dia pra ver o mês inteiro)`
+    : `${linhas.length} aniversariante(s) em ${NOMES_MESES_RECUP[recupEstado.anivMesAtual - 1]}`;
+
+  if (!filtradas.length) {
+    tbody.innerHTML = '<tr><td colspan="5">Nenhum aniversariante encontrado.</td></tr>';
+    return;
+  }
+
+  filtradas.forEach((linha) => {
+    const tr = el(`
+      <tr>
+        <td><input type="checkbox" class="recup-aniv-check" style="width:auto" /></td>
+        <td>${linha.dia_aniversario}/${String(recupEstado.anivMesAtual).padStart(2, '0')}</td>
+        <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${linha.nome}</span></td>
+        <td>${linha.telefone || '—'}</td>
+        <td>${linha.email || '—'}</td>
+      </tr>
+    `);
+    tr.querySelector('.nome-clicavel').addEventListener('click', () => abrirPerfilAluno(linha.aluno_id));
+    tr.querySelector('.recup-aniv-check').addEventListener('change', (ev) => {
+      if (ev.target.checked) recupEstado.anivSelecionados.add(linha.aluno_id);
+      else recupEstado.anivSelecionados.delete(linha.aluno_id);
+      atualizarBotaoEnviarSelecionadosAniv();
+    });
+    tbody.appendChild(tr);
+  });
+}
+
+function atualizarBotaoEnviarSelecionadosAniv() {
+  document.getElementById('btn-recup-aniv-enviar-selecionados').disabled = recupEstado.anivSelecionados.size === 0;
+}
+
+document.getElementById('btn-recup-aniv-buscar').addEventListener('click', () => { recupEstado.anivDiaFiltro = null; carregarAniversariantes(); });
+document.getElementById('recup-aniv-mostrar-inativos').addEventListener('change', carregarAniversariantes);
+document.getElementById('btn-recup-aniv-enviar-selecionados').addEventListener('click', () => {
+  abrirModalRecupEnviar([...recupEstado.anivSelecionados], 'aniversariantes');
+});
+
+// Roda logo após o login (ver mostrarApp) — busca só os aniversariantes de
+// HOJE (mês + dia) pra mostrar o aviso no topo da seção e, na primeira
+// checagem da sessão, um toast — sem precisar abrir a aba Aniversariantes.
+async function verificarAniversariantesHoje(mostrarAvisoToast = false) {
+  try {
+    const hoje = new Date();
+    const params = new URLSearchParams({ mes: String(hoje.getMonth() + 1), dia: String(hoje.getDate()) });
+    const linhas = await api(`/api/recuperacao/aniversariantes?${params.toString()}`);
+    const badge = document.getElementById('recup-aviso-aniversariantes-hoje');
+    if (linhas.length) {
+      const nomes = linhas.map((l) => l.nome.split(' ')[0]).join(', ');
+      badge.textContent = `🎂 ${linhas.length} aniversariante(s) hoje: ${nomes}`;
+      badge.classList.remove('oculto');
+      if (mostrarAvisoToast) mostrarToast(`🎂 Hoje é aniversário de ${nomes}!`);
+    } else {
+      badge.classList.add('oculto');
+    }
+  } catch (err) { /* aviso não pode travar a tela */ }
+}
+
+// ---------- Modelos de mensagem ----------
+
+async function carregarRecupTemplates() {
+  try {
+    const templates = await api('/api/recuperacao/templates');
+    recupEstado.templates = templates;
+
+    const tbody = document.getElementById('recup-templates-lista');
+    tbody.innerHTML = '';
+    if (!templates.length) {
+      tbody.innerHTML = '<tr><td colspan="5">Nenhum modelo cadastrado ainda.</td></tr>';
+    } else {
+      const labelLink = { portal: 'Acesso do aluno', oferta: 'Personalizado', nenhum: 'Sem link' };
+      templates.forEach((t) => {
+        const tr = el(`
+          <tr>
+            <td>${t.nome}</td>
+            <td>${labelLink[t.link_tipo] || t.link_tipo}</td>
+            <td>${t.conceder_dias_gratis ? `${t.conceder_dias_gratis} dia(s)` : '—'}</td>
+            <td><span class="badge ${t.ativo ? 'ativo' : 'inativo'}">${t.ativo ? 'Ativo' : 'Inativo'}</span></td>
+            <td><button type="button" class="btn-linha" data-acao="editar">Editar</button></td>
+          </tr>
+        `);
+        tr.querySelector('[data-acao="editar"]').addEventListener('click', () => abrirModalRecupTemplate(t));
+        tbody.appendChild(tr);
+      });
+    }
+
+    // Popula o <select> de modelos usado no composer de envio, preservando a escolha atual.
+    const selectEnviar = document.getElementById('recup-enviar-template');
+    const atual = selectEnviar.value;
+    selectEnviar.innerHTML = `<option value="">Escrever mensagem manualmente</option>${
+      templates.filter((t) => t.ativo).map((t) => `<option value="${t.id}">${t.nome}</option>`).join('')}`;
+    selectEnviar.value = atual;
+  } catch (err) { mostrarToast(err.message, true); }
+}
+
+function abrirModalRecupTemplate(template) {
+  document.getElementById('form-recup-template').reset();
+  document.getElementById('rtpl-id').value = template?.id || '';
+  document.getElementById('recup-template-titulo').textContent = template ? 'Editar modelo' : 'Novo modelo';
+  document.getElementById('rtpl-nome').value = template?.nome || '';
+  document.getElementById('rtpl-saudacao').value = template?.saudacao || 'Olá {nome}!';
+  document.getElementById('rtpl-corpo').value = template?.corpo || '';
+  document.getElementById('rtpl-link-tipo').value = template?.link_tipo || 'portal';
+  document.getElementById('rtpl-link-oferta-texto').value = template?.link_oferta_texto || '';
+  document.getElementById('rtpl-link-oferta-url').value = template?.link_oferta_url || '';
+  document.getElementById('rtpl-oferta-campos').classList.toggle('oculto', (template?.link_tipo || 'portal') !== 'oferta');
+  document.getElementById('rtpl-conceder-check').checked = Boolean(template?.conceder_dias_gratis);
+  document.getElementById('rtpl-conceder-dias').value = template?.conceder_dias_gratis || 5;
+  document.getElementById('rtpl-conceder-campos').classList.toggle('oculto', !template?.conceder_dias_gratis);
+  document.getElementById('rtpl-ativo').checked = template ? Boolean(template.ativo) : true;
+  document.getElementById('btn-excluir-recup-template').classList.toggle('oculto', !template);
+  document.getElementById('modal-recup-template').classList.remove('oculto');
+}
+
+document.getElementById('btn-novo-recup-template').addEventListener('click', () => abrirModalRecupTemplate(null));
+document.getElementById('btn-fechar-modal-recup-template').addEventListener('click', () => {
+  document.getElementById('modal-recup-template').classList.add('oculto');
+});
+document.getElementById('rtpl-link-tipo').addEventListener('change', (ev) => {
+  document.getElementById('rtpl-oferta-campos').classList.toggle('oculto', ev.target.value !== 'oferta');
+});
+document.getElementById('rtpl-conceder-check').addEventListener('change', (ev) => {
+  document.getElementById('rtpl-conceder-campos').classList.toggle('oculto', !ev.target.checked);
+});
+
+document.getElementById('form-recup-template').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const id = document.getElementById('rtpl-id').value;
+  const payload = {
+    nome: document.getElementById('rtpl-nome').value.trim(),
+    saudacao: document.getElementById('rtpl-saudacao').value.trim() || 'Olá {nome}!',
+    corpo: document.getElementById('rtpl-corpo').value.trim(),
+    link_tipo: document.getElementById('rtpl-link-tipo').value,
+    link_oferta_texto: document.getElementById('rtpl-link-oferta-texto').value.trim() || null,
+    link_oferta_url: document.getElementById('rtpl-link-oferta-url').value.trim() || null,
+    conceder_dias_gratis: document.getElementById('rtpl-conceder-check').checked
+      ? Number(document.getElementById('rtpl-conceder-dias').value) : null,
+    ativo: document.getElementById('rtpl-ativo').checked,
+  };
+  try {
+    if (id) await api(`/api/recuperacao/templates/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+    else await api('/api/recuperacao/templates', { method: 'POST', body: JSON.stringify(payload) });
+    mostrarToast('Modelo salvo.');
+    document.getElementById('modal-recup-template').classList.add('oculto');
+    carregarRecupTemplates();
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+document.getElementById('btn-excluir-recup-template').addEventListener('click', async () => {
+  const id = document.getElementById('rtpl-id').value;
+  if (!id || !confirmar('Excluir este modelo de mensagem?')) return;
+  try {
+    await api(`/api/recuperacao/templates/${id}`, { method: 'DELETE' });
+    mostrarToast('Modelo excluído.');
+    document.getElementById('modal-recup-template').classList.add('oculto');
+    carregarRecupTemplates();
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+// ---------- Envio de mensagens (composer: e-mail real | link do WhatsApp manual) ----------
+
+function primeiroNomeRecup(nomeCompleto) {
+  return String(nomeCompleto || '').trim().split(/\s+/)[0] || nomeCompleto;
+}
+
+// Réplica simplificada do que o servidor monta de verdade (ver montarMensagem
+// em src/routes/recuperacao.routes.js) — só pra dar uma prévia razoável antes
+// de enviar. O texto final enviado é sempre montado no backend.
+function montarPreviaMensagemRecup({
+  nome, saudacao, corpo, linkTipo, linkOfertaUrl, linkOfertaTexto, codigoAcesso,
+}) {
+  const saudacaoFinal = String(saudacao || 'Olá {nome}!').replace(/\{nome\}/g, primeiroNomeRecup(nome));
+  let linkLinha = '';
+  if (linkTipo === 'portal') {
+    linkLinha = codigoAcesso ? `${window.location.origin}/meu-acesso.html?codigo=${codigoAcesso}` : `${window.location.origin}/portal.html`;
+  } else if (linkTipo === 'oferta' && linkOfertaUrl) {
+    linkLinha = linkOfertaTexto ? `${linkOfertaTexto}: ${linkOfertaUrl}` : linkOfertaUrl;
+  }
+  return [saudacaoFinal, corpo || ''].filter(Boolean).concat(linkLinha ? [linkLinha] : []).join('\n\n');
+}
+
+function obterAlunoParaPreviaRecup(alunoId) {
+  return recupEstado.diasCache.get(alunoId) || recupEstado.anivCache.get(alunoId) || null;
+}
+
+function abrirModalRecupEnviar(alunoIds, origem) {
+  if (!alunoIds.length) { mostrarToast('Selecione ao menos um aluno.', true); return; }
+  recupEstado.enviarContexto = { alunoIds, origem };
+
+  const nomes = alunoIds.map((id) => obterAlunoParaPreviaRecup(id)?.nome || id);
+  document.getElementById('recup-enviar-destinatarios').textContent = alunoIds.length === 1
+    ? `Para: ${nomes[0]}`
+    : `Para ${alunoIds.length} alunos: ${nomes.slice(0, 4).join(', ')}${nomes.length > 4 ? '...' : ''}`;
+
+  document.querySelector('input[name="recup-enviar-canal"][value="whatsapp"]').checked = true;
+  document.getElementById('recup-enviar-template').value = '';
+  document.getElementById('recup-enviar-saudacao').value = 'Olá {nome}!';
+  document.getElementById('recup-enviar-assunto').value = 'Sentimos sua falta na Academia Superação!';
+  document.getElementById('recup-enviar-corpo').value = '';
+  document.getElementById('recup-enviar-link-tipo').value = 'portal';
+  document.getElementById('recup-enviar-oferta-campos').classList.add('oculto');
+  document.getElementById('recup-enviar-link-oferta-texto').value = '';
+  document.getElementById('recup-enviar-link-oferta-url').value = '';
+  document.getElementById('recup-enviar-conceder-check').checked = false;
+  document.getElementById('recup-enviar-conceder-campos').classList.add('oculto');
+  document.getElementById('recup-enviar-conceder-dias').value = 5;
+  document.getElementById('recup-enviar-resultado').innerHTML = '';
+
+  atualizarDisponibilidadeCanalEmail();
+  atualizarPreviaRecupEnviar();
+  document.getElementById('modal-recup-enviar').classList.remove('oculto');
+}
+
+document.getElementById('btn-fechar-modal-recup-enviar').addEventListener('click', () => {
+  document.getElementById('modal-recup-enviar').classList.add('oculto');
+});
+
+function atualizarDisponibilidadeCanalEmail() {
+  const radioEmail = document.querySelector('input[name="recup-enviar-canal"][value="email"]');
+  const aviso = document.getElementById('recup-enviar-email-indisponivel');
+  radioEmail.disabled = !recupEstado.emailConfigurado;
+  aviso.classList.toggle('oculto', recupEstado.emailConfigurado);
+  if (!recupEstado.emailConfigurado && radioEmail.checked) {
+    document.querySelector('input[name="recup-enviar-canal"][value="whatsapp"]').checked = true;
+  }
+}
+
+document.getElementById('recup-enviar-template').addEventListener('change', (ev) => {
+  const template = recupEstado.templates.find((t) => t.id === ev.target.value);
+  if (!template) { atualizarPreviaRecupEnviar(); return; }
+  document.getElementById('recup-enviar-saudacao').value = template.saudacao || 'Olá {nome}!';
+  document.getElementById('recup-enviar-corpo').value = template.corpo || '';
+  document.getElementById('recup-enviar-link-tipo').value = template.link_tipo || 'portal';
+  document.getElementById('recup-enviar-oferta-campos').classList.toggle('oculto', template.link_tipo !== 'oferta');
+  document.getElementById('recup-enviar-link-oferta-texto').value = template.link_oferta_texto || '';
+  document.getElementById('recup-enviar-link-oferta-url').value = template.link_oferta_url || '';
+  document.getElementById('recup-enviar-conceder-check').checked = Boolean(template.conceder_dias_gratis);
+  document.getElementById('recup-enviar-conceder-campos').classList.toggle('oculto', !template.conceder_dias_gratis);
+  if (template.conceder_dias_gratis) document.getElementById('recup-enviar-conceder-dias').value = template.conceder_dias_gratis;
+  atualizarPreviaRecupEnviar();
+});
+
+document.getElementById('recup-enviar-link-tipo').addEventListener('change', (ev) => {
+  document.getElementById('recup-enviar-oferta-campos').classList.toggle('oculto', ev.target.value !== 'oferta');
+  atualizarPreviaRecupEnviar();
+});
+document.getElementById('recup-enviar-conceder-check').addEventListener('change', (ev) => {
+  document.getElementById('recup-enviar-conceder-campos').classList.toggle('oculto', !ev.target.checked);
+});
+['recup-enviar-saudacao', 'recup-enviar-corpo', 'recup-enviar-link-oferta-texto', 'recup-enviar-link-oferta-url'].forEach((id) => {
+  document.getElementById(id).addEventListener('input', atualizarPreviaRecupEnviar);
+});
+
+function atualizarPreviaRecupEnviar() {
+  const ctx = recupEstado.enviarContexto;
+  if (!ctx || !ctx.alunoIds.length) return;
+  const aluno = obterAlunoParaPreviaRecup(ctx.alunoIds[0]);
+  const texto = montarPreviaMensagemRecup({
+    nome: aluno?.nome || 'Aluno',
+    saudacao: document.getElementById('recup-enviar-saudacao').value,
+    corpo: document.getElementById('recup-enviar-corpo').value,
+    linkTipo: document.getElementById('recup-enviar-link-tipo').value,
+    linkOfertaUrl: document.getElementById('recup-enviar-link-oferta-url').value,
+    linkOfertaTexto: document.getElementById('recup-enviar-link-oferta-texto').value,
+    codigoAcesso: aluno?.codigo_acesso,
+  });
+  document.getElementById('recup-enviar-preview').textContent = texto;
+}
+
+document.getElementById('btn-recup-enviar-confirmar').addEventListener('click', async () => {
+  const ctx = recupEstado.enviarContexto;
+  if (!ctx) return;
+  const canal = document.querySelector('input[name="recup-enviar-canal"]:checked').value;
+  const corpo = document.getElementById('recup-enviar-corpo').value.trim();
+  if (!corpo && !document.getElementById('recup-enviar-template').value) {
+    mostrarToast('Escreva o corpo da mensagem ou escolha um modelo.', true);
+    return;
+  }
+  const concederCheck = document.getElementById('recup-enviar-conceder-check').checked;
+  if (concederCheck) {
+    const dias = document.getElementById('recup-enviar-conceder-dias').value;
+    if (!confirmar(`Isso também vai liberar ${dias} dia(s) de acesso especial para ${ctx.alunoIds.length} aluno(s), mesmo com mensalidade em atraso. Confirmar?`)) return;
+  }
+
+  const payload = {
+    aluno_ids: ctx.alunoIds,
+    canal,
+    template_id: document.getElementById('recup-enviar-template').value || null,
+    saudacao: document.getElementById('recup-enviar-saudacao').value || null,
+    corpo: corpo || null,
+    assunto: document.getElementById('recup-enviar-assunto').value || null,
+    link_tipo: document.getElementById('recup-enviar-link-tipo').value,
+    link_oferta_url: document.getElementById('recup-enviar-link-oferta-url').value || null,
+    link_oferta_texto: document.getElementById('recup-enviar-link-oferta-texto').value || null,
+    conceder_dias_gratis: concederCheck ? Number(document.getElementById('recup-enviar-conceder-dias').value) : null,
+  };
+
+  try {
+    const resp = await api('/api/recuperacao/enviar', { method: 'POST', body: JSON.stringify(payload) });
+    renderizarResultadoEnvioRecup(resp);
+    if (ctx.origem === 'dias') carregarDiasSemAcesso();
+    if (ctx.origem === 'aniversariantes') carregarAniversariantes();
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+function renderizarResultadoEnvioRecup(resp) {
+  const container = document.getElementById('recup-enviar-resultado');
+  container.innerHTML = '';
+  const sucesso = resp.resultados.filter((r) => r.ok).length;
+  const falhas = resp.resultados.length - sucesso;
+  container.appendChild(el(`
+    <p style="font-weight:600;margin:0 0 10px">
+      ${sucesso} de ${resp.resultados.length} processado(s) com sucesso${falhas ? `, ${falhas} com erro` : ''}.
+      ${resp.concessoes_criadas.length ? ` ${resp.concessoes_criadas.length} concessão(ões) de acesso especial criada(s).` : ''}
+    </p>
+  `));
+
+  resp.resultados.forEach((r) => {
+    if (r.canal === 'whatsapp' && r.ok && r.link) {
+      const linha = el(`
+        <div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid #f2f4f7">
+          <span style="flex:1;font-size:13px">${r.nome}</span>
+          <button type="button" class="btn-secundario">Abrir WhatsApp</button>
+        </div>
+      `);
+      linha.querySelector('button').addEventListener('click', () => window.open(r.link, '_blank', 'noopener'));
+      container.appendChild(linha);
+    } else if (!r.ok) {
+      container.appendChild(el(`<div style="font-size:13px;color:#d92d20;padding:4px 0">${r.nome || r.aluno_id}: ${r.erro}</div>`));
+    } else {
+      container.appendChild(el(`<div style="font-size:13px;color:#067647;padding:4px 0">${r.nome}: enviado por e-mail (${r.destino || ''})</div>`));
+    }
+  });
+}
+
+// ---------- Histórico ----------
+
+async function carregarRecupHistorico() {
+  try {
+    const selectAluno = document.getElementById('recup-hist-aluno');
+    if (selectAluno.options.length <= 1) await popularSelectAlunosComTodos(selectAluno);
+
+    const alunoId = selectAluno.value;
+    const canal = document.getElementById('recup-hist-canal').value;
+    const params = new URLSearchParams();
+    if (alunoId) params.set('aluno_id', alunoId);
+    if (canal) params.set('canal', canal);
+
+    const linhas = await api(`/api/recuperacao/historico${params.toString() ? `?${params.toString()}` : ''}`);
+    const tbody = document.getElementById('recup-hist-lista');
+    tbody.innerHTML = '';
+    if (!linhas.length) {
+      tbody.innerHTML = '<tr><td colspan="5">Nenhuma mensagem registrada ainda.</td></tr>';
+      return;
+    }
+    const labelStatus = { enviado: 'Enviado', erro: 'Erro', link_gerado: 'Link gerado (WhatsApp)' };
+    linhas.forEach((m) => {
+      const mensagemCurta = (m.mensagem || '').slice(0, 200) + ((m.mensagem || '').length > 200 ? '…' : '');
+      const tr = el(`
+        <tr>
+          <td>${formatarDataOuDataHora(m.criado_em)}</td>
+          <td>${m.aluno_nome}</td>
+          <td>${m.canal === 'email' ? 'E-mail' : 'WhatsApp'}</td>
+          <td><span class="badge ${m.status === 'erro' ? 'atrasado' : 'ativo'}">${labelStatus[m.status] || m.status}</span></td>
+          <td style="max-width:320px;white-space:pre-wrap;font-size:12.5px">${mensagemCurta}</td>
+        </tr>
+      `);
+      tbody.appendChild(tr);
+    });
+  } catch (err) { mostrarToast(err.message, true); }
+}
+
+document.getElementById('btn-recup-hist-buscar').addEventListener('click', carregarRecupHistorico);
 
 // ---------------- Inicialização ----------------
 

@@ -29,16 +29,47 @@ const ALTERACOES_INCREMENTAIS = [
   "ALTER TABLE planos ADD COLUMN desconto_forma_pagamento TEXT",
 ];
 
+// Divide um arquivo .sql em statements individuais (o driver libsql nao aceita
+// multiplos comandos separados por ';' em uma unica chamada .execute).
+// Cuidado: um ';' pode aparecer DENTRO de uma linha de comentario ('-- texto; texto'),
+// e nesse caso nao deve ser tratado como fim de statement - senao o pedaco cortado
+// vira um "comando" formado só por comentário, sem SQL nenhum, e o banco rejeita
+// com "SQL string does not contain any statement" (bug real, já visto em produção,
+// causado por um comentário do schema.sql que tinha um ';' no meio do texto).
+function dividirStatementsSQL(sql) {
+  const MARCADOR = ''; // caractere de controle que nunca aparece no schema.sql de verdade
+  const linhas = sql.split('\n');
+  const linhasProtegidas = linhas.map((linha) => {
+    const semEspacos = linha.trimStart();
+    if (semEspacos.startsWith('--')) {
+      // Linha é 100% comentário: protege qualquer ';' que apareça nela,
+      // trocando por um marcador temporário até depois do split.
+      return linha.split(';').join(MARCADOR);
+    }
+    return linha;
+  });
+  return linhasProtegidas
+    .join('\n')
+    .split(';')
+    .map((s) => s.split(MARCADOR).join(';').trim())
+    .filter(Boolean)
+    // Rede de segurança extra: descarta qualquer statement que, tirando as
+    // linhas de comentário, não sobrou nenhum SQL de verdade.
+    .filter((s) => {
+      const semComentarios = s
+        .split('\n')
+        .filter((l) => !l.trim().startsWith('--'))
+        .join('\n')
+        .trim();
+      return Boolean(semComentarios);
+    });
+}
+
 async function migrate() {
   const schemaPath = path.join(__dirname, 'schema.sql');
   const schema = fs.readFileSync(schemaPath, 'utf8');
 
-  // Divide em statements individuais (o driver libsql nao aceita multiplos
-  // comandos separados por ';' em uma unica chamada .execute)
-  const statements = schema
-    .split(';')
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const statements = dividirStatementsSQL(schema);
 
   // Índices (CREATE INDEX/CREATE UNIQUE INDEX) rodam DEPOIS dos ALTER TABLE
   // abaixo, de propósito: em bancos já existentes a tabela já existe (o

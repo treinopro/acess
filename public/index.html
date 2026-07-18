@@ -128,6 +128,7 @@
           </thead>
           <tbody id="lista-alunos"></tbody>
         </table>
+        <p id="alunos-total-resumo" style="font-size:13px;color:#667085;margin-top:8px"></p>
       </section>
 
       <!-- PERFIL DO ALUNO -->
@@ -352,6 +353,7 @@
             </thead>
             <tbody id="perfil-lista-cobrancas"></tbody>
           </table>
+          <p id="perfil-financeiro-total-resumo" style="font-size:13px;color:#667085;margin-top:8px"></p>
         </div>
 
         <!-- ABA: Treino -->
@@ -614,6 +616,7 @@
             </thead>
             <tbody id="pr-lista-contas"></tbody>
           </table>
+          <p id="pr-contas-total-resumo" style="font-size:13px;color:#667085;margin-top:8px"></p>
         </div>
       </section>
 
@@ -678,6 +681,32 @@
         </div>
         <p style="margin:0 0 12px;color:#667085;font-size:13px">Mostrando contas do período selecionado acima. O período escolhido fica valendo até você trocar por outro.</p>
 
+        <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap;background:#fff7ed;border:1px solid #fdba74">
+          <div>
+            <label title="Filtra a coluna 'Último acesso' abaixo: mostra a data mais recente em que cada aluno passou pela catraca dentro desse período.">Último acesso entre</label>
+            <input type="date" id="conta-acesso-de" />
+          </div>
+          <div>
+            <label>até</label>
+            <input type="date" id="conta-acesso-ate" />
+          </div>
+          <div>
+            <label>Atalho</label>
+            <select id="conta-acesso-atalho">
+              <option value="">Período do último acesso...</option>
+              <option value="7">Sem acesso há mais de 7 dias</option>
+              <option value="15">Sem acesso há mais de 15 dias</option>
+              <option value="30">Sem acesso há mais de 30 dias</option>
+              <option value="60">Sem acesso há mais de 60 dias</option>
+              <option value="90">Sem acesso há mais de 90 dias</option>
+            </select>
+          </div>
+          <button type="button" class="btn-secundario" id="btn-limpar-filtro-acesso">Limpar filtro de acesso</button>
+          <p style="margin:0;color:#9a3412;font-size:12.5px;flex-basis:100%">
+            Use para identificar alunos com contas em atraso que também pararam de frequentar a academia — sinal de risco de cancelamento.
+          </p>
+        </div>
+
         <table class="tabela">
           <thead>
             <tr>
@@ -688,6 +717,7 @@
               <th class="th-ordenavel" data-sort="status" style="cursor:pointer;user-select:none">Status <span class="seta-ordenacao" data-seta="status"></span></th>
               <th class="th-ordenavel" data-sort="data_pago" style="cursor:pointer;user-select:none">Data Pago <span class="seta-ordenacao" data-seta="data_pago"></span></th>
               <th class="th-ordenavel" data-sort="valor_pago" style="cursor:pointer;user-select:none">Valor Pago <span class="seta-ordenacao" data-seta="valor_pago"></span></th>
+              <th title="Data mais recente de acesso à academia dentro do período selecionado acima (em branco = qualquer período / desde sempre).">Último acesso</th>
               <th>Ações</th>
             </tr>
           </thead>
@@ -759,6 +789,7 @@
           <button class="relatorio-tab-btn" data-relatorio="acesso-diario">Acesso Diário</button>
           <button class="relatorio-tab-btn" data-relatorio="acesso-pessoal">Acesso Pessoal</button>
           <button class="relatorio-tab-btn" data-relatorio="ultimo-acesso">Último Acesso</button>
+          <button class="relatorio-tab-btn" data-relatorio="pessoas">Pessoas</button>
         </div>
 
         <!-- Relatório: Contas a Receber -->
@@ -875,6 +906,33 @@
             <thead><tr><th>Aluno</th><th>Último acesso</th></tr></thead>
             <tbody id="rel-ultimo-lista"></tbody>
           </table>
+        </div>
+
+        <!-- Relatório: Pessoas (dados cadastrais básicos, pra achar quem está com cadastro incompleto) -->
+        <div class="relatorio-painel oculto" data-relatorio-painel="pessoas">
+          <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
+            <div style="flex:1;min-width:200px">
+              <label>Buscar por nome</label>
+              <span class="campo-busca-wrap" style="display:block">
+                <input type="text" id="rel-pessoas-busca" placeholder="Nome do aluno..." />
+                <button type="button" class="btn-limpar-busca" data-alvo="rel-pessoas-busca" data-buscar="btn-rel-pessoas-buscar" title="Limpar busca">&times;</button>
+              </span>
+            </div>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#667085;padding-bottom:9px">
+              <input type="checkbox" id="rel-pessoas-mostrar-inativos" style="width:auto" /> Mostrar inativos
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#667085;padding-bottom:9px">
+              <input type="checkbox" id="rel-pessoas-so-incompletos" style="width:auto" /> Só com cadastro incompleto
+            </label>
+            <button type="button" class="btn-primario" id="btn-rel-pessoas-buscar">Filtrar</button>
+          </div>
+          <table class="tabela">
+            <thead>
+              <tr><th>Nome</th><th>Biometria</th><th>CPF</th><th>Telefone</th><th>E-mail</th><th>Status</th><th>Pendências</th></tr>
+            </thead>
+            <tbody id="rel-pessoas-lista"></tbody>
+          </table>
+          <p id="rel-pessoas-total" style="font-size:13px;color:#667085;margin-top:8px"></p>
         </div>
       </section>
 

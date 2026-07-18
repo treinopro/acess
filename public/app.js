@@ -3292,7 +3292,10 @@ async function carregarAcessosCatraca() {
 // data/período, conforme pedido.
 
 document.querySelectorAll('.relatorio-tab-btn').forEach((btn) => {
-  btn.addEventListener('click', () => trocarAbaRelatorio(btn.dataset.relatorio));
+  btn.addEventListener('click', () => {
+    trocarAbaRelatorio(btn.dataset.relatorio);
+    if (btn.dataset.relatorio === 'pessoas') buscarRelatorioPessoas();
+  });
 });
 
 function trocarAbaRelatorio(nome) {
@@ -3461,6 +3464,68 @@ async function buscarRelatorioUltimoAcesso() {
 }
 document.getElementById('btn-rel-ultimo-buscar').addEventListener('click', buscarRelatorioUltimoAcesso);
 document.getElementById('rel-ultimo-mostrar-inativos').addEventListener('change', buscarRelatorioUltimoAcesso);
+
+// ---- Relatório: Pessoas (dados cadastrais básicos, pra achar cadastro incompleto) ----
+// Não é um relatório financeiro nem de acesso — reaproveita GET /api/alunos (que já
+// devolve todas as colunas) só pra dar uma visão rápida de quem está faltando CPF,
+// telefone, e-mail ou biometria, sem precisar abrir o perfil de cada aluno um por um.
+async function buscarRelatorioPessoas() {
+  try {
+    const busca = document.getElementById('rel-pessoas-busca').value.trim();
+    const mostrarInativos = document.getElementById('rel-pessoas-mostrar-inativos').checked;
+    const soIncompletos = document.getElementById('rel-pessoas-so-incompletos').checked;
+    const params = new URLSearchParams();
+    if (busca) params.set('busca', busca);
+    if (mostrarInativos) params.set('incluir_inativos', 'true');
+
+    const alunosBrutos = await api(`/api/alunos${params.toString() ? '?' + params.toString() : ''}`);
+    const alunos = [...alunosBrutos].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+    const tbody = document.getElementById('rel-pessoas-lista');
+    const resumoEl = document.getElementById('rel-pessoas-total');
+
+    const CAMPOS = [
+      { chave: 'biometria_id', rotulo: 'Biometria' },
+      { chave: 'cpf', rotulo: 'CPF' },
+      { chave: 'telefone', rotulo: 'Telefone' },
+      { chave: 'email', rotulo: 'E-mail' },
+    ];
+    const celulaCampo = (valor) => (valor
+      ? valor
+      : '<span style="color:#c2410c;font-weight:600">— faltando</span>');
+
+    let linhas = alunos.map((a) => {
+      const faltando = CAMPOS.filter((c) => !a[c.chave]).map((c) => c.rotulo);
+      return { aluno: a, faltando };
+    });
+    if (soIncompletos) linhas = linhas.filter((l) => l.faltando.length > 0);
+
+    tbody.innerHTML = linhas.length ? '' : '<tr><td colspan="7">Nenhuma pessoa encontrada.</td></tr>';
+    let totalIncompletos = 0;
+    linhas.forEach(({ aluno: a, faltando }) => {
+      if (faltando.length) totalIncompletos += 1;
+      const trPessoa = el(`
+        <tr>
+          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${a.nome}</span></td>
+          <td>${celulaCampo(a.biometria_id)}</td>
+          <td>${celulaCampo(a.cpf)}</td>
+          <td>${celulaCampo(a.telefone)}</td>
+          <td>${celulaCampo(a.email)}</td>
+          <td><span class="badge ${a.status}">${a.status}</span></td>
+          <td>${faltando.length ? `<span style="color:#c2410c;font-weight:600">${faltando.join(', ')}</span>` : '<span style="color:#15803d">Completo</span>'}</td>
+        </tr>
+      `);
+      trPessoa.querySelector('.nome-clicavel').addEventListener('click', () => abrirPerfilAluno(a.id));
+      tbody.appendChild(trPessoa);
+    });
+
+    resumoEl.textContent = linhas.length
+      ? `${linhas.length} pessoa(s) — ${totalIncompletos} com cadastro incompleto`
+      : '';
+  } catch (err) { mostrarToast(err.message, true); }
+}
+document.getElementById('btn-rel-pessoas-buscar').addEventListener('click', buscarRelatorioPessoas);
+document.getElementById('rel-pessoas-mostrar-inativos').addEventListener('change', buscarRelatorioPessoas);
+document.getElementById('rel-pessoas-so-incompletos').addEventListener('change', buscarRelatorioPessoas);
 
 // ---------------- Painel lateral "Acessos recentes" (persiste entre abas) ----------------
 // Reaproveita o mesmo endpoint /api/terminal/acessos usado na aba Catraca. O painel fica

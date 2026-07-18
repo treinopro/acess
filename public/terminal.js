@@ -245,12 +245,51 @@ function mostrarOverlayDestravar({ pedirSenha }) {
   if (pedirSenha) campoSenha.focus();
 }
 
+// 2026-07: antes, o overlay abria IMEDIATAMENTE em qualquer toque com 2 pontos
+// de contato, em qualquer lugar da tela — inclusive em cima de botões normais.
+// Em touchscreen, um toque comum (dedo largo, leve arrasto, toque com a lateral
+// do dedo) às vezes é lido como 2 pontos de contato por uma fração de segundo,
+// então um clique normal em "Quero me cadastrar" ou qualquer outro botão podia
+// abrir o bloqueio sem ninguém ter feito o gesto de propósito. Agora exige
+// segurar os 2 dedos por ~700ms antes de abrir — tempo suficiente pra ignorar
+// esse ruído do toque, mas ainda rápido o bastante pra quem sabe o gesto e faz
+// de propósito. Solta antes da hora, tira um dedo, ou move os dedos (arrasta)
+// e o temporizador é cancelado.
+const SEGURAR_DOIS_DEDOS_MS = 700;
+const LIMITE_ARRASTO_PX = 20;
+let temporizadorDoisDedos = null;
+let pontoInicialDoisDedos = null;
+
+function cancelarTemporizadorDoisDedos() {
+  clearTimeout(temporizadorDoisDedos);
+  temporizadorDoisDedos = null;
+  pontoInicialDoisDedos = null;
+}
+
 document.addEventListener('touchstart', (ev) => {
   if (ev.touches && ev.touches.length === 2) {
     ev.preventDefault();
-    mostrarOverlayDestravar({ pedirSenha: true });
+    cancelarTemporizadorDoisDedos();
+    pontoInicialDoisDedos = { x: ev.touches[0].clientX, y: ev.touches[0].clientY };
+    temporizadorDoisDedos = setTimeout(() => {
+      temporizadorDoisDedos = null;
+      mostrarOverlayDestravar({ pedirSenha: true });
+    }, SEGURAR_DOIS_DEDOS_MS);
+  } else if (ev.touches && ev.touches.length !== 2) {
+    // Terceiro dedo apareceu, ou já tinha só 1 — não é mais o gesto esperado.
+    cancelarTemporizadorDoisDedos();
   }
 });
+
+document.addEventListener('touchmove', (ev) => {
+  if (!temporizadorDoisDedos || !pontoInicialDoisDedos || !ev.touches || !ev.touches[0]) return;
+  const dx = ev.touches[0].clientX - pontoInicialDoisDedos.x;
+  const dy = ev.touches[0].clientY - pontoInicialDoisDedos.y;
+  if (Math.sqrt(dx * dx + dy * dy) > LIMITE_ARRASTO_PX) cancelarTemporizadorDoisDedos();
+});
+
+document.addEventListener('touchend', cancelarTemporizadorDoisDedos);
+document.addEventListener('touchcancel', cancelarTemporizadorDoisDedos);
 
 document.addEventListener('keydown', (ev) => {
   if (ev.ctrlKey && ev.shiftKey && (ev.key === 'L' || ev.key === 'l')) {

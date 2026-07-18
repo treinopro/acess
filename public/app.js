@@ -769,7 +769,14 @@ async function carregarAlunos() {
     const alunos = ordenarAlunos(alunosBrutos);
     atualizarSetasOrdenacaoAlunos();
     const tbody = document.getElementById('lista-alunos');
+    const resumoEl = document.getElementById('alunos-total-resumo');
     tbody.innerHTML = '';
+    if (resumoEl) {
+      const totalAtivos = alunos.filter((a) => a.status === 'ativo').length;
+      resumoEl.textContent = alunos.length
+        ? `${alunos.length} aluno(s) no total — ${totalAtivos} ativo(s)`
+        : '';
+    }
     alunos.forEach((aluno) => {
       const contato = [aluno.email, aluno.telefone].filter(Boolean).join(' · ') || '—';
       const tr = el(`
@@ -1052,7 +1059,7 @@ async function carregarPerfilAluno() {
     avaliacoes.forEach((av) => {
       const tr = el(`
         <tr>
-          <td>${av.data_avaliacao}</td>
+          <td>${formatarDataOuDataHora(av.data_avaliacao)}</td>
           <td>${av.peso_kg ? av.peso_kg + ' kg' : '—'}</td>
           <td>${av.percentual_gordura ? av.percentual_gordura + '%' : '—'}</td>
           <td>${av.objetivo || '—'}</td>
@@ -1076,8 +1083,8 @@ async function carregarPerfilAluno() {
       const tr = el(`
         <tr>
           <td>${m.plano_nome}</td>
-          <td>${m.data_inicio}</td>
-          <td>${m.data_fim || '—'}</td>
+          <td>${formatarDataOuDataHora(m.data_inicio)}</td>
+          <td>${m.data_fim ? formatarDataOuDataHora(m.data_fim) : '—'}</td>
           <td><span class="badge ${m.status}">${m.status}</span></td>
           <td>${(m.status === 'ativa' || m.status === 'pendente') ? '<button class="btn-linha perigo" data-acao="cancelar-matricula">Cancelar</button>' : '—'}</td>
         </tr>`);
@@ -1106,7 +1113,7 @@ async function carregarPerfilAluno() {
     document.getElementById('perfil-lista-agendamentos').innerHTML = agendamentos.length
       ? agendamentos.map((a) => `
         <tr>
-          <td>${a.data_aula}</td>
+          <td>${formatarDataOuDataHora(a.data_aula)}</td>
           <td>${a.turma_nome}</td>
           <td><span class="badge ${a.status}">${a.status}</span></td>
         </tr>`).join('')
@@ -1335,18 +1342,24 @@ document.getElementById('form-exercicio').addEventListener('submit', async (ev) 
 async function carregarFinanceiroPerfil() {
   const alunoId = document.getElementById('perfil-aluno-id').value;
   const tbody = document.getElementById('perfil-lista-cobrancas');
-  if (!alunoId) { tbody.innerHTML = ''; return; }
+  const resumoEl = document.getElementById('perfil-financeiro-total-resumo');
+  if (!alunoId) { tbody.innerHTML = ''; if (resumoEl) resumoEl.textContent = ''; return; }
   try {
     const contas = await api(`/api/pagamentos/cobrancas?aluno_id=${alunoId}`);
     tbody.innerHTML = contas.length ? '' : '<tr><td colspan="7">Nenhuma conta encontrada.</td></tr>';
+    if (!contas.length) { if (resumoEl) resumoEl.textContent = ''; return; }
+    let totalValor = 0;
+    let totalPago = 0;
     contas.forEach((c) => {
       const valorPago = Number(c.valor_pago_centavos || 0) || (c.status === 'pago' ? c.valor_centavos : 0);
       const dataPago = c.data_pago_calc || (c.status === 'pago' ? c.pago_em : null);
+      totalValor += c.valor_centavos;
+      totalPago += valorPago;
       const tr = el(`
         <tr>
           <td>${c.descricao || '—'}</td>
           <td>${formatarMoeda(c.valor_centavos)}</td>
-          <td>${c.vencimento || '—'}</td>
+          <td>${c.vencimento ? formatarDataOuDataHora(c.vencimento) : '—'}</td>
           <td><span class="badge ${c.status}">${c.status}</span></td>
           <td>${formatarDataOuDataHora(dataPago)}</td>
           <td>${valorPago > 0 ? formatarMoeda(valorPago) : '—'}</td>
@@ -1369,6 +1382,7 @@ async function carregarFinanceiroPerfil() {
       });
       tbody.appendChild(tr);
     });
+    if (resumoEl) resumoEl.textContent = `${contas.length} conta(s) — total ${formatarMoeda(totalValor)}, pago ${formatarMoeda(totalPago)}`;
   } catch (err) { mostrarToast(err.message, true); }
 }
 
@@ -1809,8 +1823,8 @@ async function carregarMatriculas() {
         <tr>
           <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${m.aluno_nome}</span></td>
           <td>${m.plano_nome}</td>
-          <td>${m.data_inicio}</td>
-          <td>${m.data_fim || '—'}</td>
+          <td>${formatarDataOuDataHora(m.data_inicio)}</td>
+          <td>${m.data_fim ? formatarDataOuDataHora(m.data_fim) : '—'}</td>
           <td><span class="badge ${m.status}">${m.status}</span></td>
           <td>${(m.status === 'ativa' || m.status === 'pendente') ? '<button class="btn-linha perigo" data-acao="cancelar">Cancelar</button>' : '—'}</td>
         </tr>
@@ -1929,7 +1943,7 @@ async function carregarAgendamentos() {
     agendamentos.forEach((a) => {
       const tr = el(`
         <tr>
-          <td>${a.data_aula}</td>
+          <td>${formatarDataOuDataHora(a.data_aula)}</td>
           <td>${a.turma_nome}</td>
           <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${a.aluno_nome}</span></td>
           <td><span class="badge ${a.status}">${a.status}</span></td>
@@ -2187,7 +2201,9 @@ async function selecionarAlunoPagamentoRapido(aluno) {
 
 async function carregarContasPagamentoRapido(alunoId) {
   const tbody = document.getElementById('pr-lista-contas');
+  const resumoEl = document.getElementById('pr-contas-total-resumo');
   tbody.innerHTML = '<tr><td colspan="5">Carregando...</td></tr>';
+  if (resumoEl) resumoEl.textContent = '';
   try {
     const contas = await api(`/api/pagamentos/cobrancas?aluno_id=${alunoId}`);
     if (!contas.length) {
@@ -2202,13 +2218,17 @@ async function carregarContasPagamentoRapido(alunoId) {
       return (b.vencimento || '').localeCompare(a.vencimento || '');
     });
     tbody.innerHTML = '';
+    let totalValor = 0;
+    let totalEmAberto = 0;
     ordenadas.forEach((c) => {
       const aberta = c.status === 'pendente' || c.status === 'atrasado';
+      totalValor += c.valor_centavos;
+      if (aberta) totalEmAberto += c.valor_centavos;
       const tr = el(`
         <tr>
           <td>${c.descricao || '—'}</td>
           <td>${formatarMoeda(c.valor_centavos)}</td>
-          <td>${c.vencimento || '—'}</td>
+          <td>${c.vencimento ? formatarDataOuDataHora(c.vencimento) : '—'}</td>
           <td><span class="badge ${c.status}">${c.status}</span></td>
           <td><button class="btn-linha ${aberta ? 'btn-primario' : ''}" data-acao="abrir">${aberta ? 'Pagar' : 'Ver'}</button></td>
         </tr>
@@ -2216,6 +2236,9 @@ async function carregarContasPagamentoRapido(alunoId) {
       tr.querySelector('[data-acao="abrir"]').addEventListener('click', () => abrirModalConta(c));
       tbody.appendChild(tr);
     });
+    if (resumoEl) {
+      resumoEl.textContent = `${contas.length} conta(s) — total ${formatarMoeda(totalValor)}, em aberto ${formatarMoeda(totalEmAberto)}`;
+    }
   } catch (err) {
     mostrarToast(err.message, true);
   }
@@ -2283,6 +2306,28 @@ document.querySelectorAll('#secao-pagamentos .th-ordenavel').forEach((th) => {
   th.addEventListener('click', () => alternarOrdenacaoContas(th.dataset.sort));
 });
 
+// Busca a data do último acesso de cada aluno (via catraca/totem), dentro do período
+// selecionado no filtro "Último acesso entre/até" da tela de Contas a Receber. Retorna
+// um Map aluno_id -> ultimo_acesso (string do servidor) só com quem tem pelo menos um
+// acesso no período; quem não aparece no Map não acessou (ou nunca acessou) nesse período.
+// Esse endpoint é restrito a admin — se falhar por permissão (usuário não-admin), retorna
+// null pra distinguir "sem permissão de ver a coluna" de "aluno realmente sem acesso".
+async function buscarMapaUltimoAcessoParaContas() {
+  const de = document.getElementById('conta-acesso-de')?.value;
+  const ate = document.getElementById('conta-acesso-ate')?.value;
+  const params = new URLSearchParams({ incluir_inativos: 'true' });
+  if (de) params.set('data_inicio', de);
+  if (ate) params.set('data_fim', ate);
+  try {
+    const lista = await api(`/api/terminal/acessos/ultimo-por-aluno?${params.toString()}`);
+    return new Map(lista.map((a) => [a.aluno_id, a.ultimo_acesso]));
+  } catch (err) {
+    // Não trava a listagem de contas se a busca de acessos falhar (ex.: sem permissão) —
+    // só fica sem a coluna preenchida.
+    return null;
+  }
+}
+
 async function carregarContas() {
   try {
     const alunoId = document.getElementById('filtro-conta-aluno').value;
@@ -2292,6 +2337,8 @@ async function carregarContas() {
     const campoData = document.getElementById('conta-filtro-data-campo').value || 'vencimento';
     const periodoDe = document.getElementById('conta-periodo-de').value;
     const periodoAte = document.getElementById('conta-periodo-ate').value;
+    const acessoDe = document.getElementById('conta-acesso-de').value;
+    const acessoAte = document.getElementById('conta-acesso-ate').value;
     const params = new URLSearchParams();
     if (alunoId) params.set('aluno_id', alunoId);
     if (status) params.set('status', status);
@@ -2300,7 +2347,11 @@ async function carregarContas() {
     if (periodoDe) params.set(campoData === 'pagamento' ? 'pagamento_de' : 'vencimento_de', periodoDe);
     if (periodoAte) params.set(campoData === 'pagamento' ? 'pagamento_ate' : 'vencimento_ate', periodoAte);
 
-    const contasBrutas = await api(`/api/pagamentos/cobrancas${params.toString() ? '?' + params.toString() : ''}`);
+    const [contasBrutas, mapaUltimoAcesso] = await Promise.all([
+      api(`/api/pagamentos/cobrancas${params.toString() ? '?' + params.toString() : ''}`),
+      buscarMapaUltimoAcessoParaContas(),
+    ]);
+    const periodoAcessoAtivo = !!(acessoDe || acessoAte);
     const contas = ordenarContas(contasBrutas);
     atualizarSetasOrdenacaoContas();
     const tbody = document.getElementById('lista-contas');
@@ -2308,7 +2359,7 @@ async function carregarContas() {
     tbody.innerHTML = '';
 
     if (!contas.length) {
-      tbody.innerHTML = '<tr><td colspan="8">Nenhuma conta encontrada.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9">Nenhuma conta encontrada.</td></tr>';
       resumoEl.textContent = '';
       return;
     }
@@ -2327,15 +2378,39 @@ async function carregarContas() {
       const dataPago = c.data_pago_calc || (c.status === 'pago' ? c.pago_em : null);
       totalValor += c.valor_centavos;
       totalPago += valorPago;
+
+      // Coluna "Último acesso": se não tem nenhum acesso registrado no período escolhido
+      // acima, e a conta está atrasada, isso é o sinal de risco de cancelamento que a
+      // recepção quer enxergar (parou de vir + tem conta em aberto). Se mapaUltimoAcesso
+      // for null, a busca falhou (ex.: usuário sem permissão de admin) — mostra "—" em
+      // vez de dizer "nunca acessou", que seria enganoso.
+      const ultimoAcesso = mapaUltimoAcesso ? mapaUltimoAcesso.get(c.aluno_id) : undefined;
+      const semAcessoNoPeriodo = mapaUltimoAcesso !== null && !ultimoAcesso;
+      const riscoCancelamento = c.status === 'atrasado' && semAcessoNoPeriodo;
+      let celulaAcesso;
+      if (ultimoAcesso) {
+        celulaAcesso = formatarDataOuDataHora(ultimoAcesso);
+      } else if (mapaUltimoAcesso === null) {
+        celulaAcesso = '—';
+      } else if (periodoAcessoAtivo) {
+        celulaAcesso = '<span style="color:#c2410c;font-weight:600">Sem acesso no período</span>';
+      } else {
+        celulaAcesso = '<span style="color:#c2410c;font-weight:600">Nunca acessou</span>';
+      }
+      if (riscoCancelamento) {
+        celulaAcesso += ' ⚠️';
+      }
+
       const tr = el(`
-        <tr>
+        <tr${riscoCancelamento ? ' style="background:#fff7ed"' : ''}>
           <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${c.aluno_nome}</span></td>
           <td>${c.descricao || '—'}</td>
           <td>${formatarMoeda(c.valor_centavos)}</td>
-          <td>${c.vencimento || '—'}</td>
+          <td>${c.vencimento ? formatarDataOuDataHora(c.vencimento) : '—'}</td>
           <td><span class="badge ${c.status}">${c.status}</span></td>
           <td>${formatarDataOuDataHora(dataPago)}</td>
           <td>${valorPago > 0 ? formatarMoeda(valorPago) : '—'}</td>
+          <td title="${riscoCancelamento ? 'Conta em atraso e sem acesso no período selecionado — possível risco de cancelamento.' : ''}">${celulaAcesso}</td>
           <td>
             <button class="btn-linha" data-acao="editar">Alterar</button>
             <button class="btn-linha" data-acao="parcelar">Parcelar</button>
@@ -2391,6 +2466,38 @@ let buscaContaTimeout = null;
 document.getElementById('busca-conta-nome').addEventListener('input', () => {
   clearTimeout(buscaContaTimeout);
   buscaContaTimeout = setTimeout(carregarContas, 300);
+});
+
+// Filtro "Último acesso" (identificar quem parou de frequentar) — período manual
+// (datas) ou atalho pronto ("sem acesso há mais de N dias", que preenche o campo
+// "até" com hoje-N e limpa o "de", pra pegar todo mundo sem acesso desde então).
+document.getElementById('conta-acesso-de').addEventListener('change', () => {
+  document.getElementById('conta-acesso-atalho').value = '';
+  carregarContas();
+});
+document.getElementById('conta-acesso-ate').addEventListener('change', () => {
+  document.getElementById('conta-acesso-atalho').value = '';
+  carregarContas();
+});
+document.getElementById('conta-acesso-atalho').addEventListener('change', (ev) => {
+  const dias = ev.target.value;
+  const campoDe = document.getElementById('conta-acesso-de');
+  const campoAte = document.getElementById('conta-acesso-ate');
+  if (!dias) { campoDe.value = ''; campoAte.value = ''; carregarContas(); return; }
+  // Janela de hoje até N dias atrás: quem NÃO tiver nenhum acesso dentro dela é
+  // quem está "sem acesso há mais de N dias" — não basta olhar só até uma data no
+  // passado, senão um aluno que veio ontem apareceria como "sem acesso" também.
+  const limite = new Date();
+  limite.setDate(limite.getDate() - Number(dias));
+  campoDe.value = `${limite.getFullYear()}-${String(limite.getMonth() + 1).padStart(2, '0')}-${String(limite.getDate()).padStart(2, '0')}`;
+  campoAte.value = hojeLocalISO();
+  carregarContas();
+});
+document.getElementById('btn-limpar-filtro-acesso').addEventListener('click', () => {
+  document.getElementById('conta-acesso-de').value = '';
+  document.getElementById('conta-acesso-ate').value = '';
+  document.getElementById('conta-acesso-atalho').value = '';
+  carregarContas();
 });
 
 // Mostrar/ocultar os formulários de "conta manual" e "gerar cobrança" (ficam
@@ -3185,7 +3292,10 @@ async function carregarAcessosCatraca() {
 // data/período, conforme pedido.
 
 document.querySelectorAll('.relatorio-tab-btn').forEach((btn) => {
-  btn.addEventListener('click', () => trocarAbaRelatorio(btn.dataset.relatorio));
+  btn.addEventListener('click', () => {
+    trocarAbaRelatorio(btn.dataset.relatorio);
+    if (btn.dataset.relatorio === 'pessoas') buscarRelatorioPessoas();
+  });
 });
 
 function trocarAbaRelatorio(nome) {
@@ -3236,7 +3346,7 @@ async function buscarRelatorioFinanceiro() {
           <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${c.aluno_nome}</span></td>
           <td>${c.descricao || '—'}</td>
           <td>${formatarMoeda(c.valor_centavos)}</td>
-          <td>${c.vencimento || '—'}</td>
+          <td>${c.vencimento ? formatarDataOuDataHora(c.vencimento) : '—'}</td>
           <td><span class="badge ${c.status}">${c.status}</span></td>
           <td>${formatarDataOuDataHora(dataPago)}</td>
           <td>${valorPago > 0 ? formatarMoeda(valorPago) : '—'}</td>
@@ -3354,6 +3464,68 @@ async function buscarRelatorioUltimoAcesso() {
 }
 document.getElementById('btn-rel-ultimo-buscar').addEventListener('click', buscarRelatorioUltimoAcesso);
 document.getElementById('rel-ultimo-mostrar-inativos').addEventListener('change', buscarRelatorioUltimoAcesso);
+
+// ---- Relatório: Pessoas (dados cadastrais básicos, pra achar cadastro incompleto) ----
+// Não é um relatório financeiro nem de acesso — reaproveita GET /api/alunos (que já
+// devolve todas as colunas) só pra dar uma visão rápida de quem está faltando CPF,
+// telefone, e-mail ou biometria, sem precisar abrir o perfil de cada aluno um por um.
+async function buscarRelatorioPessoas() {
+  try {
+    const busca = document.getElementById('rel-pessoas-busca').value.trim();
+    const mostrarInativos = document.getElementById('rel-pessoas-mostrar-inativos').checked;
+    const soIncompletos = document.getElementById('rel-pessoas-so-incompletos').checked;
+    const params = new URLSearchParams();
+    if (busca) params.set('busca', busca);
+    if (mostrarInativos) params.set('incluir_inativos', 'true');
+
+    const alunosBrutos = await api(`/api/alunos${params.toString() ? '?' + params.toString() : ''}`);
+    const alunos = [...alunosBrutos].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+    const tbody = document.getElementById('rel-pessoas-lista');
+    const resumoEl = document.getElementById('rel-pessoas-total');
+
+    const CAMPOS = [
+      { chave: 'biometria_id', rotulo: 'Biometria' },
+      { chave: 'cpf', rotulo: 'CPF' },
+      { chave: 'telefone', rotulo: 'Telefone' },
+      { chave: 'email', rotulo: 'E-mail' },
+    ];
+    const celulaCampo = (valor) => (valor
+      ? valor
+      : '<span style="color:#c2410c;font-weight:600">— faltando</span>');
+
+    let linhas = alunos.map((a) => {
+      const faltando = CAMPOS.filter((c) => !a[c.chave]).map((c) => c.rotulo);
+      return { aluno: a, faltando };
+    });
+    if (soIncompletos) linhas = linhas.filter((l) => l.faltando.length > 0);
+
+    tbody.innerHTML = linhas.length ? '' : '<tr><td colspan="7">Nenhuma pessoa encontrada.</td></tr>';
+    let totalIncompletos = 0;
+    linhas.forEach(({ aluno: a, faltando }) => {
+      if (faltando.length) totalIncompletos += 1;
+      const trPessoa = el(`
+        <tr>
+          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${a.nome}</span></td>
+          <td>${celulaCampo(a.biometria_id)}</td>
+          <td>${celulaCampo(a.cpf)}</td>
+          <td>${celulaCampo(a.telefone)}</td>
+          <td>${celulaCampo(a.email)}</td>
+          <td><span class="badge ${a.status}">${a.status}</span></td>
+          <td>${faltando.length ? `<span style="color:#c2410c;font-weight:600">${faltando.join(', ')}</span>` : '<span style="color:#15803d">Completo</span>'}</td>
+        </tr>
+      `);
+      trPessoa.querySelector('.nome-clicavel').addEventListener('click', () => abrirPerfilAluno(a.id));
+      tbody.appendChild(trPessoa);
+    });
+
+    resumoEl.textContent = linhas.length
+      ? `${linhas.length} pessoa(s) — ${totalIncompletos} com cadastro incompleto`
+      : '';
+  } catch (err) { mostrarToast(err.message, true); }
+}
+document.getElementById('btn-rel-pessoas-buscar').addEventListener('click', buscarRelatorioPessoas);
+document.getElementById('rel-pessoas-mostrar-inativos').addEventListener('change', buscarRelatorioPessoas);
+document.getElementById('rel-pessoas-so-incompletos').addEventListener('change', buscarRelatorioPessoas);
 
 // ---------------- Painel lateral "Acessos recentes" (persiste entre abas) ----------------
 // Reaproveita o mesmo endpoint /api/terminal/acessos usado na aba Catraca. O painel fica

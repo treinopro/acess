@@ -47,8 +47,15 @@ async function carregarPlanos() {
   select.innerHTML = '<option value="">Carregando planos...</option>';
   try {
     const planos = await api('/api/terminal/planos');
-    select.innerHTML = planos.length
-      ? planos.map((p) => `<option value="${p.id}">${p.nome} — ${formatarMoeda(p.valor_centavos)}</option>`).join('')
+    // O plano "Visitante" (2026-07) fica de fora aqui de propósito: esta
+    // página é só o "usar seu cel" de um cadastro normal pago — o fluxo de
+    // visitante/indicação tem entrada própria direto no totem físico ("Indicar
+    // visitante/amigo", ver terminal.html/terminal.js), que sabe lidar com a
+    // resposta sem pagamento. Sem esse filtro, escolher "Visitante" aqui
+    // deixaria esta tela travada esperando um Pix que nunca é gerado.
+    const planosPagos = planos.filter((p) => p.id !== 'visitante');
+    select.innerHTML = planosPagos.length
+      ? planosPagos.map((p) => `<option value="${p.id}">${p.nome} — ${formatarMoeda(p.valor_centavos)}</option>`).join('')
       : '<option value="">Nenhum plano disponível</option>';
   } catch (err) {
     select.innerHTML = '<option value="">Não foi possível carregar os planos</option>';
@@ -61,12 +68,14 @@ document.getElementById('btn-cadastro-continuar').addEventListener('click', asyn
   const nome = document.getElementById('cadastro-nome').value.trim();
   const cpf = document.getElementById('cadastro-cpf').value.trim();
   const telefone = document.getElementById('cadastro-telefone').value.trim();
+  const email = document.getElementById('cadastro-email').value.trim();
+  const dataNascimento = document.getElementById('cadastro-data-nascimento').value;
   const planoId = document.getElementById('cadastro-plano').value;
   const erroEl = document.getElementById('cadastro-form-erro');
   erroEl.textContent = '';
 
-  if (!nome || !cpf || !planoId) {
-    erroEl.textContent = 'Preencha nome, CPF e escolha um plano.';
+  if (!nome || !cpf || !telefone || !email || !dataNascimento || !planoId) {
+    erroEl.textContent = 'Preencha nome, CPF, telefone, e-mail, data de nascimento e escolha um plano.';
     return;
   }
 
@@ -75,7 +84,9 @@ document.getElementById('btn-cadastro-continuar').addEventListener('click', asyn
   try {
     const resp = await api('/api/terminal/auto-cadastro', {
       method: 'POST',
-      body: JSON.stringify({ nome, cpf, telefone: telefone || null, plano_id: planoId }),
+      body: JSON.stringify({
+        nome, cpf, telefone, email, data_nascimento: dataNascimento, plano_id: planoId,
+      }),
     });
     cadastroCpfAtual = cpf;
     mostrarPagamento(resp);

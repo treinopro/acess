@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { v4: uuid } = require('uuid');
 const db = require('./client');
 
 // Colunas adicionadas depois da versão inicial do schema. CREATE TABLE IF NOT EXISTS
@@ -27,6 +28,10 @@ const ALTERACOES_INCREMENTAIS = [
   "ALTER TABLE planos ADD COLUMN desconto_percentual REAL",
   "ALTER TABLE planos ADD COLUMN desconto_valor_centavos INTEGER",
   "ALTER TABLE planos ADD COLUMN desconto_forma_pagamento TEXT",
+  // Categoria da pessoa + indicação de visitante (2026-07) — ver comentário
+  // detalhado junto da definição de "alunos" em schema.sql.
+  "ALTER TABLE alunos ADD COLUMN categoria TEXT NOT NULL DEFAULT 'aluno'",
+  "ALTER TABLE alunos ADD COLUMN indicado_por_aluno_id TEXT",
 ];
 
 // Divide um arquivo .sql em statements individuais (o driver libsql nao aceita
@@ -65,6 +70,41 @@ function dividirStatementsSQL(sql) {
     });
 }
 
+// Modelo pronto "Boas-vindas / Cadastro facial" (2026-07) — reaproveita o
+// mesmo texto do e-mail automático de cadastro (ver
+// src/services/emailBoasVindas.service.js) no composer de Recuperação de
+// Clientes, pra reenviar em massa pra "Todos os ativos" (GET
+// /api/recuperacao/todos-ativos) quando for útil — ex.: pedir de novo pra
+// quem ainda não fez o cadastro facial. Usa {nome} e {senha} (ver
+// substituirVariaveis em recuperacao.routes.js); o link do Portal do Aluno já
+// entra sozinho por causa de link_tipo='portal'. Deliberadamente DESACOPLADO
+// do e-mail automático em si (ver comentário no topo de
+// emailBoasVindas.service.js) — apagar/editar este modelo nunca afeta o
+// e-mail que dispara sozinho no cadastro.
+const TEMPLATE_BOAS_VINDAS = {
+  nome: 'Boas-vindas / Cadastro facial',
+  saudacao: 'Olá {nome}! Seja bem-vindo(a) à Academia Superação.',
+  corpo: 'Para acompanhar seus dados, treinos e contas pelo celular, acesse o Portal do Aluno abaixo.\n\n'
+    + 'Sua senha de acesso ao portal é: {senha}\n\n'
+    + 'Se você ainda não fez o cadastro facial na academia (pra liberar a catraca automaticamente, sem precisar digitar nada), aproveite para fazer pelo próprio Portal do Aluno — é rápido!',
+  link_tipo: 'portal',
+};
+
+async function seedMensagensTemplates() {
+  const existente = await db.execute({
+    sql: 'SELECT id FROM mensagens_templates WHERE nome = ?',
+    args: [TEMPLATE_BOAS_VINDAS.nome],
+  });
+  if (existente.rows[0]) return false;
+
+  await db.execute({
+    sql: `INSERT INTO mensagens_templates (id, nome, saudacao, corpo, link_tipo, ativo)
+          VALUES (?, ?, ?, ?, ?, 1)`,
+    args: [uuid(), TEMPLATE_BOAS_VINDAS.nome, TEMPLATE_BOAS_VINDAS.saudacao, TEMPLATE_BOAS_VINDAS.corpo, TEMPLATE_BOAS_VINDAS.link_tipo],
+  });
+  return true;
+}
+
 async function migrate() {
   const schemaPath = path.join(__dirname, 'schema.sql');
   const schema = fs.readFileSync(schemaPath, 'utf8');
@@ -97,7 +137,9 @@ async function migrate() {
     await db.execute(statement);
   }
 
-  console.log(`Migração concluída: ${statements.length} statements de schema + ${aplicadas} alteração(ões) incremental(is) nova(s).`);
+  const templateSeedCriado = await seedMensagensTemplates();
+
+  console.log(`Migração concluída: ${statements.length} statements de schema + ${aplicadas} alteração(ões) incremental(is) nova(s)${templateSeedCriado ? ' + modelo "Boas-vindas / Cadastro facial" criado' : ''}.`);
 }
 
 migrate()

@@ -32,6 +32,7 @@ const db = require('../db/client');
 const acessoTerminal = require('../services/acessoTerminal.service');
 const pagamentoContas = require('../services/pagamentoContas.service');
 const mercadopago = require('../services/payment/mercadopago.service');
+const emailBoasVindas = require('../services/emailBoasVindas.service');
 const { criarLimitador } = require('../middleware/rateLimit');
 
 const router = express.Router();
@@ -46,13 +47,35 @@ router.use(criarLimitador({
   mensagem: 'Muitas requisições ao portal a partir deste endereço. Aguarde alguns minutos.',
 }));
 
-// GET /api/portal/planos — planos ativos, para os seletores de cadastro/upgrade.
+// Sentinela do "plano Visitante" (2026-07 — sistema de visitantes/indicação),
+// mesmo mecanismo de src/routes/terminal.routes.js: não é uma linha de
+// verdade em `planos` (evitando poluir relatórios financeiros com um plano de
+// R$ 0,00) — é injetado como opção extra na lista que GET /planos devolve, e
+// tratado à parte em POST /cadastro, sem Pix, sem matrícula, sem cobrança.
+const PLANO_VISITANTE_ID = 'visitante';
+const PLANO_VISITANTE = {
+  id: PLANO_VISITANTE_ID,
+  nome: 'Visitante (acesso gratuito, sem matrícula)',
+  tipo: 'visitante',
+  valor_centavos: 0,
+  duracao_dias: null,
+};
+
+// GET /api/portal/planos?incluir_visitante=true — planos ativos, para os
+// seletores de cadastro/upgrade. A opção "Visitante" só entra quando
+// incluir_visitante=true (usado pelo formulário de "Quero me cadastrar" —
+// ver carregarPlanosCadastroPortal em portal.js) — o seletor de UPGRADE (aluno
+// já cadastrado trocando de plano) chama este mesmo endpoint SEM esse
+// parâmetro de propósito: "virar visitante" não é uma opção de upgrade válida
+// (POST /upgrade nem trata plano_id='visitante'), então nunca deve aparecer
+// nessa lista.
 router.get('/planos', async (req, res, next) => {
   try {
     const result = await db.execute(
       'SELECT id, nome, tipo, valor_centavos, duracao_dias FROM planos WHERE ativo = 1 ORDER BY valor_centavos',
     );
-    res.json(result.rows);
+    const incluirVisitante = req.query.incluir_visitante === 'true' || req.query.incluir_visitante === '1';
+    res.json(incluirVisitante ? [...result.rows, PLANO_VISITANTE] : result.rows);
   } catch (err) {
     next(err);
   }
@@ -284,13 +307,19 @@ router.get('/contas/status/:pagamentoId', async (req, res, next) => {
 // Mesmo fluxo do totem (ver terminal.routes.js /auto-cadastro), mas o status
 // de confirmação aqui NUNCA chama acessoTerminal.tentarLiberar (sem catraca).
 
+// 2026-07: nome, e-mail, telefone e data de nascimento passaram a ser
+// obrigatórios também no portal (mesma decisão do totem, ver
+// terminal.routes.js) — antes só nome e CPF eram exigidos.
 const cadastroSchema = z.object({
   nome: z.string().min(2),
   cpf: z.string().min(1),
-  telefone: z.string().optional().nullable(),
-  email: z.string().email().optional().nullable(),
-  data_nascimento: z.string().optional().nullable(),
+  telefone: z.string().min(8, 'Telefone é obrigatório.'),
+  email: z.string().email('E-mail é obrigatório e precisa ser válido.'),
+  data_nascimento: z.string().min(1, 'Data de nascimento é obrigatória.'),
   plano_id: z.string().min(1),
+  // Preenchido só quando um aluno indica um amigo pelo próprio portal (mesmo
+  // mecanismo do totem — ver terminal.routes.js /auto-cadastro).
+  indicado_por_cpf: z.string().optional().nullable(),
 });
 
 router.post('/cadastro', async (req, res, next) => {
@@ -300,6 +329,46 @@ router.post('/cadastro', async (req, res, next) => {
     const existente = await acessoTerminal.buscarAlunoPorCpf(dados.cpf);
     if (existente) {
       return res.status(409).json({ erro: 'Este CPF já tem cadastro. Use "Já sou aluno" para consultar suas contas e treino.' });
+    }
+
+    // ---------------- Fluxo "Indicar visitante/amigo" pelo portal (2026-07) ----------------
+    // Mesmo mecanismo do totem (ver terminal.routes.js): sem Pix, sem
+    // matrícula, sem cobrança — só o cadastro em si, com categoria='visitante'
+    // e, se veio de uma indicação, o vínculo + checagem do limite mensal.
+    if (dados.plano_id === PLANO_VISITANTE_ID) {
+      let indicadoPorAlunoId = null;
+      if (dados.indicado_por_cpf) {
+        const indicador = await acessoTerminal.buscarAlunoPorCpf(dados.indicado_por_cpf);
+        if (!indicador) {
+          return res.status(404).json({ erro: 'CPF de quem está indicando não foi encontrado. Confirme com a recepção.' });
+        }
+        const [limiteMensal, jaIndicados] = await Promise.all([
+          acessoTerminal.limiteIndicacoesMensalEm(db),
+          acessoTerminal.contarIndicacoesNoMes(indicador.id),
+        ]);
+        if (jaIndicados >= limiteMensal) {
+          return res.status(409).json({
+            erro: `Limite de ${limiteMensal} indicação${limiteMensal === 1 ? '' : 'ões'} por mês atingido para este aluno. Procure a recepção.`,
+          });
+        }
+        indicadoPorAlunoId = indicador.id;
+      }
+
+      const alunoId = uuid();
+      await db.execute({
+        sql: `INSERT INTO alunos (id, nome, email, telefone, cpf, data_nascimento, status, categoria, indicado_por_aluno_id)
+              VALUES (?, ?, ?, ?, ?, ?, 'ativo', 'visitante', ?)`,
+        args: [alunoId, dados.nome, dados.email, dados.telefone, dados.cpf, dados.data_nascimento, indicadoPorAlunoId],
+      });
+
+      emailBoasVindas.enviarBoasVindasSeguro({ id: alunoId, nome: dados.nome, email: dados.email }).catch(() => {});
+
+      return res.status(201).json({
+        visitante: true,
+        aluno_id: alunoId,
+        aluno_nome: dados.nome,
+        indicado_por_aluno_id: indicadoPorAlunoId,
+      });
     }
 
     const plano = await db.execute({ sql: 'SELECT * FROM planos WHERE id = ? AND ativo = 1', args: [dados.plano_id] });
@@ -326,8 +395,11 @@ router.post('/cadastro', async (req, res, next) => {
     await db.execute({
       sql: `INSERT INTO alunos (id, nome, email, telefone, cpf, data_nascimento, status)
             VALUES (?, ?, ?, ?, ?, ?, 'ativo')`,
-      args: [alunoId, dados.nome, dados.email || null, dados.telefone || null, dados.cpf, dados.data_nascimento || null],
+      args: [alunoId, dados.nome, dados.email, dados.telefone, dados.cpf, dados.data_nascimento],
     });
+    // E-mail de boas-vindas automático (2026-07) — best-effort, nunca atrasa
+    // nem quebra o cadastro/pagamento em si (ver emailBoasVindas.service.js).
+    emailBoasVindas.enviarBoasVindasSeguro({ id: alunoId, nome: dados.nome, email: dados.email }).catch(() => {});
 
     const hoje = new Date().toISOString().slice(0, 10);
     const dataFim = p.duracao_dias ? new Date(Date.now() + p.duracao_dias * 86400000).toISOString().slice(0, 10) : null;

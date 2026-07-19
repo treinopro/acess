@@ -73,6 +73,16 @@
             <div><label>Telefone</label><input id="aluno-telefone" /></div>
             <div><label>CPF</label><input id="aluno-cpf" /></div>
             <div><label>Data de nascimento</label><input id="aluno-nascimento" type="date" /></div>
+            <div>
+              <label>Categoria</label>
+              <select id="aluno-categoria">
+                <option value="aluno">Aluno</option>
+                <option value="professor">Professor</option>
+                <option value="visitante">Visitante</option>
+                <option value="colaborador">Colaborador (acesso livre)</option>
+                <option value="bolsista">Bolsista (acesso livre)</option>
+              </select>
+            </div>
           </div>
           <label>Observações</label>
           <textarea id="aluno-observacoes" rows="2"></textarea>
@@ -122,6 +132,7 @@
               <th class="th-ordenavel" data-sort="id" style="cursor:pointer;user-select:none">ID <span class="seta-ordenacao" data-seta="id"></span></th>
               <th class="th-ordenavel" data-sort="nome" style="cursor:pointer;user-select:none">Nome <span class="seta-ordenacao" data-seta="nome"></span></th>
               <th class="th-ordenavel" data-sort="contato" style="cursor:pointer;user-select:none">Contato <span class="seta-ordenacao" data-seta="contato"></span></th>
+              <th>Categoria</th>
               <th class="th-ordenavel" data-sort="status" style="cursor:pointer;user-select:none">Status <span class="seta-ordenacao" data-seta="status"></span></th>
               <th>Ações</th>
             </tr>
@@ -159,6 +170,16 @@
               <div><label>Telefone</label><input id="perfil-telefone" /></div>
               <div><label>CPF</label><input id="perfil-cpf" /></div>
               <div><label>Data de nascimento</label><input id="perfil-nascimento" type="date" /></div>
+              <div>
+                <label>Categoria</label>
+                <select id="perfil-categoria">
+                  <option value="aluno">Aluno</option>
+                  <option value="professor">Professor</option>
+                  <option value="visitante">Visitante</option>
+                  <option value="colaborador">Colaborador (acesso livre)</option>
+                  <option value="bolsista">Bolsista (acesso livre)</option>
+                </select>
+              </div>
             </div>
             <label>Observações</label>
             <textarea id="perfil-observacoes" rows="2"></textarea>
@@ -946,6 +967,8 @@
         <div class="perfil-tabs">
           <button class="recup-tab-btn ativo" data-recup="dias-sem-acesso">Dias sem acesso</button>
           <button class="recup-tab-btn" data-recup="aniversariantes">Aniversariantes</button>
+          <button class="recup-tab-btn" data-recup="todos-ativos">Todos os ativos</button>
+          <button class="recup-tab-btn" data-recup="visitantes">Visitantes</button>
           <button class="recup-tab-btn" data-recup="templates">Modelos de mensagem</button>
           <button class="recup-tab-btn" data-recup="historico">Histórico</button>
         </div>
@@ -1027,6 +1050,121 @@
           <table class="tabela">
             <thead><tr><th style="width:30px"></th><th>Dia</th><th>Aluno</th><th>Telefone</th><th>E-mail</th></tr></thead>
             <tbody id="recup-aniv-lista"></tbody>
+          </table>
+        </div>
+
+        <!-- Painel: Todos os ativos (2026-07) — audiência pro convite padrão de
+             boas-vindas/portal (mesmo texto do e-mail automático de cadastro,
+             modelo "Boas-vindas / Cadastro facial" já vem pronto no seletor de
+             modelo do modal de envio). Útil pra reenviar em massa pra quem
+             ainda não fez o cadastro facial. -->
+        <div class="recup-painel oculto" data-recup-painel="todos-ativos">
+          <p style="font-size:13px;color:#667085;margin:0 0 14px">
+            Todos os cadastros com status ativo (inclui visitantes) — use pra reenviar em massa o convite
+            de boas-vindas/link do Portal do Aluno, por exemplo pra quem ainda não fez o cadastro facial.
+          </p>
+          <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
+            <div style="flex:1;min-width:180px">
+              <label>Buscar por nome</label>
+              <span class="campo-busca-wrap" style="display:block">
+                <input type="text" id="recup-ativos-busca" placeholder="Nome..." />
+                <button type="button" class="btn-limpar-busca" data-alvo="recup-ativos-busca" data-buscar="btn-recup-ativos-buscar" title="Limpar busca">&times;</button>
+              </span>
+            </div>
+            <div>
+              <label>Categoria</label>
+              <select id="recup-ativos-categoria">
+                <option value="">Todas</option>
+                <option value="aluno">Aluno</option>
+                <option value="professor">Professor</option>
+                <option value="visitante">Visitante</option>
+                <option value="colaborador">Colaborador</option>
+                <option value="bolsista">Bolsista</option>
+              </select>
+            </div>
+            <button type="button" class="btn-primario" id="btn-recup-ativos-buscar">Filtrar</button>
+          </div>
+
+          <div style="display:flex;gap:14px;align-items:center;margin:14px 0;flex-wrap:wrap">
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px">
+              <input type="checkbox" id="recup-ativos-selecionar-todos" style="width:auto" /> Selecionar todos
+            </label>
+            <button type="button" class="btn-secundario" id="btn-recup-ativos-enviar-selecionados" disabled>Enviar mensagem aos selecionados</button>
+            <span id="recup-ativos-selecionados-contagem" style="font-size:13px;color:#667085"></span>
+          </div>
+
+          <table class="tabela">
+            <thead>
+              <tr>
+                <th style="width:30px"></th>
+                <th>Nome</th>
+                <th>Categoria</th>
+                <th>E-mail</th>
+                <th>Telefone</th>
+                <th>Rosto cadastrado</th>
+              </tr>
+            </thead>
+            <tbody id="recup-ativos-lista"></tbody>
+          </table>
+          <p id="recup-ativos-total" style="font-size:13px;color:#667085;margin-top:8px"></p>
+        </div>
+
+        <!-- Painel: Visitantes (2026-07) — relatório de quem entrou como
+             visitante (categoria='visitante'), quantos acessos já usou (contra
+             o limite configurável) e quem indicou, pra campanha de "vire
+             aluno" usando o mesmo mecanismo de envio de sempre. -->
+        <div class="recup-painel oculto" data-recup-painel="visitantes">
+          <p style="font-size:13px;color:#667085;margin:0 0 14px">
+            Quem já passou como visitante — acompanhe quantos acessos cada um já usou (contra o limite
+            configurado em Configurações) e quem indicou, e use pra tentar captar matrícula.
+          </p>
+          <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
+            <div style="flex:1;min-width:180px">
+              <label>Buscar por nome</label>
+              <span class="campo-busca-wrap" style="display:block">
+                <input type="text" id="recup-visitantes-busca" placeholder="Nome..." />
+                <button type="button" class="btn-limpar-busca" data-alvo="recup-visitantes-busca" data-buscar="btn-recup-visitantes-buscar" title="Limpar busca">&times;</button>
+              </span>
+            </div>
+            <button type="button" class="btn-primario" id="btn-recup-visitantes-buscar">Filtrar</button>
+          </div>
+
+          <div style="display:flex;gap:14px;align-items:center;margin:14px 0;flex-wrap:wrap">
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px">
+              <input type="checkbox" id="recup-visitantes-selecionar-todos" style="width:auto" /> Selecionar todos
+            </label>
+            <button type="button" class="btn-secundario" id="btn-recup-visitantes-enviar-selecionados" disabled>Enviar mensagem aos selecionados</button>
+            <span id="recup-visitantes-selecionados-contagem" style="font-size:13px;color:#667085"></span>
+          </div>
+
+          <table class="tabela">
+            <thead>
+              <tr>
+                <th style="width:30px"></th>
+                <th>Nome</th>
+                <th>Cadastrado em</th>
+                <th>Indicado por</th>
+                <th>Acessos usados</th>
+              </tr>
+            </thead>
+            <tbody id="recup-visitantes-lista"></tbody>
+          </table>
+          <p id="recup-visitantes-total" style="font-size:13px;color:#667085;margin-top:8px"></p>
+
+          <h3 style="margin:24px 0 10px">Indicações no mês</h3>
+          <p style="font-size:13px;color:#667085;margin:0 0 14px">
+            Quantos visitantes cada aluno já indicou no mês selecionado, contra o limite mensal configurado.
+          </p>
+          <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
+            <div>
+              <label>Mês</label>
+              <input type="month" id="recup-indicadores-mes" />
+            </div>
+            <button type="button" class="btn-primario" id="btn-recup-indicadores-buscar">Filtrar</button>
+          </div>
+          <table class="tabela">
+            <thead><tr><th>Aluno indicador</th><th>Indicações no mês</th><th>Limite mensal</th></tr></thead>
+            <tbody id="recup-indicadores-lista"></tbody>
           </table>
         </div>
 

@@ -271,6 +271,69 @@ async function possuiConcessaoAcessoAtiva(alunoId) {
 }
 
 /**
+ * Categorias de pessoa com acesso livre (2026-07 — sistema de modalidades e
+ * visitantes, ver comentário em schema.sql junto de alunos.categoria):
+ * colaborador e bolsista nunca são bloqueados por mensalidade em atraso —
+ * eles simplesmente não têm mensalidade. Cadastro trancado/inativo (decisão
+ * manual do admin) continua bloqueando igual a qualquer outra categoria —
+ * ver verificarAutorizacaoAluno, esta checagem só entra DEPOIS da checagem de
+ * status.
+ */
+const CATEGORIA_ACESSO_LIVRE = new Set(['colaborador', 'bolsista']);
+
+const LIMITE_VISITANTE_PADRAO = 1;
+
+/** Lê o limite de acessos por visitante configurado (Configurações > Visitantes). */
+async function limiteAcessosVisitanteEm(cliente) {
+  const result = await cliente.execute("SELECT valor FROM configuracoes WHERE chave = 'visitante_limite_acessos'");
+  const n = Number(result.rows[0]?.valor);
+  return Number.isFinite(n) && n >= 0 ? n : LIMITE_VISITANTE_PADRAO;
+}
+
+/** Conta quantos acessos LIBERADOS esse aluno/visitante já usou (histórico completo). */
+async function contarAcessosLiberadosEm(cliente, alunoId) {
+  const result = await cliente.execute({
+    sql: "SELECT COUNT(*) as total FROM acessos_catraca WHERE aluno_id = ? AND resultado = 'liberado'",
+    args: [alunoId],
+  });
+  return Number(result.rows[0].total);
+}
+
+async function contarAcessosLiberados(alunoId) {
+  return contarAcessosLiberadosEm(db, alunoId);
+}
+
+const LIMITE_INDICACOES_PADRAO = 2;
+
+/** Lê o limite de indicações de visitante por mês, por aluno (Configurações > Visitantes). */
+async function limiteIndicacoesMensalEm(cliente) {
+  const result = await cliente.execute("SELECT valor FROM configuracoes WHERE chave = 'indicacao_limite_mensal'");
+  const n = Number(result.rows[0]?.valor);
+  return Number.isFinite(n) && n >= 0 ? n : LIMITE_INDICACOES_PADRAO;
+}
+
+/**
+ * Conta quantos visitantes um aluno já indicou (cadastrou como amigo) desde o
+ * início do mês corrente (UTC — mesma convenção usada em cobrancas.service.js
+ * pra "mês"). Usado tanto pra aplicar o limite mensal na hora de cadastrar um
+ * novo visitante (terminal.routes.js) quanto pro relatório de indicações.
+ */
+async function contarIndicacoesNoMesEm(cliente, alunoIndicadorId) {
+  const inicioMes = new Date();
+  inicioMes.setUTCDate(1);
+  const inicioMesISO = inicioMes.toISOString().slice(0, 10);
+  const result = await cliente.execute({
+    sql: "SELECT COUNT(*) as total FROM alunos WHERE indicado_por_aluno_id = ? AND substr(criado_em, 1, 10) >= ?",
+    args: [alunoIndicadorId, inicioMesISO],
+  });
+  return Number(result.rows[0].total);
+}
+
+async function contarIndicacoesNoMes(alunoIndicadorId) {
+  return contarIndicacoesNoMesEm(db, alunoIndicadorId);
+}
+
+/**
  * Aviso de vencimento mostrado no totem/catraca a cada check-in (2026-07):
  * busca a mensalidade em aberto (pendente ou atrasada, vinculada a matrícula)
  * com o vencimento mais próximo, e monta a mensagem "faltam N dias" (ainda no
@@ -422,6 +485,32 @@ async function verificarAutorizacaoAluno(aluno) {
     return { autorizado: false, motivo: motivoStatus };
   }
 
+  const categoria = aluno.categoria || 'aluno';
+
+  // Colaborador/bolsista: acesso livre, nunca depende de mensalidade (2026-07)
+  // — mas o status trancado/inativo checado acima continua valendo igual.
+  if (CATEGORIA_ACESSO_LIVRE.has(categoria)) {
+    return { autorizado: true, motivo: null };
+  }
+
+  // Visitante: não tem mensalidade pra checar — em vez disso, um limite de
+  // quantas vezes pode entrar como visitante (configurável em Configurações
+  // > Visitantes, padrão 1). Depois de atingir o limite, precisa virar aluno
+  // pagante (matrícula de verdade) pra continuar acessando.
+  if (categoria === 'visitante') {
+    const [limite, usados] = await Promise.all([
+      dbResiliente.comFallback('limiteAcessosVisitante', () => limiteAcessosVisitanteEm(db), () => limiteAcessosVisitanteEm(dbOffline)),
+      dbResiliente.comFallback('contarAcessosLiberadosVisitante', () => contarAcessosLiberadosEm(db, aluno.id), () => contarAcessosLiberadosEm(dbOffline, aluno.id)),
+    ]);
+    if (usados >= limite) {
+      return {
+        autorizado: false,
+        motivo: `Limite de ${limite} acesso${limite === 1 ? '' : 's'} como visitante atingido. Procure a recepção para se matricular.`,
+      };
+    }
+    return { autorizado: true, motivo: null };
+  }
+
   const emAtraso = motivoStatus
     ? true // status já diz 'inadimplente' — trata como em atraso sem precisar consultar cobrancas de novo
     : await dbResiliente.comFallback(
@@ -452,18 +541,21 @@ async function verificarAutorizacaoAluno(aluno) {
  */
 async function listarAutorizacoesBiometricas() {
   const hojeISO = new Date().toISOString().slice(0, 10);
-  const [resultAlunos, resultAtraso, resultConcessoes] = await Promise.all([
-    db.execute("SELECT id, nome, status, biometria_id FROM alunos WHERE biometria_id IS NOT NULL AND biometria_id != ''"),
+  const [resultAlunos, resultAtraso, resultConcessoes, resultAcessosPorAluno, limiteVisitante] = await Promise.all([
+    db.execute("SELECT id, nome, status, biometria_id, categoria FROM alunos WHERE biometria_id IS NOT NULL AND biometria_id != ''"),
     db.execute(`SELECT DISTINCT aluno_id FROM cobrancas
                 WHERE matricula_id IS NOT NULL AND (
                   status = 'atrasado'
                   OR (status = 'pendente' AND vencimento IS NOT NULL AND vencimento < date('now'))
                 )`),
     db.execute({ sql: 'SELECT DISTINCT aluno_id FROM concessoes_acesso WHERE valido_ate >= ?', args: [hojeISO] }),
+    db.execute("SELECT aluno_id, COUNT(*) as total FROM acessos_catraca WHERE resultado = 'liberado' GROUP BY aluno_id"),
+    limiteAcessosVisitanteEm(db),
   ]);
 
   const idsEmAtraso = new Set(resultAtraso.rows.map((linha) => linha.aluno_id));
   const idsComConcessao = new Set(resultConcessoes.rows.map((linha) => linha.aluno_id));
+  const acessosLiberadosPorAluno = new Map(resultAcessosPorAluno.rows.map((linha) => [linha.aluno_id, Number(linha.total)]));
 
   return resultAlunos.rows.map((aluno) => {
     const motivoStatus = motivoBloqueioPorStatus(aluno);
@@ -472,6 +564,24 @@ async function listarAutorizacoesBiometricas() {
     if (motivoStatus && motivoStatus !== 'Existem mensalidades em atraso.') {
       return { biometria_id: aluno.biometria_id, autorizado: false, aluno_nome: aluno.nome, motivo: motivoStatus };
     }
+
+    const categoria = aluno.categoria || 'aluno';
+    if (CATEGORIA_ACESSO_LIVRE.has(categoria)) {
+      return { biometria_id: aluno.biometria_id, autorizado: true, aluno_nome: aluno.nome, motivo: null };
+    }
+    if (categoria === 'visitante') {
+      const usados = acessosLiberadosPorAluno.get(aluno.id) || 0;
+      if (usados >= limiteVisitante) {
+        return {
+          biometria_id: aluno.biometria_id,
+          autorizado: false,
+          aluno_nome: aluno.nome,
+          motivo: `Limite de ${limiteVisitante} acesso${limiteVisitante === 1 ? '' : 's'} como visitante atingido. Procure a recepção para se matricular.`,
+        };
+      }
+      return { biometria_id: aluno.biometria_id, autorizado: true, aluno_nome: aluno.nome, motivo: null };
+    }
+
     const emAtraso = motivoStatus ? true : idsEmAtraso.has(aluno.id);
     if (emAtraso && !idsComConcessao.has(aluno.id)) {
       return { biometria_id: aluno.biometria_id, autorizado: false, aluno_nome: aluno.nome, motivo: 'Existem mensalidades em atraso.' };
@@ -494,7 +604,7 @@ async function listarAutorizacoesBiometricas() {
  */
 async function notificarAgenteAtualizacaoAluno(alunoId) {
   try {
-    const result = await db.execute({ sql: 'SELECT id, nome, status, biometria_id FROM alunos WHERE id = ?', args: [alunoId] });
+    const result = await db.execute({ sql: 'SELECT id, nome, status, biometria_id, categoria FROM alunos WHERE id = ?', args: [alunoId] });
     const aluno = result.rows[0];
     if (!aluno || !aluno.biometria_id) return;
 
@@ -649,6 +759,13 @@ module.exports = {
   temMatriculaAtiva,
   possuiCobrancaEmAtraso,
   possuiConcessaoAcessoAtiva,
+  // Categorias/visitantes (2026-07) — reaproveitados pelo relatório de
+  // visitantes e pelas rotas de cadastro (terminal.routes.js/alunos.routes.js).
+  CATEGORIA_ACESSO_LIVRE,
+  limiteAcessosVisitanteEm,
+  contarAcessosLiberados,
+  limiteIndicacoesMensalEm,
+  contarIndicacoesNoMes,
   buscarAvisoVencimento,
   buscarAvisoVencimentoSeguro,
   registrarAcesso,

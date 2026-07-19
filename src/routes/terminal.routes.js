@@ -6,6 +6,7 @@ const catracaGateway = require('../services/catracaGateway.service');
 const acessoTerminal = require('../services/acessoTerminal.service');
 const mercadopago = require('../services/payment/mercadopago.service');
 const pagamentoContas = require('../services/pagamentoContas.service');
+const emailBoasVindas = require('../services/emailBoasVindas.service');
 const { criarLimitador } = require('../middleware/rateLimit');
 const db = require('../db/client');
 
@@ -328,29 +329,58 @@ terminal.post('/vincular/facial', limitadorVinculacao, autenticarTerminalOuCadas
 // pagamento nunca abriria a catraca, mesmo com status do aluno = 'ativo'.
 // ---------------------------------------------------------------------------
 
+// Categoria da pessoa que está se auto-cadastrando (2026-07 — sistema de
+// visitantes). O totem manda 'visitante' quando o fluxo é "Cadastrar
+// visitante/amigo" (ver PLANO_VISITANTE_ID abaixo) — nos outros casos (aluno
+// novo de verdade, pagando um plano) nem precisa vir, o padrão é 'aluno'.
+const CATEGORIAS_AUTO_CADASTRO = ['aluno', 'visitante'];
+
+// 2026-07: nome, e-mail, telefone e data de nascimento passaram a ser
+// obrigatórios no auto-cadastro (totem e portal) — decisão do dono do
+// sistema, pra sempre ter como contatar/identificar quem se cadastra sozinho
+// (antes só nome e CPF eram exigidos, os outros eram opcionais).
 const autoCadastroSchema = z.object({
   nome: z.string().min(2),
   cpf: z.string().min(1),
-  telefone: z.string().optional().nullable(),
-  email: z.string().email().optional().nullable(),
-  data_nascimento: z.string().optional().nullable(),
+  telefone: z.string().min(8, 'Telefone é obrigatório.'),
+  email: z.string().email('E-mail é obrigatório e precisa ser válido.'),
+  data_nascimento: z.string().min(1, 'Data de nascimento é obrigatória.'),
   plano_id: z.string().min(1),
+  // Preenchido só no fluxo "Cadastrar visitante/amigo": CPF do aluno que já
+  // tem cadastro e está indicando o visitante. Validado abaixo (precisa
+  // existir, e não pode ter estourado o limite mensal de indicações).
+  indicado_por_cpf: z.string().optional().nullable(),
 });
 
+// Sentinela do "plano Visitante" (2026-07 — sistema de visitantes/indicação):
+// não é uma linha de verdade em `planos` (evita poluir relatórios financeiros
+// com um plano de R$ 0,00) — é injetado como uma opção a mais na lista que
+// GET /planos devolve, e tratado à parte em POST /auto-cadastro, sem Pix,
+// sem matrícula, sem cobrança. Ver também src/routes/portal.routes.js.
+const PLANO_VISITANTE_ID = 'visitante';
+const PLANO_VISITANTE = {
+  id: PLANO_VISITANTE_ID,
+  nome: 'Visitante (acesso gratuito, sem matrícula)',
+  tipo: 'visitante',
+  valor_centavos: 0,
+  duracao_dias: null,
+};
+
 // GET /api/terminal/planos — planos ativos, para o totem (ou a página de
-// cadastro pelo celular) montar o seletor de plano.
+// cadastro pelo celular) montar o seletor de plano. Sempre inclui a opção
+// "Visitante" no final, mesmo que não exista nenhum plano pago cadastrado.
 terminal.get('/planos', autenticarTerminalOuCadastroPublico, async (req, res, next) => {
   try {
     const result = await db.execute(
       'SELECT id, nome, tipo, valor_centavos, duracao_dias FROM planos WHERE ativo = 1 ORDER BY valor_centavos',
     );
-    res.json(result.rows);
+    res.json([...result.rows, PLANO_VISITANTE]);
   } catch (err) {
     next(err);
   }
 });
 
-// POST /api/terminal/auto-cadastro { nome, cpf, telefone?, email?, data_nascimento?, plano_id }
+// POST /api/terminal/auto-cadastro { nome, cpf, telefone, email, data_nascimento, plano_id, indicado_por_cpf? }
 terminal.post('/auto-cadastro', limitadorCadastro, autenticarTerminalOuCadastroPublico, async (req, res, next) => {
   try {
     const dados = autoCadastroSchema.parse(req.body);
@@ -359,6 +389,47 @@ terminal.post('/auto-cadastro', limitadorCadastro, autenticarTerminalOuCadastroP
     if (existente) {
       return res.status(409).json({
         erro: 'Este CPF já tem cadastro. Use "Primeira vez no totem" para vincular seu acesso, ou procure a recepção.',
+      });
+    }
+
+    // ---------------- Fluxo "Cadastrar visitante/amigo" (2026-07) ----------------
+    // Sem Pix, sem matrícula, sem cobrança — só o cadastro em si, com
+    // categoria='visitante' (acesso limitado, ver acessoTerminal.service.js)
+    // e, se veio de uma indicação, o vínculo com quem indicou + checagem do
+    // limite mensal de indicações por aluno.
+    if (dados.plano_id === PLANO_VISITANTE_ID) {
+      let indicadoPorAlunoId = null;
+      if (dados.indicado_por_cpf) {
+        const indicador = await acessoTerminal.buscarAlunoPorCpf(dados.indicado_por_cpf);
+        if (!indicador) {
+          return res.status(404).json({ erro: 'CPF de quem está indicando não foi encontrado. Confirme com a recepção.' });
+        }
+        const [limiteMensal, jaIndicados] = await Promise.all([
+          acessoTerminal.limiteIndicacoesMensalEm(db),
+          acessoTerminal.contarIndicacoesNoMes(indicador.id),
+        ]);
+        if (jaIndicados >= limiteMensal) {
+          return res.status(409).json({
+            erro: `Limite de ${limiteMensal} indicação${limiteMensal === 1 ? '' : 'ões'} por mês atingido para este aluno. Procure a recepção.`,
+          });
+        }
+        indicadoPorAlunoId = indicador.id;
+      }
+
+      const alunoId = uuid();
+      await db.execute({
+        sql: `INSERT INTO alunos (id, nome, email, telefone, cpf, data_nascimento, status, categoria, indicado_por_aluno_id)
+              VALUES (?, ?, ?, ?, ?, ?, 'ativo', 'visitante', ?)`,
+        args: [alunoId, dados.nome, dados.email, dados.telefone, dados.cpf, dados.data_nascimento, indicadoPorAlunoId],
+      });
+
+      emailBoasVindas.enviarBoasVindasSeguro({ id: alunoId, nome: dados.nome, email: dados.email }).catch(() => {});
+
+      return res.status(201).json({
+        visitante: true,
+        aluno_id: alunoId,
+        aluno_nome: dados.nome,
+        indicado_por_aluno_id: indicadoPorAlunoId,
       });
     }
 
@@ -413,8 +484,11 @@ terminal.post('/auto-cadastro', limitadorCadastro, autenticarTerminalOuCadastroP
     await db.execute({
       sql: `INSERT INTO alunos (id, nome, email, telefone, cpf, data_nascimento, status)
             VALUES (?, ?, ?, ?, ?, ?, 'ativo')`,
-      args: [alunoId, dados.nome, dados.email || null, dados.telefone || null, dados.cpf, dados.data_nascimento || null],
+      args: [alunoId, dados.nome, dados.email, dados.telefone, dados.cpf, dados.data_nascimento],
     });
+    // E-mail de boas-vindas automático (2026-07) — best-effort, nunca atrasa
+    // nem quebra o cadastro/pagamento em si (ver emailBoasVindas.service.js).
+    emailBoasVindas.enviarBoasVindasSeguro({ id: alunoId, nome: dados.nome, email: dados.email }).catch(() => {});
 
     const hoje = new Date().toISOString().slice(0, 10);
     const dataFim = p.duracao_dias ? new Date(Date.now() + p.duracao_dias * 86400000).toISOString().slice(0, 10) : null;

@@ -8,7 +8,7 @@ const router = express.Router();
 // Chaves válidas de menu, na ordem padrão de fábrica — usada como fallback
 // quando nenhuma ordem customizada foi salva ainda, e para validar que o
 // admin não mande nada estranho (chave inventada, item repetido/faltando).
-const CHAVES_MENU_PADRAO = ['alunos', 'planos', 'agenda', 'pagamentos', 'pagamento-rapido', 'relatorios', 'usuarios', 'config', 'catraca'];
+const CHAVES_MENU_PADRAO = ['alunos', 'planos', 'agenda', 'pagamentos', 'pagamento-rapido', 'relatorios', 'recuperacao', 'usuarios', 'config', 'catraca'];
 
 const PADROES = {
   nome_app: 'Academia Gestão',
@@ -35,6 +35,11 @@ const PADROES = {
     acessoLiberado: { tipo: 'beep', beeps: 1, texto: 'Acesso liberado' },
     acessoNegado: { tipo: 'beep', beeps: 2, texto: 'Acesso negado' },
   },
+  // Sistema de visitantes (2026-07) — ver acessoTerminal.service.js e
+  // terminal.routes.js. Guardados como string (igual todo o resto desta
+  // tabela chave/valor) mas sempre números inteiros ≥ 0 na prática.
+  visitante_limite_acessos: '1',
+  indicacao_limite_mensal: '2',
 };
 
 // GET /api/config — pública de propósito: a tela de login precisa mostrar o
@@ -56,6 +61,20 @@ router.get('/', async (req, res, next) => {
         config.menu_ordem = CHAVES_MENU_PADRAO;
       }
     }
+    // Auto-cura (2026-07): se uma ordem customizada foi salva ANTES de um menu
+    // novo existir (ex.: "Recuperação de Clientes" foi adicionado depois e o
+    // admin já tinha reordenado o menu antes disso), a lista salva no banco
+    // fica sem essa chave nova pra sempre — e como o item nem aparece na
+    // ferramenta de reordenar, o admin não tem como consertar sozinho. Aqui a
+    // gente detecta chave nova ausente e simplesmente acrescenta no fim,
+    // silenciosamente, sem exigir "resetar tudo". O oposto (chave removida do
+    // sistema) também é filtrado, pelo mesmo motivo de nunca travar a UI.
+    const chavesValidas = new Set(CHAVES_MENU_PADRAO);
+    const presentes = new Set(config.menu_ordem);
+    config.menu_ordem = config.menu_ordem.filter((chave) => chavesValidas.has(chave));
+    CHAVES_MENU_PADRAO.forEach((chave) => {
+      if (!presentes.has(chave)) config.menu_ordem.push(chave);
+    });
 
     if (typeof config.som_totem === 'string') {
       try {
@@ -105,13 +124,20 @@ router.put('/', autenticar, apenasAdmin, async (req, res, next) => {
         acessoLiberado: SomSituacaoSchema,
         acessoNegado: SomSituacaoSchema,
       }).optional(),
+      // Sistema de visitantes (2026-07): quantos acessos grátis cada visitante
+      // pode usar antes de precisar virar aluno pagante, e quantos amigos
+      // cada aluno pode indicar (cadastrar como visitante) por mês. Ver
+      // acessoTerminal.service.js / terminal.routes.js.
+      visitante_limite_acessos: z.number().int().min(0).max(50).optional(),
+      indicacao_limite_mensal: z.number().int().min(0).max(50).optional(),
     });
     const dados = schema.parse(req.body);
     const chaves = Object.keys(dados);
     if (chaves.length === 0) return res.status(400).json({ erro: 'Nenhum campo informado.' });
 
     for (const chave of chaves) {
-      const valor = (chave === 'menu_ordem' || chave === 'som_totem') ? JSON.stringify(dados[chave]) : dados[chave];
+      let valor = (chave === 'menu_ordem' || chave === 'som_totem') ? JSON.stringify(dados[chave]) : dados[chave];
+      if (chave === 'visitante_limite_acessos' || chave === 'indicacao_limite_mensal') valor = String(valor);
       await db.execute({
         sql: 'INSERT INTO configuracoes (chave, valor) VALUES (?, ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor',
         args: [chave, valor],

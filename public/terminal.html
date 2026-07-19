@@ -169,6 +169,7 @@
       <button class="botao-pequeno" id="btn-ir-vincular">Primeira vez no totem</button>
       <button class="botao-pequeno" id="btn-ir-cadastro">Quero me cadastrar</button>
       <button class="botao-pequeno" id="btn-ir-contas">Pagar contas em atraso</button>
+      <button class="botao-pequeno" id="btn-ir-visitante">Indicar visitante/amigo</button>
     </div>
   </div>
 
@@ -223,14 +224,24 @@
   <div class="tela" id="tela-cadastro">
     <div class="logo">QUERO ME CADASTRAR</div>
 
-    <!-- Passo 1: dados pessoais + escolha do plano -->
+    <!-- Passo 1: dados pessoais + escolha do plano. Nome, CPF, telefone, e-mail
+         e data de nascimento são todos obrigatórios (2026-07 — decisão do dono
+         do sistema, pra sempre ter como contatar/identificar quem se cadastra
+         sozinho). O campo de indicação só é usado quando o plano escolhido é
+         "Visitante" (ver acessoTerminal/terminal.routes.js) — fica sempre
+         visível pra não precisar de lógica extra de mostrar/esconder, mas é
+         opcional mesmo nesse caso. -->
     <div class="painel-identificar" id="painel-cadastro-form">
+      <div class="subtitulo" id="cadastro-form-titulo" style="margin-bottom:20px"></div>
       <input class="campo-cpf" id="cadastro-nome" placeholder="Nome completo" />
       <input class="campo-cpf" id="cadastro-cpf" placeholder="CPF" inputmode="numeric" maxlength="14" />
-      <input class="campo-cpf" id="cadastro-telefone" placeholder="Telefone (opcional)" inputmode="tel" />
+      <input class="campo-cpf" id="cadastro-telefone" placeholder="Telefone" inputmode="tel" />
+      <input class="campo-cpf" id="cadastro-email" placeholder="E-mail" inputmode="email" type="email" />
+      <input class="campo-cpf" id="cadastro-data-nascimento" placeholder="Data de nascimento" type="date" />
       <select class="campo-cpf" id="cadastro-plano"><option value="">Carregando planos...</option></select>
+      <input class="campo-cpf" id="cadastro-indicado-cpf" placeholder="CPF de quem indicou (opcional, só para visitante)" inputmode="numeric" maxlength="14" />
       <div class="status-scan" id="cadastro-form-erro"></div>
-      <button class="botao-grande primario" id="btn-cadastro-continuar" style="width:100%">Continuar para pagamento</button>
+      <button class="botao-grande primario" id="btn-cadastro-continuar" style="width:100%">Continuar</button>
     </div>
 
     <!-- Passo 2: pagamento via QR (aluno escaneia com o próprio celular) -->

@@ -533,6 +533,8 @@ function resetCadastroPortal() {
   document.getElementById('portal-cadastro-cpf').value = '';
   document.getElementById('portal-cadastro-telefone').value = '';
   document.getElementById('portal-cadastro-email').value = '';
+  document.getElementById('portal-cadastro-nascimento').value = '';
+  document.getElementById('portal-cadastro-indicado-cpf').value = '';
   document.getElementById('portal-cadastro-erro').textContent = '';
   document.getElementById('portal-cadastro-senha-caixa').textContent = '';
   document.getElementById('painel-cadastro-portal-form').classList.remove('oculto');
@@ -547,7 +549,9 @@ async function carregarPlanosCadastroPortal() {
   const select = document.getElementById('portal-cadastro-plano');
   select.innerHTML = '<option value="">Carregando planos...</option>';
   try {
-    const planos = await api('/api/portal/planos');
+    // incluir_visitante=true só aqui (cadastro novo) — nunca no seletor de
+    // upgrade (ver comentário em portal.routes.js GET /planos).
+    const planos = await api('/api/portal/planos?incluir_visitante=true');
     select.innerHTML = planos.length
       ? planos.map((p) => `<option value="${p.id}">${p.nome} — ${formatarMoeda(p.valor_centavos)}</option>`).join('')
       : '<option value="">Nenhum plano disponível</option>';
@@ -566,21 +570,37 @@ document.getElementById('btn-portal-cadastro-continuar').addEventListener('click
   const cpf = document.getElementById('portal-cadastro-cpf').value.trim();
   const telefone = document.getElementById('portal-cadastro-telefone').value.trim();
   const email = document.getElementById('portal-cadastro-email').value.trim();
+  const dataNascimento = document.getElementById('portal-cadastro-nascimento').value;
   const planoId = document.getElementById('portal-cadastro-plano').value;
+  const indicadoPorCpf = document.getElementById('portal-cadastro-indicado-cpf').value.trim();
   const erroEl = document.getElementById('portal-cadastro-erro');
   erroEl.textContent = '';
 
-  if (!nome || !cpf || !planoId) {
-    erroEl.textContent = 'Preencha nome, CPF e escolha um plano.';
+  if (!nome || !cpf || !telefone || !email || !dataNascimento || !planoId) {
+    erroEl.textContent = 'Preencha nome, CPF, telefone, e-mail, data de nascimento e escolha um plano.';
     return;
   }
 
   try {
     const resp = await api('/api/portal/cadastro', {
       method: 'POST',
-      body: JSON.stringify({ nome, cpf, telefone: telefone || null, email: email || null, plano_id: planoId }),
+      body: JSON.stringify({
+        nome, cpf, telefone, email, data_nascimento: dataNascimento, plano_id: planoId, indicado_por_cpf: indicadoPorCpf || null,
+      }),
     });
     cadastroPortalCpfAtual = cpf;
+
+    // Fluxo "visitante" (2026-07): sem Pix/matrícula — o próprio POST já
+    // devolve o cadastro concluído. Sem senha própria ainda (será gerada no
+    // primeiro login via "Já sou aluno", ver GET /api/portal/aluno).
+    if (resp.visitante) {
+      document.getElementById('painel-cadastro-portal-form').classList.add('oculto');
+      document.getElementById('painel-cadastro-portal-sucesso').classList.remove('oculto');
+      document.getElementById('portal-cadastro-sucesso-msg').textContent = `Cadastro de visitante concluído! Bem-vindo(a), ${resp.aluno_nome || ''}. Use "Já sou aluno" com seu CPF para acessar o portal e ver sua senha.`;
+      document.getElementById('portal-cadastro-senha-caixa').textContent = '';
+      return;
+    }
+
     cadastroPortalSenhaAtual = resp.senha_acesso;
     document.getElementById('painel-cadastro-portal-form').classList.add('oculto');
     document.getElementById('painel-cadastro-portal-pagamento').classList.remove('oculto');

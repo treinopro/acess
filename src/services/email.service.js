@@ -28,8 +28,27 @@ try {
 
 let transporterCache = null;
 
+// Tira espaços/quebras de linha acidentais nas pontas (ex.: copiar/colar no painel
+// do Northflank às vezes deixa um espaço a mais) — o Gmail rejeita a senha de app
+// com "Invalid login: 535-5.7.8" se ela chegar com qualquer caractere estranho.
+function limparVariavelAmbiente(valor) {
+  return typeof valor === 'string' ? valor.trim() : valor;
+}
+
+function gmailUser() {
+  return limparVariavelAmbiente(process.env.GMAIL_USER);
+}
+
+function gmailSenhaApp() {
+  // A Senha de App do Google costuma ser exibida em 4 blocos de 4 ("abcd efgh
+  // ijkl mnop") — o Gmail aceita com ou sem esses espaços do meio, mas tiramos
+  // todos por segurança (espaço nenhum é parte da senha de verdade).
+  const valor = limparVariavelAmbiente(process.env.GMAIL_APP_PASSWORD);
+  return typeof valor === 'string' ? valor.replace(/\s+/g, '') : valor;
+}
+
 function emailConfigurado() {
-  return Boolean(process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD);
+  return Boolean(gmailUser() && gmailSenhaApp());
 }
 
 function obterTransporter() {
@@ -43,8 +62,8 @@ function obterTransporter() {
     transporterCache = nodemailer.createTransport({
       service: 'gmail',
       auth: {
-        user: process.env.GMAIL_USER,
-        pass: process.env.GMAIL_APP_PASSWORD,
+        user: gmailUser(),
+        pass: gmailSenhaApp(),
       },
     });
   }
@@ -55,9 +74,9 @@ async function enviarEmail({
   para, assunto, texto, html,
 }) {
   const transporter = obterTransporter();
-  const nomeRemetente = process.env.GMAIL_FROM_NOME || 'Academia Superação';
+  const nomeRemetente = limparVariavelAmbiente(process.env.GMAIL_FROM_NOME) || 'Academia Superação';
   await transporter.sendMail({
-    from: `"${nomeRemetente}" <${process.env.GMAIL_USER}>`,
+    from: `"${nomeRemetente}" <${gmailUser()}>`,
     to: para,
     subject: assunto,
     text: texto,

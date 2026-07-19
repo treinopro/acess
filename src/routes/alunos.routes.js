@@ -8,6 +8,7 @@ const acessoTerminal = require('../services/acessoTerminal.service');
 const catracaGateway = require('../services/catracaGateway.service');
 const dbResiliente = require('../services/dbResiliente.service');
 const filaCadastroOffline = require('../services/filaCadastroOffline.service');
+const emailBoasVindas = require('../services/emailBoasVindas.service');
 
 const router = express.Router();
 router.use(autenticar);
@@ -23,6 +24,11 @@ const alunoSchema = z.object({
   biometria_id: z.string().optional().nullable(),
   // 'nativo' = treino cadastrado neste sistema | 'app_externo' = aluno usa outro app de treino.
   treino_modo: z.enum(['nativo', 'app_externo']).optional().nullable(),
+  // Categoria da pessoa (2026-07 — ver schema.sql/acessoTerminal.service.js).
+  // colaborador/bolsista têm acesso livre; visitante tem limite de acessos;
+  // aluno/professor seguem a regra normal de mensalidade. Editável aqui pelo
+  // admin (ex.: promover um cadastro de "aluno" pra "professor"/"colaborador").
+  categoria: z.enum(['aluno', 'professor', 'visitante', 'colaborador', 'bolsista']).optional().nullable(),
 });
 
 const anamneseSchema = z.object({
@@ -306,11 +312,20 @@ router.post('/', async (req, res, next) => {
     const dados = alunoSchema.parse(req.body);
     const id = uuid();
     await db.execute({
-      sql: `INSERT INTO alunos (id, nome, email, telefone, cpf, data_nascimento, foto_url, observacoes, biometria_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      sql: `INSERT INTO alunos (id, nome, email, telefone, cpf, data_nascimento, foto_url, observacoes, biometria_id, categoria)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [id, dados.nome, dados.email || null, dados.telefone || null, dados.cpf || null,
-        dados.data_nascimento || null, dados.foto_url || null, dados.observacoes || null, dados.biometria_id || null],
+        dados.data_nascimento || null, dados.foto_url || null, dados.observacoes || null, dados.biometria_id || null,
+        dados.categoria || 'aluno'],
     });
+    // E-mail de boas-vindas automático (2026-07): se o cadastro já tem e-mail
+    // e o Gmail está configurado, manda em segundo plano (best-effort — nunca
+    // atrasa nem quebra a resposta do cadastro em si; se falhar, quem cadastrou
+    // continua podendo mandar manualmente depois pela tela de Recuperação de
+    // Clientes). Ver src/services/emailBoasVindas.service.js.
+    if (dados.email) {
+      emailBoasVindas.enviarBoasVindasSeguro({ id, nome: dados.nome, email: dados.email }).catch(() => {});
+    }
     res.status(201).json({ id, ...dados });
   } catch (err) {
     next(err);
@@ -384,9 +399,10 @@ router.put('/:id', async (req, res, next) => {
             : `Editar dados do aluno ${req.params.id} (${campos.join(', ')})`,
           criadoPor: req.usuario?.email || null,
         });
-        // Este endpoint genérico pode alterar biometria_id junto com o
-        // resto — best-effort, não bloqueia a resposta.
-        if (campos.includes('biometria_id')) acessoTerminal.notificarAgenteAtualizacaoAluno(req.params.id);
+        // Este endpoint genérico pode alterar biometria_id/categoria junto
+        // com o resto (categoria afeta a regra de autorização — ver
+        // verificarAutorizacaoAluno) — best-effort, não bloqueia a resposta.
+        if (campos.includes('biometria_id') || campos.includes('categoria')) acessoTerminal.notificarAgenteAtualizacaoAluno(req.params.id);
         return res.status(202).json({
           ok: true, enfileirado: true,
           aviso: 'Sem conexão com o Turso agora — alteração guardada e será sincronizada automaticamente quando a internet voltar.',
@@ -394,9 +410,9 @@ router.put('/:id', async (req, res, next) => {
       }
     }
 
-    // Este endpoint genérico pode alterar biometria_id junto com o resto —
-    // best-effort, não bloqueia a resposta (ver notificarAgenteAtualizacaoAluno).
-    if (campos.includes('biometria_id')) acessoTerminal.notificarAgenteAtualizacaoAluno(req.params.id);
+    // Este endpoint genérico pode alterar biometria_id/categoria junto com o
+    // resto — best-effort, não bloqueia a resposta (ver notificarAgenteAtualizacaoAluno).
+    if (campos.includes('biometria_id') || campos.includes('categoria')) acessoTerminal.notificarAgenteAtualizacaoAluno(req.params.id);
     res.json({ ok: true });
   } catch (err) {
     next(err);

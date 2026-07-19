@@ -25,6 +25,23 @@ CREATE TABLE IF NOT EXISTS alunos (
   codigo_acesso TEXT, -- codigo estavel para QR/"cartao de embarque" e fallback manual no totem
   face_descriptor TEXT, -- descritor facial (JSON, 128 floats do face-api.js) para reconhecimento facial recorrente no totem
   treino_modo TEXT DEFAULT 'nativo', -- nativo | app_externo (ver tabela "treinos" mais abaixo)
+  -- Categoria da pessoa (2026-07 — sistema de modalidades/perfis e visitantes,
+  -- ver acessoTerminal.service.js e src/routes/terminal.routes.js). Chamamos
+  -- de "categoria" (não "modalidade") pra não confundir com turmas.modalidade,
+  -- que é outro conceito (tipo de aula). Valores: aluno | professor | visitante
+  -- | colaborador | bolsista. colaborador e bolsista têm acesso livre (não
+  -- dependem de mensalidade em dia) — ver CATEGORIA_ACESSO_LIVRE. visitante
+  -- tem um limite de quantos acessos pode usar (configuracoes.chave =
+  -- 'visitante_limite_acessos'), controlado por contagem de acessos_catraca,
+  -- não por um contador separado. aluno e professor seguem a regra normal de
+  -- mensalidade/status.
+  categoria TEXT NOT NULL DEFAULT 'aluno',
+  -- Preenchido só quando categoria = 'visitante' e o cadastro foi feito por um
+  -- aluno indicando um amigo pelo totem (ver POST /api/terminal/auto-cadastro
+  -- e o botão "Cadastrar visitante/amigo"). Usado tanto pro relatório de
+  -- visitantes (quem indicou quem) quanto pro limite mensal de indicações por
+  -- aluno (configuracoes.chave = 'indicacao_limite_mensal').
+  indicado_por_aluno_id TEXT REFERENCES alunos(id) ON DELETE SET NULL,
   -- Senha do portal remoto (2026-07): a partir do 1o acesso do aluno ao
   -- portal (GET /api/portal/aluno), ele passa a precisar de CPF + biometria_id
   -- (o mesmo codigo sequencial da catraca) pra entrar. Esta flag marca se
@@ -317,6 +334,8 @@ CREATE TABLE IF NOT EXISTS mensagens_enviadas (
 );
 
 CREATE INDEX IF NOT EXISTS idx_alunos_status ON alunos(status);
+CREATE INDEX IF NOT EXISTS idx_alunos_categoria ON alunos(categoria);
+CREATE INDEX IF NOT EXISTS idx_alunos_indicado_por ON alunos(indicado_por_aluno_id);
 CREATE INDEX IF NOT EXISTS idx_matriculas_aluno ON matriculas(aluno_id);
 CREATE INDEX IF NOT EXISTS idx_agendamentos_turma_data ON agendamentos(turma_id, data_aula);
 CREATE INDEX IF NOT EXISTS idx_cobrancas_status ON cobrancas(status);

@@ -70,17 +70,37 @@ function montarLinkPortal(aluno, origin) {
   return `${origin}/portal.html`;
 }
 
+// 2026-07: além de {nome} (já existia, só na saudação), agora {senha} também
+// é aceito em saudação OU corpo — usado pelo modelo seed "Boas-vindas /
+// Cadastro facial" (ver seedMensagensTemplates em migrate.js) pra reenviar em
+// massa o mesmo convite do e-mail automático de cadastro (ver
+// emailBoasVindas.service.js), incluindo a senha de acesso ao portal de cada
+// aluno. Só busca/gera essa senha (ver POST /enviar abaixo) quando o texto
+// realmente usa {senha} — não teria sentido gerar um código novo pra quem
+// nunca vai ver essa informação.
+function substituirVariaveis(texto, { nome, senha }) {
+  return String(texto || '')
+    .replace(/\{nome\}/g, primeiroNome(nome))
+    .replace(/\{senha\}/g, senha || '');
+}
+
+function usaVariavelSenha(saudacao, corpo) {
+  return /\{senha\}/.test(String(saudacao || '')) || /\{senha\}/.test(String(corpo || ''));
+}
+
 function montarMensagem({
-  aluno, saudacao, corpo, linkTipo, linkOfertaUrl, linkOfertaTexto, origin,
+  aluno, saudacao, corpo, linkTipo, linkOfertaUrl, linkOfertaTexto, origin, senha,
 }) {
-  const saudacaoFinal = String(saudacao || 'Olá {nome}!').replace(/\{nome\}/g, primeiroNome(aluno.nome));
+  const variaveis = { nome: aluno.nome, senha };
+  const saudacaoFinal = substituirVariaveis(saudacao || 'Olá {nome}!', variaveis);
+  const corpoFinal = substituirVariaveis(corpo, variaveis);
   let linkLinha = '';
   if (linkTipo === 'portal') {
     linkLinha = montarLinkPortal(aluno, origin);
   } else if (linkTipo === 'oferta' && linkOfertaUrl) {
     linkLinha = linkOfertaTexto ? `${linkOfertaTexto}: ${linkOfertaUrl}` : linkOfertaUrl;
   }
-  const partes = [saudacaoFinal, corpo || ''].filter(Boolean);
+  const partes = [saudacaoFinal, corpoFinal || ''].filter(Boolean);
   if (linkLinha) partes.push(linkLinha);
   return partes.join('\n\n');
 }
@@ -271,6 +291,7 @@ router.post('/enviar', async (req, res, next) => {
     const hojeISO = new Date().toISOString().slice(0, 10);
     const resultados = [];
     const concessoesCriadas = [];
+    const precisaSenha = usaVariavelSenha(saudacao, corpo);
 
     for (const alunoId of dados.aluno_ids) {
       // eslint-disable-next-line no-await-in-loop
@@ -278,8 +299,14 @@ router.post('/enviar', async (req, res, next) => {
       const aluno = r.rows[0];
       if (!aluno) { resultados.push({ aluno_id: alunoId, ok: false, erro: 'Aluno não encontrado.' }); continue; }
 
+      // Só busca/gera a senha de acesso (código sequencial, ver
+      // acessoTerminal.atribuirCodigoAluno) quando o modelo realmente usa
+      // {senha} — evita gerar/gravar código pra quem nunca vai ver essa info.
+      // eslint-disable-next-line no-await-in-loop
+      const senha = precisaSenha ? await acessoTerminal.atribuirCodigoAluno(aluno.id) : null;
+
       const mensagem = montarMensagem({
-        aluno, saudacao, corpo, linkTipo, linkOfertaUrl, linkOfertaTexto, origin,
+        aluno, saudacao, corpo, linkTipo, linkOfertaUrl, linkOfertaTexto, origin, senha,
       });
       let envioOk = false;
 
@@ -399,6 +426,114 @@ router.get('/concessoes', async (req, res, next) => {
       args,
     });
     res.json(result.rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---------------- Todos os ativos (2026-07) ----------------
+// GET /api/recuperacao/todos-ativos?busca=&categoria=
+// Audiência para o envio em massa do convite padrão de boas-vindas/portal —
+// pensada pro caso descrito pelo dono do sistema: reenviar o link do Portal
+// do Aluno (+ senha) pra quem ainda não fez o cadastro facial, sem precisar ir
+// aluno por aluno. Devolve TODOS os cadastros com status='ativo' (inclui
+// visitantes de propósito — ver categoria abaixo), pro admin escolher no
+// composer da tela (mesmo POST /enviar usado pela recuperação por
+// dias-sem-acesso, só que com outro público de origem). Filtro por categoria
+// opcional, útil pra excluir visitantes desse envio específico se o admin
+// quiser mandar só pra aluno/professor/colaborador/bolsista.
+router.get('/todos-ativos', async (req, res, next) => {
+  try {
+    const { busca, categoria } = req.query;
+    const condicoes = ["a.status = 'ativo'"];
+    const args = [];
+    if (busca) { condicoes.push('a.nome LIKE ?'); args.push(`%${busca}%`); }
+    if (categoria) { condicoes.push('a.categoria = ?'); args.push(categoria); }
+    const where = `WHERE ${condicoes.join(' AND ')}`;
+
+    const result = await db.execute({
+      sql: `SELECT a.id as aluno_id, a.nome, a.email, a.telefone, a.categoria, a.criado_em,
+              (a.face_descriptor IS NOT NULL) as tem_rosto_cadastrado
+            FROM alunos a
+            ${where}
+            ORDER BY a.nome ASC`,
+      args,
+    });
+    res.json(result.rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---------------- Relatório de visitantes (2026-07) ----------------
+// GET /api/recuperacao/visitantes?busca=&indicado_por_aluno_id=
+// Cada visitante (categoria='visitante'), quantos acessos liberados ele já
+// usou (contra o limite configurável — ver acessoTerminal.service.js /
+// configuracoes.visitante_limite_acessos), e quem indicou (se veio de
+// indicação de um aluno). Também entra nesse mecanismo de recuperação pra
+// campanha de "vire aluno" (usa o mesmo POST /enviar de sempre).
+router.get('/visitantes', async (req, res, next) => {
+  try {
+    const { busca, indicado_por_aluno_id: indicadoPorAlunoId } = req.query;
+    const condicoes = ["a.categoria = 'visitante'"];
+    const args = [];
+    if (busca) { condicoes.push('a.nome LIKE ?'); args.push(`%${busca}%`); }
+    if (indicadoPorAlunoId) { condicoes.push('a.indicado_por_aluno_id = ?'); args.push(indicadoPorAlunoId); }
+    const where = `WHERE ${condicoes.join(' AND ')}`;
+
+    const [visitantesResult, limite] = await Promise.all([
+      db.execute({
+        sql: `SELECT a.id as aluno_id, a.nome, a.telefone, a.email, a.criado_em,
+                a.indicado_por_aluno_id, ind.nome as indicado_por_nome,
+                (SELECT COUNT(*) FROM acessos_catraca ac WHERE ac.aluno_id = a.id AND ac.resultado = 'liberado') as acessos_usados
+              FROM alunos a
+              LEFT JOIN alunos ind ON ind.id = a.indicado_por_aluno_id
+              ${where}
+              ORDER BY a.criado_em DESC`,
+        args,
+      }),
+      acessoTerminal.limiteAcessosVisitanteEm(db),
+    ]);
+
+    const visitantes = visitantesResult.rows.map((v) => ({
+      ...v,
+      limite_acessos: limite,
+      limite_atingido: v.acessos_usados >= limite,
+    }));
+
+    res.json(visitantes);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/recuperacao/visitantes/indicadores?mes=
+// Ranking "quantos visitantes cada aluno indicou" no mês informado (padrão: o
+// mês corrente), pro admin controlar/conferir o limite mensal por aluno
+// (configuracoes.indicacao_limite_mensal) sem precisar contar na mão.
+router.get('/visitantes/indicadores', async (req, res, next) => {
+  try {
+    const { mes } = req.query; // formato esperado: 'YYYY-MM' — padrão mês corrente
+    const mesFiltro = /^\d{4}-\d{2}$/.test(mes || '') ? mes : new Date().toISOString().slice(0, 7);
+    const limiteMensal = await acessoTerminal.limiteIndicacoesMensalEm(db);
+
+    const result = await db.execute({
+      sql: `SELECT ind.id as aluno_id, ind.nome as aluno_nome, COUNT(a.id) as indicacoes_no_mes
+            FROM alunos a
+            JOIN alunos ind ON ind.id = a.indicado_por_aluno_id
+            WHERE a.categoria = 'visitante' AND strftime('%Y-%m', a.criado_em) = ?
+            GROUP BY ind.id, ind.nome
+            ORDER BY indicacoes_no_mes DESC`,
+      args: [mesFiltro],
+    });
+
+    const linhas = result.rows.map((linha) => ({
+      ...linha,
+      limite_mensal: limiteMensal,
+      limite_atingido: linha.indicacoes_no_mes >= limiteMensal,
+    }));
+
+    res.json({ mes: mesFiltro, limite_mensal: limiteMensal, indicadores: linhas });
   } catch (err) {
     next(err);
   }

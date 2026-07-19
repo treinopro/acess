@@ -101,6 +101,13 @@ function hojeLocalISO() {
   return `${ano}-${mes}-${dia}`;
 }
 
+// Rótulos das categorias de pessoa (2026-07 — ver alunos.categoria em
+// schema.sql). Compartilhado entre a listagem de Alunos e a Recuperação de
+// Clientes (aba "Todos os ativos").
+const CATEGORIA_LABEL = {
+  aluno: 'Aluno', professor: 'Professor', visitante: 'Visitante', colaborador: 'Colaborador', bolsista: 'Bolsista',
+};
+
 function el(html) {
   // Usa <template> em vez de <div>: uma <div> descarta elementos de tabela
   // (<tr>, <td>...) quando não há um <table> ancestral, deixando firstChild nulo.
@@ -775,7 +782,14 @@ async function carregarAlunos() {
     const alunos = ordenarAlunos(alunosBrutos);
     atualizarSetasOrdenacaoAlunos();
     const tbody = document.getElementById('lista-alunos');
+    const resumoEl = document.getElementById('alunos-total-resumo');
     tbody.innerHTML = '';
+    if (resumoEl) {
+      const totalAtivos = alunos.filter((a) => a.status === 'ativo').length;
+      resumoEl.textContent = alunos.length
+        ? `${alunos.length} aluno(s) no total — ${totalAtivos} ativo(s)`
+        : '';
+    }
     alunos.forEach((aluno) => {
       const contato = [aluno.email, aluno.telefone].filter(Boolean).join(' · ') || '—';
       const tr = el(`
@@ -783,6 +797,7 @@ async function carregarAlunos() {
           <td title="${aluno.id}">${aluno.id.slice(0, 8)}</td>
           <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${aluno.nome}</span></td>
           <td>${contato}</td>
+          <td>${CATEGORIA_LABEL[aluno.categoria] || aluno.categoria || 'Aluno'}</td>
           <td><span class="badge ${aluno.status}">${aluno.status}</span></td>
           <td>
             <button class="btn-linha" data-acao="perfil">Perfil</button>
@@ -876,6 +891,7 @@ async function abrirFormAluno(aluno = null) {
   document.getElementById('aluno-telefone').value = aluno?.telefone || '';
   document.getElementById('aluno-cpf').value = aluno?.cpf || '';
   document.getElementById('aluno-nascimento').value = aluno?.data_nascimento || '';
+  document.getElementById('aluno-categoria').value = aluno?.categoria || 'aluno';
   document.getElementById('aluno-observacoes').value = aluno?.observacoes || '';
   document.getElementById('aluno-plano-data').value = hojeLocalISO();
   await popularSelectPlanoDoFormAluno();
@@ -923,6 +939,7 @@ document.getElementById('form-aluno').addEventListener('submit', async (ev) => {
     telefone: document.getElementById('aluno-telefone').value.trim() || null,
     cpf: document.getElementById('aluno-cpf').value.trim() || null,
     data_nascimento: document.getElementById('aluno-nascimento').value || null,
+    categoria: document.getElementById('aluno-categoria').value,
     observacoes: document.getElementById('aluno-observacoes').value.trim() || null,
   };
 
@@ -1041,6 +1058,7 @@ async function carregarPerfilAluno() {
     document.getElementById('perfil-telefone').value = aluno.telefone || '';
     document.getElementById('perfil-cpf').value = aluno.cpf || '';
     document.getElementById('perfil-nascimento').value = aluno.data_nascimento || '';
+    document.getElementById('perfil-categoria').value = aluno.categoria || 'aluno';
     document.getElementById('perfil-observacoes').value = aluno.observacoes || '';
     document.getElementById('perfil-biometria-id').value = aluno.biometria_id || '';
     document.getElementById('perfil-link-acesso').value = aluno.codigo_acesso
@@ -1058,7 +1076,7 @@ async function carregarPerfilAluno() {
     avaliacoes.forEach((av) => {
       const tr = el(`
         <tr>
-          <td>${av.data_avaliacao}</td>
+          <td>${formatarDataOuDataHora(av.data_avaliacao)}</td>
           <td>${av.peso_kg ? av.peso_kg + ' kg' : '—'}</td>
           <td>${av.percentual_gordura ? av.percentual_gordura + '%' : '—'}</td>
           <td>${av.objetivo || '—'}</td>
@@ -1082,8 +1100,8 @@ async function carregarPerfilAluno() {
       const tr = el(`
         <tr>
           <td>${m.plano_nome}</td>
-          <td>${m.data_inicio}</td>
-          <td>${m.data_fim || '—'}</td>
+          <td>${formatarDataOuDataHora(m.data_inicio)}</td>
+          <td>${m.data_fim ? formatarDataOuDataHora(m.data_fim) : '—'}</td>
           <td><span class="badge ${m.status}">${m.status}</span></td>
           <td>${(m.status === 'ativa' || m.status === 'pendente') ? '<button class="btn-linha perigo" data-acao="cancelar-matricula">Cancelar</button>' : '—'}</td>
         </tr>`);
@@ -1112,7 +1130,7 @@ async function carregarPerfilAluno() {
     document.getElementById('perfil-lista-agendamentos').innerHTML = agendamentos.length
       ? agendamentos.map((a) => `
         <tr>
-          <td>${a.data_aula}</td>
+          <td>${formatarDataOuDataHora(a.data_aula)}</td>
           <td>${a.turma_nome}</td>
           <td><span class="badge ${a.status}">${a.status}</span></td>
         </tr>`).join('')
@@ -1341,18 +1359,24 @@ document.getElementById('form-exercicio').addEventListener('submit', async (ev) 
 async function carregarFinanceiroPerfil() {
   const alunoId = document.getElementById('perfil-aluno-id').value;
   const tbody = document.getElementById('perfil-lista-cobrancas');
-  if (!alunoId) { tbody.innerHTML = ''; return; }
+  const resumoEl = document.getElementById('perfil-financeiro-total-resumo');
+  if (!alunoId) { tbody.innerHTML = ''; if (resumoEl) resumoEl.textContent = ''; return; }
   try {
     const contas = await api(`/api/pagamentos/cobrancas?aluno_id=${alunoId}`);
     tbody.innerHTML = contas.length ? '' : '<tr><td colspan="7">Nenhuma conta encontrada.</td></tr>';
+    if (!contas.length) { if (resumoEl) resumoEl.textContent = ''; return; }
+    let totalValor = 0;
+    let totalPago = 0;
     contas.forEach((c) => {
       const valorPago = Number(c.valor_pago_centavos || 0) || (c.status === 'pago' ? c.valor_centavos : 0);
       const dataPago = c.data_pago_calc || (c.status === 'pago' ? c.pago_em : null);
+      totalValor += c.valor_centavos;
+      totalPago += valorPago;
       const tr = el(`
         <tr>
           <td>${c.descricao || '—'}</td>
           <td>${formatarMoeda(c.valor_centavos)}</td>
-          <td>${c.vencimento || '—'}</td>
+          <td>${c.vencimento ? formatarDataOuDataHora(c.vencimento) : '—'}</td>
           <td><span class="badge ${c.status}">${c.status}</span></td>
           <td>${formatarDataOuDataHora(dataPago)}</td>
           <td>${valorPago > 0 ? formatarMoeda(valorPago) : '—'}</td>
@@ -1375,6 +1399,7 @@ async function carregarFinanceiroPerfil() {
       });
       tbody.appendChild(tr);
     });
+    if (resumoEl) resumoEl.textContent = `${contas.length} conta(s) — total ${formatarMoeda(totalValor)}, pago ${formatarMoeda(totalPago)}`;
   } catch (err) { mostrarToast(err.message, true); }
 }
 
@@ -1417,6 +1442,7 @@ document.getElementById('form-perfil-dados').addEventListener('submit', async (e
     telefone: document.getElementById('perfil-telefone').value.trim() || null,
     cpf: document.getElementById('perfil-cpf').value.trim() || null,
     data_nascimento: document.getElementById('perfil-nascimento').value || null,
+    categoria: document.getElementById('perfil-categoria').value,
     observacoes: document.getElementById('perfil-observacoes').value.trim() || null,
   };
   try {
@@ -1815,8 +1841,8 @@ async function carregarMatriculas() {
         <tr>
           <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${m.aluno_nome}</span></td>
           <td>${m.plano_nome}</td>
-          <td>${m.data_inicio}</td>
-          <td>${m.data_fim || '—'}</td>
+          <td>${formatarDataOuDataHora(m.data_inicio)}</td>
+          <td>${m.data_fim ? formatarDataOuDataHora(m.data_fim) : '—'}</td>
           <td><span class="badge ${m.status}">${m.status}</span></td>
           <td>${(m.status === 'ativa' || m.status === 'pendente') ? '<button class="btn-linha perigo" data-acao="cancelar">Cancelar</button>' : '—'}</td>
         </tr>
@@ -1935,7 +1961,7 @@ async function carregarAgendamentos() {
     agendamentos.forEach((a) => {
       const tr = el(`
         <tr>
-          <td>${a.data_aula}</td>
+          <td>${formatarDataOuDataHora(a.data_aula)}</td>
           <td>${a.turma_nome}</td>
           <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${a.aluno_nome}</span></td>
           <td><span class="badge ${a.status}">${a.status}</span></td>
@@ -2193,7 +2219,9 @@ async function selecionarAlunoPagamentoRapido(aluno) {
 
 async function carregarContasPagamentoRapido(alunoId) {
   const tbody = document.getElementById('pr-lista-contas');
+  const resumoEl = document.getElementById('pr-contas-total-resumo');
   tbody.innerHTML = '<tr><td colspan="5">Carregando...</td></tr>';
+  if (resumoEl) resumoEl.textContent = '';
   try {
     const contas = await api(`/api/pagamentos/cobrancas?aluno_id=${alunoId}`);
     if (!contas.length) {
@@ -2208,13 +2236,17 @@ async function carregarContasPagamentoRapido(alunoId) {
       return (b.vencimento || '').localeCompare(a.vencimento || '');
     });
     tbody.innerHTML = '';
+    let totalValor = 0;
+    let totalEmAberto = 0;
     ordenadas.forEach((c) => {
       const aberta = c.status === 'pendente' || c.status === 'atrasado';
+      totalValor += c.valor_centavos;
+      if (aberta) totalEmAberto += c.valor_centavos;
       const tr = el(`
         <tr>
           <td>${c.descricao || '—'}</td>
           <td>${formatarMoeda(c.valor_centavos)}</td>
-          <td>${c.vencimento || '—'}</td>
+          <td>${c.vencimento ? formatarDataOuDataHora(c.vencimento) : '—'}</td>
           <td><span class="badge ${c.status}">${c.status}</span></td>
           <td><button class="btn-linha ${aberta ? 'btn-primario' : ''}" data-acao="abrir">${aberta ? 'Pagar' : 'Ver'}</button></td>
         </tr>
@@ -2222,6 +2254,9 @@ async function carregarContasPagamentoRapido(alunoId) {
       tr.querySelector('[data-acao="abrir"]').addEventListener('click', () => abrirModalConta(c));
       tbody.appendChild(tr);
     });
+    if (resumoEl) {
+      resumoEl.textContent = `${contas.length} conta(s) — total ${formatarMoeda(totalValor)}, em aberto ${formatarMoeda(totalEmAberto)}`;
+    }
   } catch (err) {
     mostrarToast(err.message, true);
   }
@@ -2289,6 +2324,28 @@ document.querySelectorAll('#secao-pagamentos .th-ordenavel').forEach((th) => {
   th.addEventListener('click', () => alternarOrdenacaoContas(th.dataset.sort));
 });
 
+// Busca a data do último acesso de cada aluno (via catraca/totem), dentro do período
+// selecionado no filtro "Último acesso entre/até" da tela de Contas a Receber. Retorna
+// um Map aluno_id -> ultimo_acesso (string do servidor) só com quem tem pelo menos um
+// acesso no período; quem não aparece no Map não acessou (ou nunca acessou) nesse período.
+// Esse endpoint é restrito a admin — se falhar por permissão (usuário não-admin), retorna
+// null pra distinguir "sem permissão de ver a coluna" de "aluno realmente sem acesso".
+async function buscarMapaUltimoAcessoParaContas() {
+  const de = document.getElementById('conta-acesso-de')?.value;
+  const ate = document.getElementById('conta-acesso-ate')?.value;
+  const params = new URLSearchParams({ incluir_inativos: 'true' });
+  if (de) params.set('data_inicio', de);
+  if (ate) params.set('data_fim', ate);
+  try {
+    const lista = await api(`/api/terminal/acessos/ultimo-por-aluno?${params.toString()}`);
+    return new Map(lista.map((a) => [a.aluno_id, a.ultimo_acesso]));
+  } catch (err) {
+    // Não trava a listagem de contas se a busca de acessos falhar (ex.: sem permissão) —
+    // só fica sem a coluna preenchida.
+    return null;
+  }
+}
+
 async function carregarContas() {
   try {
     const alunoId = document.getElementById('filtro-conta-aluno').value;
@@ -2298,6 +2355,8 @@ async function carregarContas() {
     const campoData = document.getElementById('conta-filtro-data-campo').value || 'vencimento';
     const periodoDe = document.getElementById('conta-periodo-de').value;
     const periodoAte = document.getElementById('conta-periodo-ate').value;
+    const acessoDe = document.getElementById('conta-acesso-de').value;
+    const acessoAte = document.getElementById('conta-acesso-ate').value;
     const params = new URLSearchParams();
     if (alunoId) params.set('aluno_id', alunoId);
     if (status) params.set('status', status);
@@ -2306,7 +2365,11 @@ async function carregarContas() {
     if (periodoDe) params.set(campoData === 'pagamento' ? 'pagamento_de' : 'vencimento_de', periodoDe);
     if (periodoAte) params.set(campoData === 'pagamento' ? 'pagamento_ate' : 'vencimento_ate', periodoAte);
 
-    const contasBrutas = await api(`/api/pagamentos/cobrancas${params.toString() ? '?' + params.toString() : ''}`);
+    const [contasBrutas, mapaUltimoAcesso] = await Promise.all([
+      api(`/api/pagamentos/cobrancas${params.toString() ? '?' + params.toString() : ''}`),
+      buscarMapaUltimoAcessoParaContas(),
+    ]);
+    const periodoAcessoAtivo = !!(acessoDe || acessoAte);
     const contas = ordenarContas(contasBrutas);
     atualizarSetasOrdenacaoContas();
     const tbody = document.getElementById('lista-contas');
@@ -2314,7 +2377,7 @@ async function carregarContas() {
     tbody.innerHTML = '';
 
     if (!contas.length) {
-      tbody.innerHTML = '<tr><td colspan="8">Nenhuma conta encontrada.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9">Nenhuma conta encontrada.</td></tr>';
       resumoEl.textContent = '';
       return;
     }
@@ -2333,15 +2396,39 @@ async function carregarContas() {
       const dataPago = c.data_pago_calc || (c.status === 'pago' ? c.pago_em : null);
       totalValor += c.valor_centavos;
       totalPago += valorPago;
+
+      // Coluna "Último acesso": se não tem nenhum acesso registrado no período escolhido
+      // acima, e a conta está atrasada, isso é o sinal de risco de cancelamento que a
+      // recepção quer enxergar (parou de vir + tem conta em aberto). Se mapaUltimoAcesso
+      // for null, a busca falhou (ex.: usuário sem permissão de admin) — mostra "—" em
+      // vez de dizer "nunca acessou", que seria enganoso.
+      const ultimoAcesso = mapaUltimoAcesso ? mapaUltimoAcesso.get(c.aluno_id) : undefined;
+      const semAcessoNoPeriodo = mapaUltimoAcesso !== null && !ultimoAcesso;
+      const riscoCancelamento = c.status === 'atrasado' && semAcessoNoPeriodo;
+      let celulaAcesso;
+      if (ultimoAcesso) {
+        celulaAcesso = formatarDataOuDataHora(ultimoAcesso);
+      } else if (mapaUltimoAcesso === null) {
+        celulaAcesso = '—';
+      } else if (periodoAcessoAtivo) {
+        celulaAcesso = '<span style="color:#c2410c;font-weight:600">Sem acesso no período</span>';
+      } else {
+        celulaAcesso = '<span style="color:#c2410c;font-weight:600">Nunca acessou</span>';
+      }
+      if (riscoCancelamento) {
+        celulaAcesso += ' ⚠️';
+      }
+
       const tr = el(`
-        <tr>
+        <tr${riscoCancelamento ? ' style="background:#fff7ed"' : ''}>
           <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${c.aluno_nome}</span></td>
           <td>${c.descricao || '—'}</td>
           <td>${formatarMoeda(c.valor_centavos)}</td>
-          <td>${c.vencimento || '—'}</td>
+          <td>${c.vencimento ? formatarDataOuDataHora(c.vencimento) : '—'}</td>
           <td><span class="badge ${c.status}">${c.status}</span></td>
           <td>${formatarDataOuDataHora(dataPago)}</td>
           <td>${valorPago > 0 ? formatarMoeda(valorPago) : '—'}</td>
+          <td title="${riscoCancelamento ? 'Conta em atraso e sem acesso no período selecionado — possível risco de cancelamento.' : ''}">${celulaAcesso}</td>
           <td>
             <button class="btn-linha" data-acao="editar">Alterar</button>
             <button class="btn-linha" data-acao="parcelar">Parcelar</button>
@@ -2397,6 +2484,38 @@ let buscaContaTimeout = null;
 document.getElementById('busca-conta-nome').addEventListener('input', () => {
   clearTimeout(buscaContaTimeout);
   buscaContaTimeout = setTimeout(carregarContas, 300);
+});
+
+// Filtro "Último acesso" (identificar quem parou de frequentar) — período manual
+// (datas) ou atalho pronto ("sem acesso há mais de N dias", que preenche o campo
+// "até" com hoje-N e limpa o "de", pra pegar todo mundo sem acesso desde então).
+document.getElementById('conta-acesso-de').addEventListener('change', () => {
+  document.getElementById('conta-acesso-atalho').value = '';
+  carregarContas();
+});
+document.getElementById('conta-acesso-ate').addEventListener('change', () => {
+  document.getElementById('conta-acesso-atalho').value = '';
+  carregarContas();
+});
+document.getElementById('conta-acesso-atalho').addEventListener('change', (ev) => {
+  const dias = ev.target.value;
+  const campoDe = document.getElementById('conta-acesso-de');
+  const campoAte = document.getElementById('conta-acesso-ate');
+  if (!dias) { campoDe.value = ''; campoAte.value = ''; carregarContas(); return; }
+  // Janela de hoje até N dias atrás: quem NÃO tiver nenhum acesso dentro dela é
+  // quem está "sem acesso há mais de N dias" — não basta olhar só até uma data no
+  // passado, senão um aluno que veio ontem apareceria como "sem acesso" também.
+  const limite = new Date();
+  limite.setDate(limite.getDate() - Number(dias));
+  campoDe.value = `${limite.getFullYear()}-${String(limite.getMonth() + 1).padStart(2, '0')}-${String(limite.getDate()).padStart(2, '0')}`;
+  campoAte.value = hojeLocalISO();
+  carregarContas();
+});
+document.getElementById('btn-limpar-filtro-acesso').addEventListener('click', () => {
+  document.getElementById('conta-acesso-de').value = '';
+  document.getElementById('conta-acesso-ate').value = '';
+  document.getElementById('conta-acesso-atalho').value = '';
+  carregarContas();
 });
 
 // Mostrar/ocultar os formulários de "conta manual" e "gerar cobrança" (ficam
@@ -3245,7 +3364,7 @@ async function buscarRelatorioFinanceiro() {
           <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${c.aluno_nome}</span></td>
           <td>${c.descricao || '—'}</td>
           <td>${formatarMoeda(c.valor_centavos)}</td>
-          <td>${c.vencimento || '—'}</td>
+          <td>${c.vencimento ? formatarDataOuDataHora(c.vencimento) : '—'}</td>
           <td><span class="badge ${c.status}">${c.status}</span></td>
           <td>${formatarDataOuDataHora(dataPago)}</td>
           <td>${valorPago > 0 ? formatarMoeda(valorPago) : '—'}</td>
@@ -3498,6 +3617,13 @@ const recupEstado = {
   diasCache: new Map(), // aluno_id -> linha (evita nova requisição só pra montar a prévia)
   anivSelecionados: new Set(),
   anivCache: new Map(),
+  // Todos os ativos / Visitantes (2026-07) — mesmo padrão de cache das abas
+  // acima, usado tanto pra montar a prévia do modal de envio quanto pra
+  // "Selecionar todos" sem precisar buscar de novo.
+  ativosSelecionados: new Set(),
+  ativosCache: new Map(),
+  visitantesSelecionados: new Set(),
+  visitantesCache: new Map(),
   anivMesAtual: new Date().getMonth() + 1,
   anivDiaFiltro: null,
   templates: [],
@@ -3525,6 +3651,8 @@ function trocarAbaRecuperacao(nome) {
   document.querySelectorAll('.recup-painel').forEach((p) => p.classList.toggle('oculto', p.dataset.recupPainel !== nome));
   if (nome === 'dias-sem-acesso') carregarDiasSemAcesso();
   if (nome === 'aniversariantes') carregarAniversariantes();
+  if (nome === 'todos-ativos') carregarTodosAtivos();
+  if (nome === 'visitantes') { carregarVisitantes(); carregarIndicadoresVisitantes(); }
   if (nome === 'templates') carregarRecupTemplates();
   if (nome === 'historico') carregarRecupHistorico();
 }
@@ -3628,6 +3756,182 @@ document.getElementById('recup-dias-selecionar-todos').addEventListener('change'
 document.getElementById('btn-recup-dias-enviar-selecionados').addEventListener('click', () => {
   abrirModalRecupEnviar([...recupEstado.diasSelecionados], 'dias');
 });
+
+// ---------- Todos os ativos (2026-07) ----------
+// Audiência pro convite padrão de boas-vindas/portal em massa (ver
+// GET /api/recuperacao/todos-ativos) — reaproveita o mesmo modal/composer de
+// envio de sempre. Nomes rotulados CATEGORIA_LABEL já existem em outro lugar
+// do arquivo (formulário de aluno) — reaproveitados aqui também.
+
+async function carregarTodosAtivos() {
+  try {
+    const busca = document.getElementById('recup-ativos-busca').value.trim();
+    const categoria = document.getElementById('recup-ativos-categoria').value;
+    const params = new URLSearchParams();
+    if (busca) params.set('busca', busca);
+    if (categoria) params.set('categoria', categoria);
+
+    const linhas = await api(`/api/recuperacao/todos-ativos${params.toString() ? `?${params.toString()}` : ''}`);
+    recupEstado.ativosCache.clear();
+    recupEstado.ativosSelecionados.clear();
+    atualizarBotaoEnviarSelecionadosAtivos();
+    document.getElementById('recup-ativos-selecionar-todos').checked = false;
+
+    const tbody = document.getElementById('recup-ativos-lista');
+    tbody.innerHTML = '';
+    if (!linhas.length) {
+      tbody.innerHTML = '<tr><td colspan="6">Nenhum cadastro ativo encontrado com esse filtro.</td></tr>';
+      document.getElementById('recup-ativos-total').textContent = '';
+      return;
+    }
+
+    linhas.forEach((linha) => {
+      recupEstado.ativosCache.set(linha.aluno_id, linha);
+      const tr = el(`
+        <tr>
+          <td><input type="checkbox" class="recup-ativos-check" style="width:auto" /></td>
+          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${linha.nome}</span></td>
+          <td>${CATEGORIA_LABEL[linha.categoria] || linha.categoria || 'Aluno'}</td>
+          <td>${linha.email || '—'}</td>
+          <td>${linha.telefone || '—'}</td>
+          <td>${linha.tem_rosto_cadastrado ? '<span class="badge ativo">Sim</span>' : '<span class="badge inativo">Não</span>'}</td>
+        </tr>
+      `);
+      tr.querySelector('.nome-clicavel').addEventListener('click', () => abrirPerfilAluno(linha.aluno_id));
+      tr.querySelector('.recup-ativos-check').addEventListener('change', (ev) => {
+        if (ev.target.checked) recupEstado.ativosSelecionados.add(linha.aluno_id);
+        else recupEstado.ativosSelecionados.delete(linha.aluno_id);
+        atualizarBotaoEnviarSelecionadosAtivos();
+      });
+      tbody.appendChild(tr);
+    });
+
+    document.getElementById('recup-ativos-total').textContent = `${linhas.length} cadastro(s) encontrado(s).`;
+  } catch (err) { mostrarToast(err.message, true); }
+}
+
+function atualizarBotaoEnviarSelecionadosAtivos() {
+  const n = recupEstado.ativosSelecionados.size;
+  document.getElementById('btn-recup-ativos-enviar-selecionados').disabled = n === 0;
+  document.getElementById('recup-ativos-selecionados-contagem').textContent = n ? `${n} selecionado(s)` : '';
+}
+
+document.getElementById('btn-recup-ativos-buscar').addEventListener('click', carregarTodosAtivos);
+document.getElementById('recup-ativos-busca').addEventListener('input', () => {
+  clearTimeout(carregarTodosAtivos._t);
+  carregarTodosAtivos._t = setTimeout(carregarTodosAtivos, 400);
+});
+document.getElementById('recup-ativos-categoria').addEventListener('change', carregarTodosAtivos);
+document.getElementById('recup-ativos-selecionar-todos').addEventListener('change', (ev) => {
+  document.querySelectorAll('.recup-ativos-check').forEach((chk) => {
+    chk.checked = ev.target.checked;
+    chk.dispatchEvent(new Event('change'));
+  });
+});
+document.getElementById('btn-recup-ativos-enviar-selecionados').addEventListener('click', () => {
+  abrirModalRecupEnviar([...recupEstado.ativosSelecionados], 'ativos');
+});
+
+// ---------- Visitantes (2026-07) ----------
+// Relatório de quem entrou como visitante — acessos usados (contra o limite
+// configurável) e quem indicou (ver GET /api/recuperacao/visitantes) — mesmo
+// mecanismo de envio de sempre pra tentar captar matrícula.
+
+async function carregarVisitantes() {
+  try {
+    const busca = document.getElementById('recup-visitantes-busca').value.trim();
+    const params = new URLSearchParams();
+    if (busca) params.set('busca', busca);
+
+    const linhas = await api(`/api/recuperacao/visitantes${params.toString() ? `?${params.toString()}` : ''}`);
+    recupEstado.visitantesCache.clear();
+    recupEstado.visitantesSelecionados.clear();
+    atualizarBotaoEnviarSelecionadosVisitantes();
+    document.getElementById('recup-visitantes-selecionar-todos').checked = false;
+
+    const tbody = document.getElementById('recup-visitantes-lista');
+    tbody.innerHTML = '';
+    if (!linhas.length) {
+      tbody.innerHTML = '<tr><td colspan="5">Nenhum visitante encontrado com esse filtro.</td></tr>';
+      document.getElementById('recup-visitantes-total').textContent = '';
+      return;
+    }
+
+    linhas.forEach((linha) => {
+      recupEstado.visitantesCache.set(linha.aluno_id, linha);
+      const cadastradoEm = formatarDataOuDataHora(linha.criado_em);
+      const acessosTexto = `${linha.acessos_usados}/${linha.limite_acessos}`;
+      const tr = el(`
+        <tr style="${linha.limite_atingido ? 'background:#fff7ed' : ''}">
+          <td><input type="checkbox" class="recup-visitantes-check" style="width:auto" /></td>
+          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${linha.nome}</span></td>
+          <td>${cadastradoEm}</td>
+          <td>${linha.indicado_por_nome || '—'}</td>
+          <td>${acessosTexto}${linha.limite_atingido ? ' <span class="badge atrasado">Limite atingido</span>' : ''}</td>
+        </tr>
+      `);
+      tr.querySelector('.nome-clicavel').addEventListener('click', () => abrirPerfilAluno(linha.aluno_id));
+      tr.querySelector('.recup-visitantes-check').addEventListener('change', (ev) => {
+        if (ev.target.checked) recupEstado.visitantesSelecionados.add(linha.aluno_id);
+        else recupEstado.visitantesSelecionados.delete(linha.aluno_id);
+        atualizarBotaoEnviarSelecionadosVisitantes();
+      });
+      tbody.appendChild(tr);
+    });
+
+    document.getElementById('recup-visitantes-total').textContent = `${linhas.length} visitante(s) encontrado(s).`;
+  } catch (err) { mostrarToast(err.message, true); }
+}
+
+function atualizarBotaoEnviarSelecionadosVisitantes() {
+  const n = recupEstado.visitantesSelecionados.size;
+  document.getElementById('btn-recup-visitantes-enviar-selecionados').disabled = n === 0;
+  document.getElementById('recup-visitantes-selecionados-contagem').textContent = n ? `${n} selecionado(s)` : '';
+}
+
+document.getElementById('btn-recup-visitantes-buscar').addEventListener('click', carregarVisitantes);
+document.getElementById('recup-visitantes-busca').addEventListener('input', () => {
+  clearTimeout(carregarVisitantes._t);
+  carregarVisitantes._t = setTimeout(carregarVisitantes, 400);
+});
+document.getElementById('recup-visitantes-selecionar-todos').addEventListener('change', (ev) => {
+  document.querySelectorAll('.recup-visitantes-check').forEach((chk) => {
+    chk.checked = ev.target.checked;
+    chk.dispatchEvent(new Event('change'));
+  });
+});
+document.getElementById('btn-recup-visitantes-enviar-selecionados').addEventListener('click', () => {
+  abrirModalRecupEnviar([...recupEstado.visitantesSelecionados], 'visitantes');
+});
+
+async function carregarIndicadoresVisitantes() {
+  try {
+    const mesInput = document.getElementById('recup-indicadores-mes');
+    if (!mesInput.value) mesInput.value = new Date().toISOString().slice(0, 7);
+    const params = new URLSearchParams({ mes: mesInput.value });
+
+    const resp = await api(`/api/recuperacao/visitantes/indicadores?${params.toString()}`);
+    const tbody = document.getElementById('recup-indicadores-lista');
+    tbody.innerHTML = '';
+    if (!resp.indicadores.length) {
+      tbody.innerHTML = '<tr><td colspan="3">Nenhuma indicação registrada nesse mês.</td></tr>';
+      return;
+    }
+    resp.indicadores.forEach((linha) => {
+      const tr = el(`
+        <tr style="${linha.limite_atingido ? 'background:#fff7ed' : ''}">
+          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${linha.aluno_nome}</span></td>
+          <td>${linha.indicacoes_no_mes}</td>
+          <td>${linha.limite_mensal}${linha.limite_atingido ? ' <span class="badge atrasado">Limite atingido</span>' : ''}</td>
+        </tr>
+      `);
+      tr.querySelector('.nome-clicavel').addEventListener('click', () => abrirPerfilAluno(linha.aluno_id));
+      tbody.appendChild(tr);
+    });
+  } catch (err) { mostrarToast(err.message, true); }
+}
+
+document.getElementById('btn-recup-indicadores-buscar').addEventListener('click', carregarIndicadoresVisitantes);
 
 // ---------- Aniversariantes ----------
 
@@ -3890,7 +4194,8 @@ function montarPreviaMensagemRecup({
 }
 
 function obterAlunoParaPreviaRecup(alunoId) {
-  return recupEstado.diasCache.get(alunoId) || recupEstado.anivCache.get(alunoId) || null;
+  return recupEstado.diasCache.get(alunoId) || recupEstado.anivCache.get(alunoId)
+    || recupEstado.ativosCache.get(alunoId) || recupEstado.visitantesCache.get(alunoId) || null;
 }
 
 function abrirModalRecupEnviar(alunoIds, origem) {

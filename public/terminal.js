@@ -738,6 +738,17 @@ document.getElementById('btn-ir-contas').addEventListener('click', () => {
   mostrarTela('tela-contas');
 });
 
+// "Indicar visitante/amigo" (2026-07): vai direto pro formulário de cadastro
+// (pulando a escolha "usar celular"/"pagar aqui", que não fazem sentido pra
+// um cadastro gratuito) já com o plano "Visitante" pré-selecionado — ver
+// PLANO_VISITANTE_ID acima e o branch correspondente em
+// POST /api/terminal/auto-cadastro (terminal.routes.js).
+document.getElementById('btn-ir-visitante').addEventListener('click', () => {
+  pararEscaneamentoContinuo();
+  resetCadastro(PLANO_VISITANTE_ID);
+  mostrarTela('tela-cadastro');
+});
+
 document.getElementById('btn-voltar-2').addEventListener('click', () => {
   pararCamera();
   mostrarTela('tela-inicio');
@@ -982,22 +993,34 @@ function formatarMoedaCadastro(centavos) {
   return (centavos / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
-function resetCadastro() {
+// Sentinela do "plano Visitante" — mesmo valor de PLANO_VISITANTE_ID em
+// terminal.routes.js/portal.routes.js. Usado aqui só pra decidir se o
+// resultado do cadastro segue pro pagamento (aluno normal) ou direto pro
+// sucesso (visitante, sem Pix/matrícula).
+const PLANO_VISITANTE_ID = 'visitante';
+
+function resetCadastro(planoPreSelecionado) {
   pararPollCadastro();
   cadastroCpfAtual = null;
   document.getElementById('cadastro-nome').value = '';
   document.getElementById('cadastro-cpf').value = '';
   document.getElementById('cadastro-telefone').value = '';
+  document.getElementById('cadastro-email').value = '';
+  document.getElementById('cadastro-data-nascimento').value = '';
+  document.getElementById('cadastro-indicado-cpf').value = '';
   document.getElementById('cadastro-form-erro').textContent = '';
+  document.getElementById('cadastro-form-titulo').textContent = planoPreSelecionado === PLANO_VISITANTE_ID
+    ? 'Cadastro do visitante/amigo — acesso gratuito, sem matrícula.'
+    : '';
   document.getElementById('painel-cadastro-form').classList.remove('oculto');
   document.getElementById('painel-cadastro-pagamento').classList.add('oculto');
   document.getElementById('painel-cadastro-sucesso').classList.add('oculto');
   document.getElementById('painel-cadastro-facial').classList.add('oculto');
   document.getElementById('btn-copiar-pix').classList.add('oculto');
-  carregarPlanosCadastro();
+  carregarPlanosCadastro(planoPreSelecionado);
 }
 
-async function carregarPlanosCadastro() {
+async function carregarPlanosCadastro(planoPreSelecionado) {
   const select = document.getElementById('cadastro-plano');
   select.innerHTML = '<option value="">Carregando planos...</option>';
   try {
@@ -1005,6 +1028,9 @@ async function carregarPlanosCadastro() {
     select.innerHTML = planos.length
       ? planos.map((p) => `<option value="${p.id}">${p.nome} — ${formatarMoedaCadastro(p.valor_centavos)}</option>`).join('')
       : '<option value="">Nenhum plano disponível</option>';
+    if (planoPreSelecionado && planos.some((p) => p.id === planoPreSelecionado)) {
+      select.value = planoPreSelecionado;
+    }
   } catch (err) {
     select.innerHTML = '<option value="">Não foi possível carregar os planos</option>';
   }
@@ -1014,21 +1040,41 @@ document.getElementById('btn-cadastro-continuar').addEventListener('click', asyn
   const nome = document.getElementById('cadastro-nome').value.trim();
   const cpf = document.getElementById('cadastro-cpf').value.trim();
   const telefone = document.getElementById('cadastro-telefone').value.trim();
+  const email = document.getElementById('cadastro-email').value.trim();
+  const dataNascimento = document.getElementById('cadastro-data-nascimento').value;
   const planoId = document.getElementById('cadastro-plano').value;
+  const indicadoPorCpf = document.getElementById('cadastro-indicado-cpf').value.trim();
   const erroEl = document.getElementById('cadastro-form-erro');
   erroEl.textContent = '';
 
-  if (!nome || !cpf || !planoId) {
-    erroEl.textContent = 'Preencha nome, CPF e escolha um plano.';
+  if (!nome || !cpf || !telefone || !email || !dataNascimento || !planoId) {
+    erroEl.textContent = 'Preencha nome, CPF, telefone, e-mail, data de nascimento e escolha um plano.';
     return;
   }
 
   try {
     const resp = await api('/api/terminal/auto-cadastro', {
       method: 'POST',
-      body: JSON.stringify({ nome, cpf, telefone: telefone || null, plano_id: planoId }),
+      body: JSON.stringify({
+        nome,
+        cpf,
+        telefone,
+        email,
+        data_nascimento: dataNascimento,
+        plano_id: planoId,
+        indicado_por_cpf: indicadoPorCpf || null,
+      }),
     });
+
     cadastroCpfAtual = cpf;
+
+    // Fluxo "visitante" (2026-07): sem Pix/matrícula — o próprio POST já
+    // devolve o cadastro concluído, então pula direto pro sucesso.
+    if (resp.visitante) {
+      await mostrarSucessoCadastroVisitante(resp);
+      return;
+    }
+
     document.getElementById('painel-cadastro-form').classList.add('oculto');
     document.getElementById('painel-cadastro-pagamento').classList.remove('oculto');
     document.getElementById('cadastro-pagamento-valor').textContent = `Valor: ${formatarMoedaCadastro(resp.valor_centavos)}`;
@@ -1128,6 +1174,29 @@ function mostrarSucessoCadastro(resp) {
   alvo.innerHTML = '';
   // eslint-disable-next-line no-new
   new QRCode(alvo, { text: resp.codigo_acesso, width: 200, height: 200, colorDark: '#0f172a', colorLight: '#ffffff' });
+}
+
+// Sucesso do cadastro de VISITANTE (2026-07) — sem Pix/matrícula, então não
+// passa pelo poll de pagamento. Busca (ou gera, se ainda não tiver) o QR
+// pessoal do visitante pelo mesmo endpoint usado em "Primeira vez no totem",
+// pra ele já sair daqui com seu acesso pra próximas visitas dentro do limite
+// (ver acessoTerminal.limiteAcessosVisitanteEm/configuracoes.visitante_limite_acessos).
+async function mostrarSucessoCadastroVisitante(resp) {
+  document.getElementById('painel-cadastro-form').classList.add('oculto');
+  document.getElementById('painel-cadastro-sucesso').classList.remove('oculto');
+  document.getElementById('cadastro-sucesso-saudacao').textContent = `Cadastro de visitante concluído! Bem-vindo(a), ${resp.aluno_nome || ''}. Procure a recepção ou aproxime-se da catraca para liberar sua entrada.`;
+
+  const alvo = document.getElementById('qrcode-cadastro-sucesso');
+  alvo.innerHTML = '';
+  try {
+    const codigo = await api(`/api/terminal/vincular/codigo?cpf=${encodeURIComponent(cadastroCpfAtual)}`);
+    // eslint-disable-next-line no-new
+    new QRCode(alvo, { text: codigo.codigo_acesso, width: 200, height: 200, colorDark: '#0f172a', colorLight: '#ffffff' });
+  } catch {
+    // Best-effort: se não conseguir gerar o QR agora, o visitante ainda
+    // consegue entrar por CPF/reconhecimento facial normalmente — não
+    // trava o fluxo de cadastro por causa disso.
+  }
 }
 
 document.getElementById('btn-cadastro-facial').addEventListener('click', async () => {

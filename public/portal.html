@@ -184,14 +184,20 @@
   <div class="pagina" id="pagina-cadastro-portal">
     <div class="logo">QUERO ME CADASTRAR</div>
 
+    <!-- Nome, CPF, telefone, e-mail e data de nascimento obrigatórios (2026-07,
+         mesma decisão do totem — ver terminal.html). O campo de indicação só
+         é usado quando o plano escolhido é "Visitante"; fica sempre visível
+         pra não precisar de lógica extra de mostrar/esconder. -->
     <div class="cartao" id="painel-cadastro-portal-form" style="text-align:left">
       <input class="campo" id="portal-cadastro-nome" placeholder="Nome completo" />
       <input class="campo" id="portal-cadastro-cpf" placeholder="CPF" inputmode="numeric" maxlength="14" />
-      <input class="campo" id="portal-cadastro-telefone" placeholder="Telefone (opcional)" inputmode="tel" />
-      <input class="campo" id="portal-cadastro-email" placeholder="E-mail (opcional)" inputmode="email" />
+      <input class="campo" id="portal-cadastro-telefone" placeholder="Telefone" inputmode="tel" />
+      <input class="campo" id="portal-cadastro-email" placeholder="E-mail" inputmode="email" />
+      <input class="campo" id="portal-cadastro-nascimento" placeholder="Data de nascimento" type="date" />
       <select class="campo" id="portal-cadastro-plano"><option value="">Carregando planos...</option></select>
+      <input class="campo" id="portal-cadastro-indicado-cpf" placeholder="CPF de quem indicou (opcional, só para visitante)" inputmode="numeric" maxlength="14" />
       <div class="erro-msg" id="portal-cadastro-erro"></div>
-      <button class="botao-grande primario" id="btn-portal-cadastro-continuar" style="margin:0">Continuar para pagamento</button>
+      <button class="botao-grande primario" id="btn-portal-cadastro-continuar" style="margin:0">Continuar</button>
     </div>
 
     <div class="cartao oculto" id="painel-cadastro-portal-pagamento">

@@ -215,6 +215,7 @@ async function carregarConfigApp() {
     document.title = config.nome_app || 'Academia Gestão';
     document.getElementById('login-nome-app').textContent = config.nome_app || 'Academia Gestão';
     document.getElementById('sidebar-nome-app').textContent = config.nome_app || 'Academia Gestão';
+    document.getElementById('topo-mobile-nome-app').textContent = config.nome_app || 'Academia Gestão';
 
     const licenciadoTexto = config.licenciado_para ? `Licenciado para ${config.licenciado_para}` : '';
     ['login-licenciado-para', 'sidebar-licenciado-para'].forEach((id) => {
@@ -333,10 +334,25 @@ document.getElementById('form-login').addEventListener('submit', async (ev) => {
 
 document.getElementById('btn-sair').addEventListener('click', fazerLogout);
 
+// ---------------- Menu mobile (sidebar em modo "gaveta" abaixo de 900px) ----------------
+// Fora da media query mobile isso não tem efeito visual nenhum (a sidebar fica fixa
+// como sempre) — a classe "aberta" só é interpretada pelo CSS dentro de @media.
+function fecharMenuMobile() {
+  document.getElementById('sidebar').classList.remove('aberta');
+  document.getElementById('sidebar-overlay').classList.remove('aberta');
+}
+function alternarMenuMobile() {
+  document.getElementById('sidebar').classList.toggle('aberta');
+  document.getElementById('sidebar-overlay').classList.toggle('aberta');
+}
+document.getElementById('btn-menu-mobile').addEventListener('click', alternarMenuMobile);
+document.getElementById('sidebar-overlay').addEventListener('click', fecharMenuMobile);
+
 // ---------------- Navegação entre seções ----------------
 
 document.querySelectorAll('.nav-btn').forEach((btn) => {
   btn.addEventListener('click', () => {
+    fecharMenuMobile(); // no celular, escolher uma seção já fecha a gaveta sozinho
     // Catraca virou uma janela flutuante (sobreposta), não uma seção de página —
     // abre por cima do que já está na tela, sem trocar de aba.
     if (btn.dataset.secao === 'catraca') {

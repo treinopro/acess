@@ -28,7 +28,16 @@
 
   <!-- APP PRINCIPAL -->
   <div id="tela-app" class="app oculto">
-    <aside class="sidebar">
+    <!-- Barra fixa só visível no celular (ver media query em style.css) — o ☰ abre a
+         sidebar em modo "gaveta" por cima do conteúdo, já que em telas pequenas não
+         cabe ela fixa do lado o tempo todo. -->
+    <div class="topo-mobile">
+      <button type="button" class="btn-menu-mobile" id="btn-menu-mobile" aria-label="Abrir menu">☰</button>
+      <span class="topo-mobile-titulo" id="topo-mobile-nome-app">Academia Gestão</span>
+    </div>
+    <div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+    <aside class="sidebar" id="sidebar">
       <div class="logo">🏋️ <span id="sidebar-nome-app">Academia Gestão</span></div>
       <p class="licenciado-para oculto" id="sidebar-licenciado-para"></p>
       <nav>

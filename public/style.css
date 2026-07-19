@@ -303,6 +303,82 @@ body {
 }
 #cobranca-resultado a { color: #067647; font-weight: 600; }
 
+/* ---------- Responsivo (celular/tablet) ----------
+   2026-07-19: o painel nasceu pensado só pra tela de PC (sidebar fixa de
+   220px sempre visível + conteúdo com margin-left compensando). Isso deixa o
+   painel praticamente inutilizável num celular (a sidebar sozinha já come
+   mais da metade da tela). A solução aqui é a mais simples que resolve o
+   problema de verdade sem reescrever o painel inteiro: abaixo de 900px a
+   sidebar vira um menu "gaveta" (escondida fora da tela, abre por cima do
+   conteúdo ao tocar no ☰), o conteúdo ocupa a largura toda, formulários em
+   duas colunas (.grid-2) empilham em uma coluna só, e as tabelas — que têm
+   várias colunas e não cabem numa tela de celular de jeito nenhum — ganham
+   rolagem horizontal própria em vez de espremer o texto ou estourar a
+   página inteira pros lados. */
+
+.topo-mobile {
+  display: none; /* só aparece dentro da media query abaixo */
+  position: fixed; top: 0; left: 0; right: 0; height: 56px;
+  background: #111827; color: #fff; align-items: center; gap: 12px;
+  padding: 0 8px 0 4px; z-index: 150; box-shadow: 0 1px 0 rgba(255,255,255,0.06);
+}
+.btn-menu-mobile {
+  background: none; border: none; color: #fff; font-size: 22px; line-height: 1;
+  padding: 10px 12px; cursor: pointer; border-radius: 8px;
+}
+.btn-menu-mobile:hover, .btn-menu-mobile:active { background: #1f2937; }
+.topo-mobile-titulo { font-weight: 700; font-size: 15px; }
+
+/* Fundo escurecido atrás da sidebar quando ela está aberta em modo gaveta —
+   tocar nele fecha o menu (mesmo gesto de qualquer app mobile). Escondido
+   por padrão (também em telas grandes, onde a sidebar nunca é "gaveta"). */
+.sidebar-overlay {
+  display: none; position: fixed; inset: 0; background: rgba(16,24,40,0.5); z-index: 99;
+}
+
+@media (max-width: 900px) {
+  .topo-mobile { display: flex; }
+
+  .sidebar {
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    width: 260px;
+    z-index: 160; /* acima do .sidebar-overlay (99) e do .topo-mobile (150) */
+  }
+  .sidebar.aberta { transform: translateX(0); }
+  .sidebar-overlay.aberta { display: block; }
+
+  .conteudo {
+    margin-left: 0;
+    max-width: 100%;
+    padding: 16px 14px;
+    padding-top: 72px; /* espaço pra não ficar embaixo da barra fixa do topo */
+  }
+
+  .secao-topo { flex-direction: column; align-items: stretch; gap: 10px; }
+  .secao-topo > div { flex-wrap: wrap; }
+
+  .grid-2 { grid-template-columns: 1fr; }
+
+  /* Truque só de CSS: "display: block" no <table> (em vez do padrão "table")
+     faz ele virar um bloco rolável de verdade com overflow-x, mantendo
+     thead/tbody/tr/td com seu comportamento de tabela normal por dentro —
+     não precisa envolver as 29 tabelas do painel numa <div> extra no HTML. */
+  .tabela { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .tabela th, .tabela td { white-space: nowrap; }
+
+  .modal-card { width: 100%; padding: 18px; }
+  .card-login { width: 92vw; padding: 28px 22px; }
+
+  .janela-flutuante, .janela-flutuante-compacta {
+    left: 4vw; width: 92vw; max-width: 92vw; top: 60px; max-height: 80vh;
+    resize: none; /* arrastar/redimensionar pelo mouse não funciona em toque; melhor travar do que deixar "quebrado" */
+  }
+  .janela-flutuante-topo { cursor: default; }
+
+  .painel-lateral { width: 92vw; }
+}
+
 /* ---------- Botão (x) de limpar dentro das caixas de pesquisa ---------- */
 /* Envolve o <input> de busca num wrapper relativo e sobrepõe um botão "×"
    alinhado à direita, dentro da própria caixa — não altera o layout ao redor

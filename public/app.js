@@ -117,6 +117,23 @@ function el(html) {
   return template.content.firstElementChild;
 }
 
+// Escapa caracteres especiais de HTML antes de interpolar dados em innerHTML/el().
+// Necessário porque muitos campos (nome, email, observações, objetivo...) vêm de
+// cadastros públicos e não-autenticados (totem, portal, "indicar visitante/amigo",
+// cadastro-mobile.html) — sem isso, alguém poderia registrar um nome tipo
+// "<img src=x onerror=...>" e executar JS na sessão do admin (que tem o token JWT
+// em localStorage) assim que a listagem/perfil for aberta. Sempre usar em qualquer
+// texto vindo da API antes de jogar dentro de um template `el(...)`/innerHTML.
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // ---------------- Chamadas à API ----------------
 
 async function api(caminho, opcoes = {}) {
@@ -254,7 +271,7 @@ function renderizarOrdemMenu() {
   ordemMenuAtual.forEach((secao, idx) => {
     const li = el(`
       <li style="display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid #e4e7ec;border-radius:8px">
-        <span style="flex:1">${LABELS_MENU[secao] || secao}</span>
+        <span style="flex:1">${escapeHtml(LABELS_MENU[secao] || secao)}</span>
         <button type="button" class="btn-linha" data-acao="subir" ${idx === 0 ? 'disabled' : ''}>▲</button>
         <button type="button" class="btn-linha" data-acao="descer" ${idx === ordemMenuAtual.length - 1 ? 'disabled' : ''}>▼</button>
       </li>
@@ -619,15 +636,15 @@ function descreverCampoPendencia(item) {
   // continua funcionando igual, só sem o nome.
   if (item.tipo === 'pagamento') {
     return item.alunoNome
-      ? `Pagamento de ${formatarMoeda(item.pagamento?.valor_centavos)} de ${item.alunoNome}`
-      : (item.descricaoResumo || `Pagamento de ${formatarMoeda(item.pagamento?.valor_centavos)} (conta ${item.registroId})`);
+      ? `Pagamento de ${formatarMoeda(item.pagamento?.valor_centavos)} de ${escapeHtml(item.alunoNome)}`
+      : (escapeHtml(item.descricaoResumo) || `Pagamento de ${formatarMoeda(item.pagamento?.valor_centavos)} (conta ${item.registroId})`);
   }
-  return item.descricaoResumo || `Alteração em ${item.tabela} (${item.registroId})`;
+  return escapeHtml(item.descricaoResumo) || `Alteração em ${item.tabela} (${item.registroId})`;
 }
 
 function renderizarValorPendencia(valor) {
   if (valor === null || valor === undefined || valor === '') return '<em>vazio</em>';
-  return String(valor);
+  return escapeHtml(String(valor));
 }
 
 async function carregarPendenciasSincronizacao() {
@@ -795,10 +812,10 @@ async function carregarAlunos() {
       const tr = el(`
         <tr>
           <td title="${aluno.id}">${aluno.id.slice(0, 8)}</td>
-          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${aluno.nome}</span></td>
-          <td>${contato}</td>
-          <td>${CATEGORIA_LABEL[aluno.categoria] || aluno.categoria || 'Aluno'}</td>
-          <td><span class="badge ${aluno.status}">${aluno.status}</span></td>
+          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${escapeHtml(aluno.nome)}</span></td>
+          <td>${escapeHtml(contato)}</td>
+          <td>${escapeHtml(CATEGORIA_LABEL[aluno.categoria] || aluno.categoria || 'Aluno')}</td>
+          <td><span class="badge ${escapeHtml(aluno.status)}">${escapeHtml(aluno.status)}</span></td>
           <td>
             <button class="btn-linha" data-acao="perfil">Perfil</button>
             <button class="btn-linha" data-acao="editar">Editar</button>
@@ -878,7 +895,7 @@ async function popularSelectPlanoDoFormAluno() {
     const planos = await api('/api/planos');
     const select = document.getElementById('aluno-plano');
     select.innerHTML = '<option value="">Nenhum (matricular depois)</option>' +
-      planos.map((p) => `<option value="${p.id}">${p.nome} (${formatarMoeda(p.valor_centavos)})</option>`).join('');
+      planos.map((p) => `<option value="${p.id}">${escapeHtml(p.nome)} (${formatarMoeda(p.valor_centavos)})</option>`).join('');
   } catch (err) { mostrarToast(err.message, true); }
 }
 
@@ -1079,7 +1096,7 @@ async function carregarPerfilAluno() {
           <td>${formatarDataOuDataHora(av.data_avaliacao)}</td>
           <td>${av.peso_kg ? av.peso_kg + ' kg' : '—'}</td>
           <td>${av.percentual_gordura ? av.percentual_gordura + '%' : '—'}</td>
-          <td>${av.objetivo || '—'}</td>
+          <td>${escapeHtml(av.objetivo) || '—'}</td>
           <td><button class="btn-linha perigo" data-acao="excluir-avaliacao">Excluir</button></td>
         </tr>
       `);
@@ -1099,10 +1116,10 @@ async function carregarPerfilAluno() {
     matriculas.forEach((m) => {
       const tr = el(`
         <tr>
-          <td>${m.plano_nome}</td>
+          <td>${escapeHtml(m.plano_nome)}</td>
           <td>${formatarDataOuDataHora(m.data_inicio)}</td>
           <td>${m.data_fim ? formatarDataOuDataHora(m.data_fim) : '—'}</td>
-          <td><span class="badge ${m.status}">${m.status}</span></td>
+          <td><span class="badge ${escapeHtml(m.status)}">${escapeHtml(m.status)}</span></td>
           <td>${(m.status === 'ativa' || m.status === 'pendente') ? '<button class="btn-linha perigo" data-acao="cancelar-matricula">Cancelar</button>' : '—'}</td>
         </tr>`);
       const botaoCancelar = tr.querySelector('[data-acao="cancelar-matricula"]');
@@ -1131,8 +1148,8 @@ async function carregarPerfilAluno() {
       ? agendamentos.map((a) => `
         <tr>
           <td>${formatarDataOuDataHora(a.data_aula)}</td>
-          <td>${a.turma_nome}</td>
-          <td><span class="badge ${a.status}">${a.status}</span></td>
+          <td>${escapeHtml(a.turma_nome)}</td>
+          <td><span class="badge ${escapeHtml(a.status)}">${escapeHtml(a.status)}</span></td>
         </tr>`).join('')
       : '<tr><td colspan="3">Nenhum agendamento.</td></tr>';
 
@@ -1218,7 +1235,7 @@ function renderizarAbasTreino() {
   }
 
   treinosCache.forEach((t) => {
-    const btn = el(`<button type="button" class="btn-linha ${t.id === treinoAtivoId ? 'btn-primario' : ''}">${t.nome}</button>`);
+    const btn = el(`<button type="button" class="btn-linha ${t.id === treinoAtivoId ? 'btn-primario' : ''}">${escapeHtml(t.nome)}</button>`);
     btn.addEventListener('click', () => { treinoAtivoId = t.id; renderizarAbasTreino(); });
     caixa.appendChild(btn);
   });
@@ -1258,11 +1275,11 @@ function renderizarTreinoAtivo() {
   treino.exercicios.forEach((ex) => {
     const tr = el(`
       <tr>
-        <td>${ex.exercicio}</td>
-        <td>${ex.series || '—'}</td>
-        <td>${ex.carga || '—'}</td>
-        <td>${ex.intervalo || '—'}</td>
-        <td>${ex.observacao || '—'}</td>
+        <td>${escapeHtml(ex.exercicio)}</td>
+        <td>${escapeHtml(ex.series) || '—'}</td>
+        <td>${escapeHtml(ex.carga) || '—'}</td>
+        <td>${escapeHtml(ex.intervalo) || '—'}</td>
+        <td>${escapeHtml(ex.observacao) || '—'}</td>
         <td>
           <button type="button" class="btn-linha" data-acao="editar">Editar</button>
           <button type="button" class="btn-linha perigo" data-acao="excluir">Excluir</button>
@@ -1374,10 +1391,10 @@ async function carregarFinanceiroPerfil() {
       totalPago += valorPago;
       const tr = el(`
         <tr>
-          <td>${c.descricao || '—'}</td>
+          <td>${escapeHtml(c.descricao) || '—'}</td>
           <td>${formatarMoeda(c.valor_centavos)}</td>
           <td>${c.vencimento ? formatarDataOuDataHora(c.vencimento) : '—'}</td>
-          <td><span class="badge ${c.status}">${c.status}</span></td>
+          <td><span class="badge ${escapeHtml(c.status)}">${escapeHtml(c.status)}</span></td>
           <td>${formatarDataOuDataHora(dataPago)}</td>
           <td>${valorPago > 0 ? formatarMoeda(valorPago) : '—'}</td>
           <td>
@@ -1664,8 +1681,8 @@ async function carregarPlanos() {
     planos.forEach((plano) => {
       const tr = el(`
         <tr>
-          <td>${plano.nome}</td>
-          <td>${plano.tipo}</td>
+          <td>${escapeHtml(plano.nome)}</td>
+          <td>${escapeHtml(plano.tipo)}</td>
           <td>${formatarMoeda(plano.valor_centavos)}</td>
           <td>${plano.duracao_dias ? plano.duracao_dias + ' dias' : '—'}</td>
           <td>${formatarDescontoPlano(plano)}</td>
@@ -1711,7 +1728,7 @@ const ROTULOS_FORMA_PAGAMENTO_PLANO = {
 
 function formatarDescontoPlano(plano) {
   if (!plano.desconto_tipo) return '—';
-  const forma = ROTULOS_FORMA_PAGAMENTO_PLANO[plano.desconto_forma_pagamento] || plano.desconto_forma_pagamento || '—';
+  const forma = escapeHtml(ROTULOS_FORMA_PAGAMENTO_PLANO[plano.desconto_forma_pagamento] || plano.desconto_forma_pagamento || '—');
   const valor = plano.desconto_tipo === 'percentual'
     ? `${plano.desconto_percentual}%`
     : formatarMoeda(plano.desconto_valor_centavos);
@@ -1752,7 +1769,7 @@ document.getElementById('plano-tem-desconto').addEventListener('change', (ev) =>
 document.getElementById('plano-desconto-tipo').addEventListener('change', atualizarLabelDescontoPlano);
 
 function popularSelectPlanos(select, planos) {
-  select.innerHTML = planos.map((p) => `<option value="${p.id}">${p.nome} (${formatarMoeda(p.valor_centavos)})</option>`).join('');
+  select.innerHTML = planos.map((p) => `<option value="${p.id}">${escapeHtml(p.nome)} (${formatarMoeda(p.valor_centavos)})</option>`).join('');
 }
 
 // ---------------- Selecionar um plano existente ao incluir conta manual ----------------
@@ -1764,7 +1781,7 @@ async function popularSelectPlanoParaConta(select) {
   try {
     const planos = await api('/api/planos');
     select.innerHTML = '<option value="">Personalizado (digitar descrição/valor)</option>'
-      + planos.map((p) => `<option value="${p.id}" data-nome="${p.nome}" data-valor="${p.valor_centavos}">${p.nome} (${formatarMoeda(p.valor_centavos)})</option>`).join('');
+      + planos.map((p) => `<option value="${p.id}" data-nome="${escapeHtml(p.nome)}" data-valor="${p.valor_centavos}">${escapeHtml(p.nome)} (${formatarMoeda(p.valor_centavos)})</option>`).join('');
   } catch (err) { mostrarToast(err.message, true); }
 }
 
@@ -1827,7 +1844,7 @@ async function popularSelectAlunos(select, { incluirInativos = false, comPlaceho
     const query = incluirInativos ? '?incluir_inativos=true' : '?status=ativo';
     const alunos = await api(`/api/alunos${query}`);
     const placeholder = comPlaceholder ? '<option value="">Selecione...</option>' : '';
-    select.innerHTML = placeholder + alunos.map((a) => `<option value="${a.id}">${a.nome}</option>`).join('');
+    select.innerHTML = placeholder + alunos.map((a) => `<option value="${a.id}">${escapeHtml(a.nome)}</option>`).join('');
   } catch (err) { mostrarToast(err.message, true); }
 }
 
@@ -1839,11 +1856,11 @@ async function carregarMatriculas() {
     matriculas.forEach((m) => {
       const tr = el(`
         <tr>
-          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${m.aluno_nome}</span></td>
-          <td>${m.plano_nome}</td>
+          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${escapeHtml(m.aluno_nome)}</span></td>
+          <td>${escapeHtml(m.plano_nome)}</td>
           <td>${formatarDataOuDataHora(m.data_inicio)}</td>
           <td>${m.data_fim ? formatarDataOuDataHora(m.data_fim) : '—'}</td>
-          <td><span class="badge ${m.status}">${m.status}</span></td>
+          <td><span class="badge ${escapeHtml(m.status)}">${escapeHtml(m.status)}</span></td>
           <td>${(m.status === 'ativa' || m.status === 'pendente') ? '<button class="btn-linha perigo" data-acao="cancelar">Cancelar</button>' : '—'}</td>
         </tr>
       `);
@@ -1940,16 +1957,16 @@ async function carregarTurmas() {
     const tbody = document.getElementById('lista-turmas');
     tbody.innerHTML = turmas.map((t) => `
       <tr>
-        <td>${t.nome}</td>
-        <td>${t.modalidade || '—'}</td>
+        <td>${escapeHtml(t.nome)}</td>
+        <td>${escapeHtml(t.modalidade) || '—'}</td>
         <td>${DIAS_SEMANA[t.dia_semana]}</td>
-        <td>${t.horario_inicio} - ${t.horario_fim}</td>
+        <td>${escapeHtml(t.horario_inicio)} - ${escapeHtml(t.horario_fim)}</td>
         <td>${t.capacidade_maxima}</td>
       </tr>
     `).join('');
 
     const selectTurma = document.getElementById('agendamento-turma');
-    selectTurma.innerHTML = turmas.map((t) => `<option value="${t.id}">${t.nome} (${DIAS_SEMANA[t.dia_semana]} ${t.horario_inicio})</option>`).join('');
+    selectTurma.innerHTML = turmas.map((t) => `<option value="${t.id}">${escapeHtml(t.nome)} (${DIAS_SEMANA[t.dia_semana]} ${escapeHtml(t.horario_inicio)})</option>`).join('');
   } catch (err) { mostrarToast(err.message, true); }
 }
 
@@ -1962,9 +1979,9 @@ async function carregarAgendamentos() {
       const tr = el(`
         <tr>
           <td>${formatarDataOuDataHora(a.data_aula)}</td>
-          <td>${a.turma_nome}</td>
-          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${a.aluno_nome}</span></td>
-          <td><span class="badge ${a.status}">${a.status}</span></td>
+          <td>${escapeHtml(a.turma_nome)}</td>
+          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${escapeHtml(a.aluno_nome)}</span></td>
+          <td><span class="badge ${escapeHtml(a.status)}">${escapeHtml(a.status)}</span></td>
           <td>
             <button class="btn-linha" data-acao="checkin">Check-in</button>
             <button class="btn-linha perigo" data-acao="cancelar">Cancelar</button>
@@ -2181,8 +2198,8 @@ async function buscarSugestoesPagamentoRapido(termo) {
     alunos.slice(0, 15).forEach((a) => {
       const item = el(`
         <div class="pr-sugestao-item" style="padding:10px 12px;cursor:pointer;border-bottom:1px solid #f0f1f3">
-          <div style="font-weight:600">${a.nome}${a.status !== 'ativo' ? ` <span class="badge ${a.status}">${a.status}</span>` : ''}</div>
-          <div style="font-size:12px;color:#667085">${a.telefone || a.cpf || ''}</div>
+          <div style="font-weight:600">${escapeHtml(a.nome)}${a.status !== 'ativo' ? ` <span class="badge ${escapeHtml(a.status)}">${escapeHtml(a.status)}</span>` : ''}</div>
+          <div style="font-size:12px;color:#667085">${escapeHtml(a.telefone || a.cpf || '')}</div>
         </div>
       `);
       item.addEventListener('mouseenter', () => { item.style.background = '#f9fafb'; });
@@ -2244,10 +2261,10 @@ async function carregarContasPagamentoRapido(alunoId) {
       if (aberta) totalEmAberto += c.valor_centavos;
       const tr = el(`
         <tr>
-          <td>${c.descricao || '—'}</td>
+          <td>${escapeHtml(c.descricao) || '—'}</td>
           <td>${formatarMoeda(c.valor_centavos)}</td>
           <td>${c.vencimento ? formatarDataOuDataHora(c.vencimento) : '—'}</td>
-          <td><span class="badge ${c.status}">${c.status}</span></td>
+          <td><span class="badge ${escapeHtml(c.status)}">${escapeHtml(c.status)}</span></td>
           <td><button class="btn-linha ${aberta ? 'btn-primario' : ''}" data-acao="abrir">${aberta ? 'Pagar' : 'Ver'}</button></td>
         </tr>
       `);
@@ -2269,7 +2286,7 @@ async function popularSelectAlunosComTodos(select) {
     const alunos = await api('/api/alunos');
     const atual = select.value;
     select.innerHTML = '<option value="">Todos os alunos</option>' +
-      alunos.map((a) => `<option value="${a.id}">${a.nome}</option>`).join('');
+      alunos.map((a) => `<option value="${a.id}">${escapeHtml(a.nome)}</option>`).join('');
     select.value = atual;
   } catch (err) { mostrarToast(err.message, true); }
 }
@@ -2421,11 +2438,11 @@ async function carregarContas() {
 
       const tr = el(`
         <tr${riscoCancelamento ? ' style="background:#fff7ed"' : ''}>
-          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${c.aluno_nome}</span></td>
-          <td>${c.descricao || '—'}</td>
+          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${escapeHtml(c.aluno_nome)}</span></td>
+          <td>${escapeHtml(c.descricao) || '—'}</td>
           <td>${formatarMoeda(c.valor_centavos)}</td>
           <td>${c.vencimento ? formatarDataOuDataHora(c.vencimento) : '—'}</td>
-          <td><span class="badge ${c.status}">${c.status}</span></td>
+          <td><span class="badge ${escapeHtml(c.status)}">${escapeHtml(c.status)}</span></td>
           <td>${formatarDataOuDataHora(dataPago)}</td>
           <td>${valorPago > 0 ? formatarMoeda(valorPago) : '—'}</td>
           <td title="${riscoCancelamento ? 'Conta em atraso e sem acesso no período selecionado — possível risco de cancelamento.' : ''}">${celulaAcesso}</td>
@@ -2614,8 +2631,8 @@ async function carregarPagamentosModal() {
         <tr>
           <td>${formatarDataOuDataHora(p.data)}</td>
           <td>${formatarMoeda(p.valor_centavos)}</td>
-          <td>${ROTULOS_TIPO_PAGAMENTO[p.tipo] || p.tipo || '—'}</td>
-          <td>${p.conta_corrente || '—'}</td>
+          <td>${escapeHtml(ROTULOS_TIPO_PAGAMENTO[p.tipo] || p.tipo || '—')}</td>
+          <td>${escapeHtml(p.conta_corrente) || '—'}</td>
           <td><button type="button" class="btn-linha perigo" data-acao="excluir-pagamento">Excluir</button></td>
         </tr>
       `);
@@ -3072,7 +3089,7 @@ document.getElementById('form-cobranca').addEventListener('submit', async (ev) =
     const resp = await api('/api/pagamentos/cobrar', { method: 'POST', body: JSON.stringify(dados) });
     resultadoEl.classList.remove('oculto');
     resultadoEl.innerHTML = resp.link_pagamento
-      ? `Cobrança criada. Link: <a href="${resp.link_pagamento}" target="_blank" rel="noopener">${resp.link_pagamento}</a>`
+      ? `Cobrança criada. Link: <a href="${escapeHtml(resp.link_pagamento)}" target="_blank" rel="noopener">${escapeHtml(resp.link_pagamento)}</a>`
       : `Cobrança criada, mas o Mercado Pago não retornou um link (verifique as credenciais no .env).`;
     mostrarToast('Cobrança gerada.');
     carregarContas();
@@ -3094,9 +3111,9 @@ async function carregarUsuarios() {
     usuarios.forEach((u) => {
       const tr = el(`
         <tr>
-          <td>${u.nome}</td>
-          <td>${u.usuario || '—'}</td>
-          <td>${u.email}</td>
+          <td>${escapeHtml(u.nome)}</td>
+          <td>${escapeHtml(u.usuario) || '—'}</td>
+          <td>${escapeHtml(u.email)}</td>
           <td>
             <select class="btn-linha" data-acao="papel" style="padding:5px">
               <option value="admin">admin</option>
@@ -3289,13 +3306,13 @@ async function carregarAcessosCatraca() {
     tbody.innerHTML = lista.length ? '' : '<tr><td colspan="3">Nenhuma tentativa registrada ainda.</td></tr>';
     lista.slice(0, 15).forEach((a) => {
       const nomeCel = a.aluno_id
-        ? `<span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${a.aluno_nome}</span>`
-        : (a.aluno_nome || '—');
+        ? `<span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${escapeHtml(a.aluno_nome)}</span>`
+        : (escapeHtml(a.aluno_nome) || '—');
       const tr = el(`
         <tr>
           <td>${parseDataHoraServidor(a.criado_em).toLocaleString('pt-BR')}</td>
           <td>${nomeCel}</td>
-          <td title="${a.mensagem || ''}"><span class="badge ${a.resultado === 'liberado' ? 'ativo' : 'inadimplente'}">${a.resultado}</span></td>
+          <td title="${escapeHtml(a.mensagem || '')}"><span class="badge ${a.resultado === 'liberado' ? 'ativo' : 'inadimplente'}">${escapeHtml(a.resultado)}</span></td>
         </tr>
       `);
       tr.querySelector('.nome-clicavel')?.addEventListener('click', () => abrirPerfilAluno(a.aluno_id));
@@ -3361,11 +3378,11 @@ async function buscarRelatorioFinanceiro() {
       totalPago += valorPago;
       const trFin = el(`
         <tr>
-          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${c.aluno_nome}</span></td>
-          <td>${c.descricao || '—'}</td>
+          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${escapeHtml(c.aluno_nome)}</span></td>
+          <td>${escapeHtml(c.descricao) || '—'}</td>
           <td>${formatarMoeda(c.valor_centavos)}</td>
           <td>${c.vencimento ? formatarDataOuDataHora(c.vencimento) : '—'}</td>
-          <td><span class="badge ${c.status}">${c.status}</span></td>
+          <td><span class="badge ${escapeHtml(c.status)}">${escapeHtml(c.status)}</span></td>
           <td>${formatarDataOuDataHora(dataPago)}</td>
           <td>${valorPago > 0 ? formatarMoeda(valorPago) : '—'}</td>
         </tr>
@@ -3397,15 +3414,15 @@ async function buscarRelatorioAcessoDiario() {
     tbody.innerHTML = lista.length ? '' : '<tr><td colspan="5">Nenhum acesso nessa data.</td></tr>';
     lista.forEach((a) => {
       const nomeCel = a.aluno_id
-        ? `<span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${a.aluno_nome}</span>`
-        : (a.aluno_nome || '—');
+        ? `<span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${escapeHtml(a.aluno_nome)}</span>`
+        : (escapeHtml(a.aluno_nome) || '—');
       const trDiario = el(`
         <tr>
           <td>${parseDataHoraServidor(a.criado_em).toLocaleTimeString('pt-BR')}</td>
           <td>${nomeCel}</td>
-          <td>${a.metodo}</td>
-          <td><span class="badge ${a.resultado === 'liberado' ? 'ativo' : 'inadimplente'}">${a.resultado}</span></td>
-          <td>${a.mensagem || '—'}</td>
+          <td>${escapeHtml(a.metodo)}</td>
+          <td><span class="badge ${a.resultado === 'liberado' ? 'ativo' : 'inadimplente'}">${escapeHtml(a.resultado)}</span></td>
+          <td>${escapeHtml(a.mensagem) || '—'}</td>
         </tr>
       `);
       trDiario.querySelector('.nome-clicavel')?.addEventListener('click', () => abrirPerfilAluno(a.aluno_id));
@@ -3436,9 +3453,9 @@ async function buscarRelatorioAcessoPessoal() {
       tbody.appendChild(el(`
         <tr>
           <td>${parseDataHoraServidor(a.criado_em).toLocaleString('pt-BR')}</td>
-          <td>${a.metodo}</td>
-          <td><span class="badge ${a.resultado === 'liberado' ? 'ativo' : 'inadimplente'}">${a.resultado}</span></td>
-          <td>${a.mensagem || '—'}</td>
+          <td>${escapeHtml(a.metodo)}</td>
+          <td><span class="badge ${a.resultado === 'liberado' ? 'ativo' : 'inadimplente'}">${escapeHtml(a.resultado)}</span></td>
+          <td>${escapeHtml(a.mensagem) || '—'}</td>
         </tr>
       `));
     });
@@ -3471,7 +3488,7 @@ async function buscarRelatorioUltimoAcesso() {
     lista.forEach((a) => {
       const trUltimo = el(`
         <tr>
-          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${a.aluno_nome}</span></td>
+          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${escapeHtml(a.aluno_nome)}</span></td>
           <td>${parseDataHoraServidor(a.ultimo_acesso).toLocaleString('pt-BR')}</td>
         </tr>
       `);
@@ -3508,7 +3525,7 @@ async function buscarRelatorioPessoas() {
       { chave: 'email', rotulo: 'E-mail' },
     ];
     const celulaCampo = (valor) => (valor
-      ? valor
+      ? escapeHtml(valor)
       : '<span style="color:#c2410c;font-weight:600">— faltando</span>');
 
     let linhas = alunos.map((a) => {
@@ -3523,12 +3540,12 @@ async function buscarRelatorioPessoas() {
       if (faltando.length) totalIncompletos += 1;
       const trPessoa = el(`
         <tr>
-          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${a.nome}</span></td>
+          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${escapeHtml(a.nome)}</span></td>
           <td>${celulaCampo(a.biometria_id)}</td>
           <td>${celulaCampo(a.cpf)}</td>
           <td>${celulaCampo(a.telefone)}</td>
           <td>${celulaCampo(a.email)}</td>
-          <td><span class="badge ${a.status}">${a.status}</span></td>
+          <td><span class="badge ${escapeHtml(a.status)}">${escapeHtml(a.status)}</span></td>
           <td>${faltando.length ? `<span style="color:#c2410c;font-weight:600">${faltando.join(', ')}</span>` : '<span style="color:#15803d">Completo</span>'}</td>
         </tr>
       `);
@@ -3564,8 +3581,8 @@ async function carregarAcessosRecentes() {
     lista.forEach((a) => {
       const quando = parseDataHoraServidor(a.criado_em);
       const nomeCel = a.aluno_id
-        ? `<span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${a.aluno_nome}</span>`
-        : (a.aluno_nome || '—');
+        ? `<span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${escapeHtml(a.aluno_nome)}</span>`
+        : (escapeHtml(a.aluno_nome) || '—');
       const tr = el(`
         <tr>
           <td>${quando.toLocaleDateString('pt-BR')}</td>
@@ -3693,13 +3710,13 @@ async function carregarDiasSemAcesso() {
         <tr style="${risco ? 'background:#fff7ed' : ''}">
           <td><input type="checkbox" class="recup-dias-check" style="width:auto" /></td>
           <td>
-            <span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${linha.nome}</span>${risco ? ' ⚠️' : ''}
+            <span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${escapeHtml(linha.nome)}</span>${risco ? ' ⚠️' : ''}
             ${linha.concessao_ativa ? ' <span class="badge ativo" title="Já tem acesso especial ativo">acesso grátis ativo</span>' : ''}
           </td>
           <td>${statusTexto}</td>
           <td>
             ${linha.em_atraso ? '<span class="badge atrasado">Em atraso</span>' : ''}
-            ${linha.status !== 'ativo' ? `<span class="badge ${linha.status}">${linha.status}</span>` : ''}
+            ${linha.status !== 'ativo' ? `<span class="badge ${escapeHtml(linha.status)}">${escapeHtml(linha.status)}</span>` : ''}
           </td>
           <td>
             <button type="button" class="btn-linha" data-acao="enviar">Enviar mensagem</button>
@@ -3790,10 +3807,10 @@ async function carregarTodosAtivos() {
       const tr = el(`
         <tr>
           <td><input type="checkbox" class="recup-ativos-check" style="width:auto" /></td>
-          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${linha.nome}</span></td>
-          <td>${CATEGORIA_LABEL[linha.categoria] || linha.categoria || 'Aluno'}</td>
-          <td>${linha.email || '—'}</td>
-          <td>${linha.telefone || '—'}</td>
+          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${escapeHtml(linha.nome)}</span></td>
+          <td>${escapeHtml(CATEGORIA_LABEL[linha.categoria] || linha.categoria || 'Aluno')}</td>
+          <td>${escapeHtml(linha.email) || '—'}</td>
+          <td>${escapeHtml(linha.telefone) || '—'}</td>
           <td>${linha.tem_rosto_cadastrado ? '<span class="badge ativo">Sim</span>' : '<span class="badge inativo">Não</span>'}</td>
         </tr>
       `);
@@ -3864,9 +3881,9 @@ async function carregarVisitantes() {
       const tr = el(`
         <tr style="${linha.limite_atingido ? 'background:#fff7ed' : ''}">
           <td><input type="checkbox" class="recup-visitantes-check" style="width:auto" /></td>
-          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${linha.nome}</span></td>
+          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${escapeHtml(linha.nome)}</span></td>
           <td>${cadastradoEm}</td>
-          <td>${linha.indicado_por_nome || '—'}</td>
+          <td>${escapeHtml(linha.indicado_por_nome) || '—'}</td>
           <td>${acessosTexto}${linha.limite_atingido ? ' <span class="badge atrasado">Limite atingido</span>' : ''}</td>
         </tr>
       `);
@@ -3920,7 +3937,7 @@ async function carregarIndicadoresVisitantes() {
     resp.indicadores.forEach((linha) => {
       const tr = el(`
         <tr style="${linha.limite_atingido ? 'background:#fff7ed' : ''}">
-          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${linha.aluno_nome}</span></td>
+          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${escapeHtml(linha.aluno_nome)}</span></td>
           <td>${linha.indicacoes_no_mes}</td>
           <td>${linha.limite_mensal}${linha.limite_atingido ? ' <span class="badge atrasado">Limite atingido</span>' : ''}</td>
         </tr>
@@ -3991,7 +4008,7 @@ function renderizarCalendarioAniversariantes(linhas) {
     const celula = el(`
       <div class="recup-aniv-dia ${nomesDoDia.length ? 'tem-aniversariante' : ''}">
         <span class="recup-aniv-dia-num">${dia}</span>
-        <span class="recup-aniv-dia-nomes">${nomesDoDia.slice(0, 2).map((n) => n.nome.split(' ')[0]).join(', ')}${nomesDoDia.length > 2 ? ` +${nomesDoDia.length - 2}` : ''}</span>
+        <span class="recup-aniv-dia-nomes">${nomesDoDia.slice(0, 2).map((n) => escapeHtml(n.nome.split(' ')[0])).join(', ')}${nomesDoDia.length > 2 ? ` +${nomesDoDia.length - 2}` : ''}</span>
       </div>
     `);
     if (recupEstado.anivDiaFiltro === dia) celula.classList.add('selecionado');
@@ -4025,9 +4042,9 @@ function renderizarListaAniversariantes(linhas) {
       <tr>
         <td><input type="checkbox" class="recup-aniv-check" style="width:auto" /></td>
         <td>${linha.dia_aniversario}/${String(recupEstado.anivMesAtual).padStart(2, '0')}</td>
-        <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${linha.nome}</span></td>
-        <td>${linha.telefone || '—'}</td>
-        <td>${linha.email || '—'}</td>
+        <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${escapeHtml(linha.nome)}</span></td>
+        <td>${escapeHtml(linha.telefone) || '—'}</td>
+        <td>${escapeHtml(linha.email) || '—'}</td>
       </tr>
     `);
     tr.querySelector('.nome-clicavel').addEventListener('click', () => abrirPerfilAluno(linha.aluno_id));
@@ -4086,8 +4103,8 @@ async function carregarRecupTemplates() {
       templates.forEach((t) => {
         const tr = el(`
           <tr>
-            <td>${t.nome}</td>
-            <td>${labelLink[t.link_tipo] || t.link_tipo}</td>
+            <td>${escapeHtml(t.nome)}</td>
+            <td>${escapeHtml(labelLink[t.link_tipo] || t.link_tipo)}</td>
             <td>${t.conceder_dias_gratis ? `${t.conceder_dias_gratis} dia(s)` : '—'}</td>
             <td><span class="badge ${t.ativo ? 'ativo' : 'inativo'}">${t.ativo ? 'Ativo' : 'Inativo'}</span></td>
             <td><button type="button" class="btn-linha" data-acao="editar">Editar</button></td>
@@ -4102,7 +4119,7 @@ async function carregarRecupTemplates() {
     const selectEnviar = document.getElementById('recup-enviar-template');
     const atual = selectEnviar.value;
     selectEnviar.innerHTML = `<option value="">Escrever mensagem manualmente</option>${
-      templates.filter((t) => t.ativo).map((t) => `<option value="${t.id}">${t.nome}</option>`).join('')}`;
+      templates.filter((t) => t.ativo).map((t) => `<option value="${t.id}">${escapeHtml(t.nome)}</option>`).join('')}`;
     selectEnviar.value = atual;
   } catch (err) { mostrarToast(err.message, true); }
 }
@@ -4334,16 +4351,16 @@ function renderizarResultadoEnvioRecup(resp) {
     if (r.canal === 'whatsapp' && r.ok && r.link) {
       const linha = el(`
         <div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid #f2f4f7">
-          <span style="flex:1;font-size:13px">${r.nome}</span>
+          <span style="flex:1;font-size:13px">${escapeHtml(r.nome)}</span>
           <button type="button" class="btn-secundario">Abrir WhatsApp</button>
         </div>
       `);
       linha.querySelector('button').addEventListener('click', () => window.open(r.link, '_blank', 'noopener'));
       container.appendChild(linha);
     } else if (!r.ok) {
-      container.appendChild(el(`<div style="font-size:13px;color:#d92d20;padding:4px 0">${r.nome || r.aluno_id}: ${r.erro}</div>`));
+      container.appendChild(el(`<div style="font-size:13px;color:#d92d20;padding:4px 0">${escapeHtml(r.nome) || r.aluno_id}: ${escapeHtml(r.erro)}</div>`));
     } else {
-      container.appendChild(el(`<div style="font-size:13px;color:#067647;padding:4px 0">${r.nome}: enviado por e-mail (${r.destino || ''})</div>`));
+      container.appendChild(el(`<div style="font-size:13px;color:#067647;padding:4px 0">${escapeHtml(r.nome)}: enviado por e-mail (${escapeHtml(r.destino) || ''})</div>`));
     }
   });
 }
@@ -4374,10 +4391,10 @@ async function carregarRecupHistorico() {
       const tr = el(`
         <tr>
           <td>${formatarDataOuDataHora(m.criado_em)}</td>
-          <td>${m.aluno_nome}</td>
+          <td>${escapeHtml(m.aluno_nome)}</td>
           <td>${m.canal === 'email' ? 'E-mail' : 'WhatsApp'}</td>
-          <td><span class="badge ${m.status === 'erro' ? 'atrasado' : 'ativo'}">${labelStatus[m.status] || m.status}</span></td>
-          <td style="max-width:320px;white-space:pre-wrap;font-size:12.5px">${mensagemCurta}</td>
+          <td><span class="badge ${m.status === 'erro' ? 'atrasado' : 'ativo'}">${escapeHtml(labelStatus[m.status] || m.status)}</span></td>
+          <td style="max-width:320px;white-space:pre-wrap;font-size:12.5px">${escapeHtml(mensagemCurta)}</td>
         </tr>
       `);
       tbody.appendChild(tr);

@@ -88,6 +88,28 @@ function usaVariavelSenha(saudacao, corpo) {
   return /\{senha\}/.test(String(saudacao || '')) || /\{senha\}/.test(String(corpo || ''));
 }
 
+// 2026-07-19 (correção de bug — "null dias sem acesso" na tela): o SQLite
+// grava datas via `datetime('now')` como "AAAA-MM-DD HH:MM:SS" (sem 'Z' nem
+// deslocamento), mas alguns registros de acessos_catraca vêm de outro caminho
+// — a fila de reenvio do modo offline-resiliente (ver
+// registrarAcessoIdempotenteEm em acessoTerminal.service.js), que grava
+// `criado_em` no formato ISO-8601 completo (`new Date().toISOString()`, já
+// com 'T' e 'Z'). O cálculo de dias-sem-acesso abaixo simplesmente
+// acrescentava um 'Z' extra sem checar se a string já tinha fuso — pra uma
+// data já em ISO-8601 isso gera "...000ZZ" (Z duplicado), uma data inválida
+// (NaN), que o JSON.stringify silenciosamente vira `null` na resposta —
+// exibido na tela como o texto literal "null dias sem acesso" em vez de um
+// número. Mesmo problema (e mesma lógica de correção) já resolvido do lado do
+// front-end em parseDataHoraServidor (public/app.js) — replicado aqui.
+function parseDataHoraFlexivel(str) {
+  if (!str) return null;
+  const texto = String(str);
+  const temFusoExplicito = /[zZ]|[+-]\d{2}:?\d{2}$/.test(texto);
+  const pareceDataHoraSemFuso = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/.test(texto);
+  const normalizado = pareceDataHoraSemFuso && !temFusoExplicito ? `${texto.replace(' ', 'T')}Z` : texto;
+  return new Date(normalizado);
+}
+
 function montarMensagem({
   aluno, saudacao, corpo, linkTipo, linkOfertaUrl, linkOfertaTexto, origin, senha,
 }) {
@@ -155,8 +177,9 @@ router.get('/dias-sem-acesso', async (req, res, next) => {
     const linhas = result.rows
       .map((linha) => {
         const baseParaDias = linha.ultimo_acesso || linha.criado_em;
-        const dias = baseParaDias
-          ? Math.floor((agoraMs - new Date(`${String(baseParaDias).replace(' ', 'T')}Z`).getTime()) / 86400000)
+        const dataBase = baseParaDias ? parseDataHoraFlexivel(baseParaDias) : null;
+        const dias = dataBase && !Number.isNaN(dataBase.getTime())
+          ? Math.floor((agoraMs - dataBase.getTime()) / 86400000)
           : null;
         return {
           ...linha,

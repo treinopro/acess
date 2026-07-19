@@ -357,6 +357,39 @@ async function nomeAlunoOffline(alunoId) {
   return linha.nome || null;
 }
 
+// Dispara o e-mail de boas-vindas quando o e-mail do aluno é ADICIONADO ou
+// TROCADO pelo PUT genérico abaixo (2026-07-19 — correção de bug: o botão
+// "+ Novo aluno" do painel cria o registro em branco via POST /api/alunos,
+// SEM e-mail — o gatilho automático que já existia em POST só dispara quando
+// o e-mail já vem preenchido naquele momento — e o e-mail de verdade só é
+// preenchido depois, na aba "Dados pessoais" do perfil, que salva por PUT.
+// Sem este gatilho aqui, todo aluno cadastrado pelo painel (o fluxo mais
+// comum) nunca recebia o e-mail automático.
+//
+// IMPORTANTE: dispara só quando o e-mail muda de verdade (era vazio e virou
+// algo, ou trocou de valor) — NÃO a cada clique em "Salvar dados" com o mesmo
+// e-mail de sempre, senão qualquer edição de telefone/observações reenviaria
+// o convite. Quem chama (PUT abaixo) já compara valor antigo x novo antes de
+// chamar esta função; o `AND status = 'enviado'` aqui é só uma segunda trava
+// de segurança (evita duplicar caso a mesma chamada seja disparada 2x).
+async function dispararBoasVindasSeNecessario(alunoId) {
+  try {
+    const jaEnviado = await db.execute({
+      sql: `SELECT id FROM mensagens_enviadas WHERE aluno_id = ? AND assunto = ? AND status = 'enviado' LIMIT 1`,
+      args: [alunoId, emailBoasVindas.ASSUNTO_BOAS_VINDAS],
+    });
+    if (jaEnviado.rows[0]) return;
+
+    const alunoResult = await db.execute({ sql: 'SELECT nome, email FROM alunos WHERE id = ?', args: [alunoId] });
+    const aluno = alunoResult.rows[0];
+    if (!aluno || !aluno.email) return;
+
+    await emailBoasVindas.enviarBoasVindasSeguro({ id: alunoId, nome: aluno.nome, email: aluno.email });
+  } catch {
+    // Best-effort de propósito — nunca deve quebrar a resposta do PUT.
+  }
+}
+
 // PUT /api/alunos/:id
 //
 // Modo totem offline-resiliente: se o Turso não responder, a edição não é
@@ -370,6 +403,17 @@ router.put('/:id', async (req, res, next) => {
     const dados = alunoSchema.partial().parse(req.body);
     const campos = Object.keys(dados);
     if (campos.length === 0) return res.status(400).json({ erro: 'Nenhum campo informado.' });
+
+    // Precisa do e-mail ANTIGO antes de aplicar o UPDATE, pra só disparar o
+    // e-mail de boas-vindas quando ele realmente mudar (ver
+    // dispararBoasVindasSeNecessario acima) — não a cada "Salvar dados" com o
+    // mesmo e-mail de sempre. Só busca quando 'email' está de fato sendo
+    // enviado neste PUT (evita uma consulta à toa nos outros casos).
+    let emailMudou = false;
+    if (campos.includes('email') && dados.email) {
+      const anterior = await db.execute({ sql: 'SELECT email FROM alunos WHERE id = ?', args: [req.params.id] });
+      emailMudou = (anterior.rows[0]?.email || null) !== dados.email;
+    }
 
     async function aplicarOnline() {
       const sets = campos.map((c) => `${c} = ?`).join(', ');
@@ -413,6 +457,11 @@ router.put('/:id', async (req, res, next) => {
     // Este endpoint genérico pode alterar biometria_id/categoria junto com o
     // resto — best-effort, não bloqueia a resposta (ver notificarAgenteAtualizacaoAluno).
     if (campos.includes('biometria_id') || campos.includes('categoria')) acessoTerminal.notificarAgenteAtualizacaoAluno(req.params.id);
+    // Ver dispararBoasVindasSeNecessario acima — cobre o caso (mais comum no
+    // painel admin) de o e-mail ser adicionado/trocado aqui, não no cadastro
+    // inicial. Só quando o e-mail muda de verdade (ver `emailMudou` acima) —
+    // best-effort, não bloqueia a resposta.
+    if (emailMudou) dispararBoasVindasSeNecessario(req.params.id).catch(() => {});
     res.json({ ok: true });
   } catch (err) {
     next(err);

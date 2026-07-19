@@ -70,39 +70,62 @@ function dividirStatementsSQL(sql) {
     });
 }
 
-// Modelo pronto "Boas-vindas / Cadastro facial" (2026-07) — reaproveita o
-// mesmo texto do e-mail automático de cadastro (ver
-// src/services/emailBoasVindas.service.js) no composer de Recuperação de
-// Clientes, pra reenviar em massa pra "Todos os ativos" (GET
-// /api/recuperacao/todos-ativos) quando for útil — ex.: pedir de novo pra
-// quem ainda não fez o cadastro facial. Usa {nome} e {senha} (ver
-// substituirVariaveis em recuperacao.routes.js); o link do Portal do Aluno já
-// entra sozinho por causa de link_tipo='portal'. Deliberadamente DESACOPLADO
-// do e-mail automático em si (ver comentário no topo de
-// emailBoasVindas.service.js) — apagar/editar este modelo nunca afeta o
-// e-mail que dispara sozinho no cadastro.
-const TEMPLATE_BOAS_VINDAS = {
-  nome: 'Boas-vindas / Cadastro facial',
-  saudacao: 'Olá {nome}! Seja bem-vindo(a) à Academia Superação.',
-  corpo: 'Para acompanhar seus dados, treinos e contas pelo celular, acesse o Portal do Aluno abaixo.\n\n'
-    + 'Sua senha de acesso ao portal é: {senha}\n\n'
-    + 'Se você ainda não fez o cadastro facial na academia (pra liberar a catraca automaticamente, sem precisar digitar nada), aproveite para fazer pelo próprio Portal do Aluno — é rápido!',
-  link_tipo: 'portal',
-};
+// Modelos prontos, semeados uma vez (idempotente — checa por nome antes de
+// inserir) pra já vir pronto no composer de Recuperação de Clientes, sem o
+// admin precisar redigitar.
+//
+// "Boas-vindas / Cadastro facial" (2026-07) — reaproveita o mesmo texto do
+// e-mail automático de cadastro (ver src/services/emailBoasVindas.service.js),
+// pra reenviar em massa pra "Todos os ativos" (GET /api/recuperacao/todos-ativos)
+// quando for útil — ex.: pedir de novo pra quem ainda não fez o cadastro
+// facial. Usa {nome} e {senha} (ver substituirVariaveis em
+// recuperacao.routes.js); o link do Portal do Aluno já entra sozinho por
+// causa de link_tipo='portal'. Deliberadamente DESACOPLADO do e-mail
+// automático em si (ver comentário no topo de emailBoasVindas.service.js) —
+// apagar/editar este modelo nunca afeta o e-mail que dispara sozinho no
+// cadastro.
+//
+// "Feliz Aniversário" (2026-07-19, pedido do dono do sistema: texto que
+// pareça alguém conhecido escrevendo, não uma mensagem automática de
+// sistema) — de propósito SEM link nenhum (link_tipo='nenhum'), pra não
+// parecer oferta/venda no meio de um recado de carinho.
+const TEMPLATES_SEED = [
+  {
+    nome: 'Boas-vindas / Cadastro facial',
+    saudacao: 'Olá {nome}! Seja bem-vindo(a) à Academia Superação.',
+    corpo: 'Para acompanhar seus dados, treinos e contas pelo celular, acesse o Portal do Aluno abaixo.\n\n'
+      + 'Sua senha de acesso ao portal é: {senha}\n\n'
+      + 'Se você ainda não fez o cadastro facial na academia (pra liberar a catraca automaticamente, sem precisar digitar nada), aproveite para fazer pelo próprio Portal do Aluno — é rápido!',
+    link_tipo: 'portal',
+  },
+  {
+    nome: 'Feliz Aniversário',
+    saudacao: '{nome}, feliz aniversário! 🎉',
+    corpo: 'Vim aqui só pra te dar um abraço e desejar um ano novo de vida cheio de energia — pra continuar firme nos treinos (e no resto da vida também, claro). Qualquer coisa que precisar, é só chamar.\n\n'
+      + 'Um beijo,\nEquipe Academia Superação',
+    link_tipo: 'nenhum',
+  },
+];
 
 async function seedMensagensTemplates() {
-  const existente = await db.execute({
-    sql: 'SELECT id FROM mensagens_templates WHERE nome = ?',
-    args: [TEMPLATE_BOAS_VINDAS.nome],
-  });
-  if (existente.rows[0]) return false;
+  let criados = 0;
+  for (const template of TEMPLATES_SEED) {
+    // eslint-disable-next-line no-await-in-loop
+    const existente = await db.execute({
+      sql: 'SELECT id FROM mensagens_templates WHERE nome = ?',
+      args: [template.nome],
+    });
+    if (existente.rows[0]) continue;
 
-  await db.execute({
-    sql: `INSERT INTO mensagens_templates (id, nome, saudacao, corpo, link_tipo, ativo)
-          VALUES (?, ?, ?, ?, ?, 1)`,
-    args: [uuid(), TEMPLATE_BOAS_VINDAS.nome, TEMPLATE_BOAS_VINDAS.saudacao, TEMPLATE_BOAS_VINDAS.corpo, TEMPLATE_BOAS_VINDAS.link_tipo],
-  });
-  return true;
+    // eslint-disable-next-line no-await-in-loop
+    await db.execute({
+      sql: `INSERT INTO mensagens_templates (id, nome, saudacao, corpo, link_tipo, ativo)
+            VALUES (?, ?, ?, ?, ?, 1)`,
+      args: [uuid(), template.nome, template.saudacao, template.corpo, template.link_tipo],
+    });
+    criados += 1;
+  }
+  return criados;
 }
 
 async function migrate() {
@@ -137,9 +160,9 @@ async function migrate() {
     await db.execute(statement);
   }
 
-  const templateSeedCriado = await seedMensagensTemplates();
+  const templatesSeedCriados = await seedMensagensTemplates();
 
-  console.log(`Migração concluída: ${statements.length} statements de schema + ${aplicadas} alteração(ões) incremental(is) nova(s)${templateSeedCriado ? ' + modelo "Boas-vindas / Cadastro facial" criado' : ''}.`);
+  console.log(`Migração concluída: ${statements.length} statements de schema + ${aplicadas} alteração(ões) incremental(is) nova(s)${templatesSeedCriados ? ` + ${templatesSeedCriados} modelo(s) de mensagem novo(s) criado(s)` : ''}.`);
 }
 
 migrate()

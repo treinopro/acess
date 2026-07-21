@@ -16,13 +16,12 @@
       <p class="subtitulo">Entre com sua conta de administrador</p>
       <form id="form-login">
         <label>E-mail ou usuário</label>
-        <input type="text" id="login-email" placeholder="admin@academia.com ou nome de usuário" required />
+        <input type="text" id="login-email" placeholder="seu e-mail ou nome de usuário" required />
         <label>Senha</label>
         <input type="password" id="login-senha" placeholder="••••••••" required />
         <button type="submit">Entrar</button>
       </form>
       <p class="erro" id="login-erro"></p>
-      <p class="dica">Padrão do seed: admin@academia.com / admin123</p>
     </div>
   </div>
 
@@ -47,7 +46,7 @@
         <button class="nav-btn" data-secao="pagamentos">Contas a Receber</button>
         <button class="nav-btn" data-secao="pagamento-rapido">Pagamento Rápido</button>
         <button class="nav-btn" data-secao="relatorios">Relatórios</button>
-        <button class="nav-btn oculto" id="nav-recuperacao" data-secao="recuperacao">Recuperação de Clientes</button>
+        <button class="nav-btn oculto" id="nav-recuperacao" data-secao="recuperacao">Recuperação de Clientes <span class="badge inadimplente oculto" id="recup-notif-badge">0</span></button>
         <button class="nav-btn oculto" id="nav-usuarios" data-secao="usuarios">Usuários</button>
         <button class="nav-btn oculto" id="nav-config" data-secao="config">Configurações</button>
         <button class="nav-btn oculto" id="nav-catraca" data-secao="catraca">Catraca</button>
@@ -980,6 +979,7 @@
           <button class="recup-tab-btn" data-recup="todos-ativos">Todos os ativos</button>
           <button class="recup-tab-btn" data-recup="visitantes">Visitantes</button>
           <button class="recup-tab-btn" data-recup="templates">Modelos de mensagem</button>
+          <button class="recup-tab-btn" data-recup="agendadas">Agendadas <span class="badge inadimplente oculto" id="recup-agendadas-badge">0</span></button>
           <button class="recup-tab-btn" data-recup="historico">Histórico</button>
         </div>
 
@@ -1212,6 +1212,32 @@
           <table class="tabela">
             <thead><tr><th>Data</th><th>Aluno</th><th>Canal</th><th>Status</th><th>Mensagem</th></tr></thead>
             <tbody id="recup-hist-lista"></tbody>
+          </table>
+        </div>
+
+        <!-- Painel: Mensagens agendadas (2026-07-21) -->
+        <div class="recup-painel oculto" data-recup-painel="agendadas">
+          <p style="font-size:13px;color:#667085;margin:0 0 14px">
+            E-mail agendado é enviado sozinho, automaticamente, na data/hora marcada. WhatsApp nunca é
+            enviado sozinho (limitação da integração) — quando a hora chega, o agendamento aparece
+            abaixo pronto para você abrir e concluir o envio manualmente, aluno por aluno.
+          </p>
+          <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
+            <div>
+              <label>Status</label>
+              <select id="recup-agendadas-filtro-status">
+                <option value="pendente" selected>Pendentes</option>
+                <option value="enviado">Enviadas</option>
+                <option value="cancelado">Canceladas</option>
+                <option value="erro">Com erro</option>
+                <option value="">Todas</option>
+              </select>
+            </div>
+            <button type="button" class="btn-primario" id="btn-recup-agendadas-atualizar">Atualizar</button>
+          </div>
+          <table class="tabela">
+            <thead><tr><th>Agendado para</th><th>Canal</th><th>Alunos</th><th>Status</th><th>Ações</th></tr></thead>
+            <tbody id="recup-agendadas-lista"></tbody>
           </table>
         </div>
       </section>
@@ -1755,13 +1781,43 @@
         </p>
       </div>
 
+      <label style="display:flex;align-items:center;gap:6px;margin-top:14px">
+        <input type="checkbox" id="recup-enviar-agendar-check" style="width:auto" /> Agendar para depois (não enviar agora)
+      </label>
+      <div id="recup-enviar-agendar-campos" class="oculto" style="margin-top:6px">
+        <label>Data e hora do envio</label>
+        <input type="datetime-local" id="recup-enviar-agendar-quando" style="max-width:240px" />
+        <p style="font-size:12px;color:#667085;margin:6px 0 0" id="recup-enviar-agendar-aviso">
+          E-mail é enviado sozinho no horário marcado. WhatsApp não é enviado sozinho — no horário marcado
+          ele aparece na aba "Agendadas" pronto para você abrir e confirmar o envio manualmente.
+        </p>
+      </div>
+
       <p style="font-size:12px;color:#667085;margin-top:14px">Prévia (1º destinatário):</p>
       <pre id="recup-enviar-preview" style="white-space:pre-wrap;background:#f9fafb;border:1px solid #e4e7ec;border-radius:8px;padding:10px;font-size:13px;max-height:160px;overflow:auto;font-family:inherit"></pre>
 
       <div class="form-acoes">
-        <button type="button" class="btn-primario" id="btn-recup-enviar-confirmar">Enviar</button>
+        <button type="button" class="btn-primario" id="btn-recup-enviar-confirmar">Enviar agora</button>
       </div>
       <div id="recup-enviar-resultado" style="margin-top:14px"></div>
+    </div>
+  </div>
+
+  <!-- MODAL: Finalizar WhatsApp agendado (envio manual, um aluno por vez) -->
+  <div id="modal-recup-whatsapp-agendado" class="modal-overlay oculto">
+    <div class="modal-card">
+      <div class="modal-topo">
+        <h3>Finalizar envio de WhatsApp</h3>
+        <button type="button" class="btn-fechar-painel" id="btn-fechar-modal-recup-whatsapp-agendado" title="Fechar">&times;</button>
+      </div>
+      <p style="margin:0 0 12px;color:#667085;font-size:13px">
+        Clique em "Abrir WhatsApp" para cada aluno (abre numa aba nova, já com a mensagem pronta pra
+        mandar). Quando terminar todos, clique em "Concluir agendamento" no final.
+      </p>
+      <div id="recup-whatsapp-agendado-lista"></div>
+      <div class="form-acoes">
+        <button type="button" class="btn-primario" id="btn-recup-whatsapp-agendado-concluir">Concluir agendamento</button>
+      </div>
     </div>
   </div>
 

@@ -20,6 +20,7 @@ const treinosRoutes = require('./routes/treinos.routes');
 const recuperacaoRoutes = require('./routes/recuperacao.routes');
 const { router: configRoutes } = require('./routes/config.routes');
 const { rodar: rodarBackup } = require('./jobs/backup');
+const { rodar: rodarMensagensAgendadas } = require('./jobs/mensagensAgendadas');
 const { atualizarCobrancasVencidas } = require('./services/cobrancas.service');
 const agenteGateway = require('./services/agenteGateway.service');
 const dbResiliente = require('./services/dbResiliente.service');
@@ -171,6 +172,18 @@ server.listen(PORT, () => {
     setInterval(() => {
       atualizarCobrancasVencidas().catch((err) => console.error('[cobrancas] erro ao atualizar vencidas na execução agendada:', err));
     }, 60 * 60 * 1000); // de hora em hora
+  }
+
+  // Disparo automático de mensagens agendadas (só e-mail — ver
+  // src/jobs/mensagensAgendadas.js). Checa a cada 1 minuto: intervalo curto
+  // o bastante pra "enviar às 14:00" sair perto de 14:00 de verdade, sem
+  // martelar o banco. Mesmo guard dos outros jobs (evita disparar em dobro
+  // no processo "modo totem", que aponta pro mesmo Turso).
+  if (EXECUTAR_JOBS_AGENDADOS) {
+    rodarMensagensAgendadas().catch((err) => console.error('[mensagensAgendadas] erro na execução inicial:', err));
+    setInterval(() => {
+      rodarMensagensAgendadas().catch((err) => console.error('[mensagensAgendadas] erro na execução agendada:', err));
+    }, 60 * 1000);
   }
 
   // "Modo totem offline-resiliente" (2026-07): só ativa quando

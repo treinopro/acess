@@ -14,8 +14,21 @@ const FACE_MODELS_URL = 'vendor/face-api/weights';
 
 // Quanto tempo (ms) a tela de resultado fica visível antes de voltar sozinha
 // a escanear. Curto o suficiente para não travar a fila, longo o bastante
-// pra pessoa ler a mensagem.
+// pra pessoa ler a mensagem. Usado pro caso "negado" (ninguém precisa girar
+// nada, então pode sumir rápido).
 const DURACAO_RESULTADO_MS = 3000;
+
+// 2026-07-21 (pedido explícito): tempo limite pra pessoa girar a catraca
+// depois de um acesso LIBERADO — separado de DURACAO_RESULTADO_MS porque
+// aqui tem uma ação física real esperando (girar a roleta), não só ler uma
+// mensagem. Mantido perto do tempo que a própria catraca Henry fica destravada
+// esperando a rotação antes de travar sozinha de novo (RELEASE_TIME em
+// src/services/henryCatraca.service.js, 10s por padrão — configurável via
+// HENRY_RELEASE_TIME_DECIMOS) — assim a tela do totem não volta a "aproxime-se
+// para reconhecimento" enquanto a catraca ainda está fisicamente destravada
+// esperando alguém passar. Passado esse tempo, a mensagem some do painel e o
+// totem volta ao estado normal de espera (travada/aguardando o próximo).
+const DURACAO_RESULTADO_LIBERADO_MS = 8000;
 
 // Intervalo (ms) entre tentativas de detecção no loop contínuo da tela inicial.
 const INTERVALO_ESCANEAMENTO_MS = 600;
@@ -39,6 +52,19 @@ let configSomTotem = {
   acessoNegado: { tipo: 'beep', beeps: 2 },
 };
 
+// 2026-07-21: o totem mostrava sempre "ACADEMIA GESTÃO" fixo no HTML,
+// independente do que o admin configurasse em Configurações > "Licenciado
+// para" (o mesmo nome que já aparecia na tela de login e na barra lateral do
+// painel — ver carregarConfigApp em public/app.js). Passa a usar o mesmo
+// valor aqui, com "nome_app" como fallback pra quem ainda não preencheu
+// "licenciado para", e o texto fixo original como último fallback.
+function aplicarIdentidadeTotem(config) {
+  const logo = document.getElementById('logo-totem');
+  if (!logo) return;
+  const nome = (config.licenciado_para || config.nome_app || 'ACADEMIA GESTÃO').trim();
+  logo.textContent = nome.toUpperCase();
+}
+
 async function carregarConfigSomTotem() {
   try {
     const config = await api('/api/config');
@@ -46,6 +72,7 @@ async function carregarConfigSomTotem() {
       const somConfig = typeof config.som_totem === 'string' ? JSON.parse(config.som_totem) : config.som_totem;
       configSomTotem = { ...configSomTotem, ...somConfig };
     }
+    aplicarIdentidadeTotem(config);
   } catch {
     // Fica com os padrões acima se a busca da config pública falhar.
   }
@@ -400,6 +427,32 @@ async function iniciarCamera(videoEl) {
   });
   videoEl.srcObject = streamAtual;
   await videoEl.play();
+  await afastarZoomDaCamera(streamAtual);
+}
+
+// 2026-07-21: mesmo pedindo uma resolução maior (acima), a imagem continuou
+// "com zoom" em relatos reais no tablet — a causa aqui é OUTRA, e resolução
+// não resolve sozinha: muita câmera frontal de Android/Chrome aplica um
+// "zoom" de fábrica (Pan-Tilt-Zoom / "smart zoom") diferente de 1x por
+// padrão, então mesmo pedindo o quadro inteiro do sensor o navegador entrega
+// já recortado. `MediaStreamTrack.getCapabilities().zoom` (Chrome/Android,
+// experimental mas amplamente suportado) expõe o zoom mín/máx da câmera
+// ativa — força pro mínimo (mais afastado possível) sempre que existir.
+// Best-effort de propósito: iOS Safari e navegadores mais antigos não têm
+// nem getCapabilities nem a constraint "zoom", então isso vira um no-op
+// silencioso nesses casos (a imagem só não fica mais afastada do que já
+// estava, sem quebrar nada).
+async function afastarZoomDaCamera(stream) {
+  try {
+    const [trilha] = stream.getVideoTracks();
+    if (!trilha || typeof trilha.getCapabilities !== 'function') return;
+    const capacidades = trilha.getCapabilities();
+    if (!capacidades || !capacidades.zoom) return;
+    await trilha.applyConstraints({ advanced: [{ zoom: capacidades.zoom.min }] });
+  } catch {
+    // Câmera/navegador sem suporte a controle de zoom por software — segue
+    // só com a resolução pedida em getUserMedia mesmo.
+  }
 }
 
 function pararCamera() {
@@ -807,10 +860,12 @@ async function processarResultado(chamada, { aoVoltar } = {}) {
 
   let cpfParaContas = null;
   let labelBotaoContas = 'Pagar contas em atraso';
+  let acessoFoiLiberado = false;
 
   try {
     const r = await chamada();
     if (r.autorizado) {
+      acessoFoiLiberado = true;
       overlay.classList.add('liberado');
       document.body.classList.add('tela-flash-liberado');
       document.getElementById('overlay-icone').textContent = '✅';
@@ -864,8 +919,12 @@ async function processarResultado(chamada, { aoVoltar } = {}) {
   };
 
   if (cpfParaContas) {
-    // Fica visível mais tempo (o triplo) já que agora tem uma ação disponível
-    // — mas ainda fecha sozinho se ninguém interagir, pra não travar a fila.
+    // Fica visível mais tempo já que agora tem uma ação disponível — mas
+    // ainda fecha sozinho se ninguém interagir, pra não travar a fila. Usa o
+    // mesmo tempo "liberado" quando o acesso foi liberado (pessoa ainda
+    // precisa girar a catraca, ver DURACAO_RESULTADO_LIBERADO_MS), senão o
+    // triplo do tempo padrão (acesso negado por atraso — ninguém precisa
+    // girar nada, só dá tempo de ler e decidir clicar em "Pagar").
     btnPagarContas.textContent = labelBotaoContas;
     btnPagarContas.classList.remove('oculto');
     let fechamentoAutomatico;
@@ -877,11 +936,15 @@ async function processarResultado(chamada, { aoVoltar } = {}) {
       pararEscaneamentoContinuo();
       abrirTelaContasComCpf(cpfParaContas);
     };
-    fechamentoAutomatico = setTimeout(fecharOverlay, DURACAO_RESULTADO_MS * 3);
+    fechamentoAutomatico = setTimeout(fecharOverlay, acessoFoiLiberado ? DURACAO_RESULTADO_LIBERADO_MS : DURACAO_RESULTADO_MS * 3);
     return;
   }
 
-  setTimeout(fecharOverlay, DURACAO_RESULTADO_MS);
+  // Acesso liberado: fica visível pelo tempo que a pessoa realmente tem pra
+  // girar a catraca (ver DURACAO_RESULTADO_LIBERADO_MS) antes da mensagem
+  // sumir do painel e o totem voltar ao estado normal de espera. Acesso
+  // negado (sem ação de pagar disponível): some rápido, ninguém precisa girar nada.
+  setTimeout(fecharOverlay, acessoFoiLiberado ? DURACAO_RESULTADO_LIBERADO_MS : DURACAO_RESULTADO_MS);
 }
 
 // ---------------- QR fixo pro Portal do Aluno (tela inicial) ----------------

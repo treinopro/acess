@@ -385,10 +385,12 @@ function carregarSecao(nome) {
 
 function abrirJanelaCatraca() {
   document.getElementById('janela-catraca').classList.remove('oculto');
+  restaurarJanela(document.getElementById('janela-catraca'));
   carregarSecaoCatraca();
 }
 function fecharJanelaCatraca() {
   document.getElementById('janela-catraca').classList.add('oculto');
+  reposicionarJanelasMinimizadas();
 }
 document.getElementById('btn-fechar-janela-catraca').addEventListener('click', fecharJanelaCatraca);
 
@@ -426,6 +428,9 @@ function tornarArrastavel(janela, alca) {
   let deslocY = 0;
 
   alca.addEventListener('mousedown', (ev) => {
+    // Minimizada, a janela vira uma "aba" presa na barra de tarefas — não faz
+    // sentido arrastar (e arrastar bagunçaria o alinhamento das outras abas).
+    if (janela.classList.contains('janela-flutuante-minimizada')) return;
     arrastando = true;
     const retangulo = janela.getBoundingClientRect();
     deslocX = ev.clientX - retangulo.left;
@@ -452,11 +457,65 @@ function tornarArrastavel(janela, alca) {
   document.addEventListener('mouseup', () => { arrastando = false; });
 }
 
+// Reposiciona todas as janelas minimizadas lado a lado, coladas na "barra de
+// tarefas" (rodapé da tela) — como qualquer SO faz. Chamada sempre que uma
+// janela é minimizada, restaurada ou fechada, pra quem restar não deixar buraco.
+function reposicionarJanelasMinimizadas() {
+  const ESPACO = 12;
+  let esquerdaAcumulada = ESPACO;
+  // ":not(.oculto)" — uma janela fechada continua com a classe de minimizada
+  // (fechar não desfaz minimizar), mas está com display:none, então não deve
+  // contar/ocupar espaço na fileira da barra de tarefas.
+  document.querySelectorAll('.janela-flutuante.janela-flutuante-minimizada:not(.oculto)').forEach((janela) => {
+    janela.style.left = `${esquerdaAcumulada}px`;
+    esquerdaAcumulada += janela.offsetWidth + ESPACO;
+  });
+}
+
+// Minimizar recolhe pra virar uma "aba" presa na barra de tarefas (rodapé),
+// igual qualquer janela de sistema operacional — antes disso, minimizar só
+// recolhia o corpo mas deixava a barra do topo na posição em que a janela
+// tinha sido arrastada, então cada janela minimizada "sumia" num lugar
+// diferente da tela em vez de ficar visível e acessível no rodapé.
+function minimizarJanela(janela) {
+  janela.dataset.antesMinimizar = JSON.stringify({
+    top: janela.style.top || '',
+    left: janela.style.left || '',
+    width: janela.style.width || '',
+  });
+  janela.classList.remove('janela-flutuante-maximizada');
+  janela.classList.add('janela-flutuante-minimizada');
+  janela.style.top = '';
+  janela.style.width = '';
+  reposicionarJanelasMinimizadas();
+}
+
+// Restaura uma janela minimizada pra posição/tamanho de antes de minimizar.
+// Seguro chamar mesmo se a janela não estiver minimizada (não faz nada de errado).
+function restaurarJanela(janela) {
+  const estavaMinimizada = janela.classList.contains('janela-flutuante-minimizada');
+  janela.classList.remove('janela-flutuante-minimizada');
+  if (estavaMinimizada) {
+    const anterior = janela.dataset.antesMinimizar ? JSON.parse(janela.dataset.antesMinimizar) : null;
+    janela.style.top = anterior?.top || '';
+    janela.style.left = anterior?.left || '';
+    janela.style.width = anterior?.width || '';
+    delete janela.dataset.antesMinimizar;
+  }
+  reposicionarJanelasMinimizadas();
+}
+
+function alternarMinimizarJanela(janela) {
+  if (janela.classList.contains('janela-flutuante-minimizada')) restaurarJanela(janela);
+  else minimizarJanela(janela);
+}
+
 // Adiciona os botões de minimizar/maximizar na barra do topo de uma janela
 // flutuante (o fechar já existe em cada janela, esse aqui é genérico/reaproveitável).
-// Minimizar recolhe pra só a barra do topo continuar visível (não fecha de fato).
-// Maximizar aumenta pra um tamanho maior - NÃO é tela cheia de verdade, só "grande",
-// com margem - clicando de novo volta pro tamanho/posição de antes.
+// Minimizar recolhe pra só a barra do topo continuar visível, presa no rodapé
+// (não fecha de fato). Maximizar aumenta pra um tamanho maior - NÃO é tela
+// cheia de verdade, só "grande", com margem - clicando de novo volta pro
+// tamanho/posição de antes.
 function adicionarControlesJanela(janela) {
   if (!janela) return;
   const topo = janela.querySelector('.janela-flutuante-topo');
@@ -468,7 +527,7 @@ function adicionarControlesJanela(janela) {
   btnMinimizar.className = 'btn-minimizar-painel';
   btnMinimizar.title = 'Minimizar';
   btnMinimizar.innerHTML = '&#8211;';
-  btnMinimizar.addEventListener('click', () => janela.classList.toggle('janela-flutuante-minimizada'));
+  btnMinimizar.addEventListener('click', () => alternarMinimizarJanela(janela));
 
   const btnMaximizar = document.createElement('button');
   btnMaximizar.type = 'button';
@@ -498,11 +557,13 @@ function alternarMaximizarJanela(janela) {
       left: janela.style.left || '',
     });
     janela.classList.remove('janela-flutuante-minimizada');
+    delete janela.dataset.antesMinimizar;
     janela.classList.add('janela-flutuante-maximizada');
     janela.style.width = '90vw';
     janela.style.height = '85vh';
     janela.style.top = '6vh';
     janela.style.left = '5vw';
+    reposicionarJanelasMinimizadas();
   }
 }
 
@@ -3645,7 +3706,7 @@ async function carregarAcessosRecentes() {
 
 function abrirPainelAcessos() {
   document.getElementById('painel-acessos').classList.remove('oculto');
-  document.getElementById('painel-acessos').classList.remove('janela-flutuante-minimizada');
+  restaurarJanela(document.getElementById('painel-acessos'));
   carregarAcessosRecentes();
   clearInterval(acessosRecentesTimer);
   acessosRecentesTimer = setInterval(carregarAcessosRecentes, 8000);
@@ -3655,6 +3716,7 @@ function fecharPainelAcessos() {
   document.getElementById('painel-acessos').classList.add('oculto');
   clearInterval(acessosRecentesTimer);
   acessosRecentesTimer = null;
+  reposicionarJanelasMinimizadas();
 }
 
 document.getElementById('btn-acessos-recentes').addEventListener('click', () => {
@@ -3700,6 +3762,7 @@ async function carregarSecaoRecuperacao() {
   await carregarRecupTemplates();
   await carregarDiasSemAcesso();
   verificarAniversariantesHoje();
+  atualizarNotificacaoWhatsappAgendado();
 }
 
 document.querySelectorAll('.recup-tab-btn').forEach((btn) => {
@@ -3714,6 +3777,7 @@ function trocarAbaRecuperacao(nome) {
   if (nome === 'todos-ativos') carregarTodosAtivos();
   if (nome === 'visitantes') { carregarVisitantes(); carregarIndicadoresVisitantes(); }
   if (nome === 'templates') carregarRecupTemplates();
+  if (nome === 'agendadas') carregarRecupAgendadas();
   if (nome === 'historico') carregarRecupHistorico();
 }
 
@@ -4290,11 +4354,20 @@ function abrirModalRecupEnviar(alunoIds, origem) {
   document.getElementById('recup-enviar-conceder-campos').classList.add('oculto');
   document.getElementById('recup-enviar-conceder-dias').value = 5;
   document.getElementById('recup-enviar-resultado').innerHTML = '';
+  document.getElementById('recup-enviar-agendar-check').checked = false;
+  document.getElementById('recup-enviar-agendar-campos').classList.add('oculto');
+  document.getElementById('recup-enviar-agendar-quando').value = '';
+  document.getElementById('btn-recup-enviar-confirmar').textContent = 'Enviar agora';
 
   atualizarDisponibilidadeCanalEmail();
   atualizarPreviaRecupEnviar();
   document.getElementById('modal-recup-enviar').classList.remove('oculto');
 }
+
+document.getElementById('recup-enviar-agendar-check').addEventListener('change', (ev) => {
+  document.getElementById('recup-enviar-agendar-campos').classList.toggle('oculto', !ev.target.checked);
+  document.getElementById('btn-recup-enviar-confirmar').textContent = ev.target.checked ? 'Agendar envio' : 'Enviar agora';
+});
 
 document.getElementById('btn-fechar-modal-recup-enviar').addEventListener('click', () => {
   document.getElementById('modal-recup-enviar').classList.add('oculto');
@@ -4367,6 +4440,8 @@ document.getElementById('btn-recup-enviar-confirmar').addEventListener('click', 
     if (!confirmar(`Isso também vai liberar ${dias} dia(s) de acesso especial para ${ctx.alunoIds.length} aluno(s), mesmo com mensalidade em atraso. Confirmar?`)) return;
   }
 
+  const agendar = document.getElementById('recup-enviar-agendar-check').checked;
+
   const payload = {
     aluno_ids: ctx.alunoIds,
     canal,
@@ -4379,6 +4454,27 @@ document.getElementById('btn-recup-enviar-confirmar').addEventListener('click', 
     link_oferta_texto: document.getElementById('recup-enviar-link-oferta-texto').value || null,
     conceder_dias_gratis: concederCheck ? Number(document.getElementById('recup-enviar-conceder-dias').value) : null,
   };
+
+  if (agendar) {
+    const quando = document.getElementById('recup-enviar-agendar-quando').value;
+    if (!quando) { mostrarToast('Escolha a data e hora do agendamento.', true); return; }
+    // new Date(quando) interpreta o valor de <input type="datetime-local">
+    // (ex.: "2026-07-25T14:30", sem fuso) no fuso LOCAL DO NAVEGADOR — que é
+    // exatamente o que o admin quis dizer. Converte pra ISO (com 'Z') antes
+    // de mandar pro servidor: sem isso, o backend reinterpretaria a mesma
+    // string "14:30" no fuso do SERVIDOR (Northflank roda em UTC), agendando
+    // até 3h adiantado/atrasado em relação ao horário real pedido no Brasil.
+    const dataLocal = new Date(quando);
+    if (Number.isNaN(dataLocal.getTime())) { mostrarToast('Data/hora de agendamento inválida.', true); return; }
+    payload.agendado_para = dataLocal.toISOString();
+    try {
+      await api('/api/recuperacao/agendar', { method: 'POST', body: JSON.stringify(payload) });
+      mostrarToast('Mensagem agendada.');
+      document.getElementById('modal-recup-enviar').classList.add('oculto');
+      atualizarNotificacaoWhatsappAgendado();
+    } catch (err) { mostrarToast(err.message, true); }
+    return;
+  }
 
   try {
     const resp = await api('/api/recuperacao/enviar', { method: 'POST', body: JSON.stringify(payload) });
@@ -4417,6 +4513,140 @@ function renderizarResultadoEnvioRecup(resp) {
     }
   });
 }
+
+// ---------- Mensagens agendadas (2026-07-21) ----------
+// E-mail agendado sai sozinho, no horário marcado (job no servidor). WhatsApp
+// nunca sai sozinho — quando o horário chega, vira uma notificação aqui (e no
+// badge da aba "Recuperação de Clientes" no menu lateral) até o admin abrir e
+// confirmar o envio manualmente, aluno por aluno.
+
+function rotuloStatusAgendada(status) {
+  return { pendente: 'Pendente', enviado: 'Enviada', cancelado: 'Cancelada', erro: 'Erro' }[status] || status;
+}
+
+async function carregarRecupAgendadas() {
+  try {
+    const status = document.getElementById('recup-agendadas-filtro-status').value;
+    const params = status ? `?status=${encodeURIComponent(status)}` : '';
+    const linhas = await api(`/api/recuperacao/agendadas${params}`);
+    const tbody = document.getElementById('recup-agendadas-lista');
+    tbody.innerHTML = '';
+    if (!linhas.length) {
+      tbody.appendChild(el('<tr><td colspan="5" style="color:#667085">Nenhum agendamento encontrado.</td></tr>'));
+      return;
+    }
+    const agora = Date.now();
+    linhas.forEach((item) => {
+      const dataAgendada = parseDataHoraServidor(item.agendado_para);
+      const jaChegouHora = dataAgendada && dataAgendada.getTime() <= agora;
+      const tr = el(`
+        <tr>
+          <td>${dataAgendada ? dataAgendada.toLocaleString('pt-BR') : '—'}</td>
+          <td>${item.canal === 'email' ? 'E-mail' : 'WhatsApp'}</td>
+          <td>${item.aluno_ids.length}</td>
+          <td>${rotuloStatusAgendada(item.status)}</td>
+          <td></td>
+        </tr>
+      `);
+      const acoesTd = tr.querySelector('td:last-child');
+      if (item.status === 'pendente') {
+        if (item.canal === 'whatsapp' && jaChegouHora) {
+          const btnFinalizar = el('<button type="button" class="btn-linha">Finalizar envio</button>');
+          btnFinalizar.addEventListener('click', () => abrirFinalizarWhatsappAgendado(item.id));
+          acoesTd.appendChild(btnFinalizar);
+        }
+        const btnCancelar = el('<button type="button" class="btn-linha perigo">Cancelar</button>');
+        btnCancelar.addEventListener('click', async () => {
+          if (!confirmar('Cancelar este agendamento?')) return;
+          try {
+            await api(`/api/recuperacao/agendadas/${item.id}`, { method: 'DELETE' });
+            mostrarToast('Agendamento cancelado.');
+            carregarRecupAgendadas();
+            atualizarNotificacaoWhatsappAgendado();
+          } catch (err) { mostrarToast(err.message, true); }
+        });
+        acoesTd.appendChild(btnCancelar);
+      }
+      tbody.appendChild(tr);
+    });
+  } catch (err) { mostrarToast(err.message, true); }
+}
+
+document.getElementById('btn-recup-agendadas-atualizar').addEventListener('click', carregarRecupAgendadas);
+document.getElementById('recup-agendadas-filtro-status').addEventListener('change', carregarRecupAgendadas);
+
+// Sininho/badge: quantos WhatsApp agendados já passaram do horário e ainda
+// esperam confirmação manual. Chamado ao entrar em Recuperação de Clientes e
+// de novo periodicamente (ver setInterval no fim do arquivo), pra avisar
+// mesmo quem está em outra tela.
+async function atualizarNotificacaoWhatsappAgendado() {
+  if (estado.usuario?.papel !== 'admin') return;
+  try {
+    const pendentes = await api('/api/recuperacao/agendadas/pendentes-whatsapp');
+    const contagem = pendentes.length;
+    [document.getElementById('recup-notif-badge'), document.getElementById('recup-agendadas-badge')].forEach((badge) => {
+      if (!badge) return;
+      badge.textContent = String(contagem);
+      badge.classList.toggle('oculto', contagem === 0);
+    });
+  } catch {
+    // Silencioso: notificação é best-effort, não deve gerar toast de erro repetido.
+  }
+}
+setInterval(atualizarNotificacaoWhatsappAgendado, 60000);
+
+let whatsappAgendadoAtualId = null;
+
+async function abrirFinalizarWhatsappAgendado(id) {
+  whatsappAgendadoAtualId = id;
+  const lista = document.getElementById('recup-whatsapp-agendado-lista');
+  lista.innerHTML = 'Carregando...';
+  document.getElementById('modal-recup-whatsapp-agendado').classList.remove('oculto');
+  try {
+    const resp = await api(`/api/recuperacao/agendadas/${id}/preparar-whatsapp`);
+    lista.innerHTML = '';
+    resp.itens.forEach((item, indice) => {
+      const linha = el(`
+        <div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid #f2f4f7">
+          <span style="flex:1;font-size:13px">${indice + 1}. ${escapeHtml(item.nome) || item.aluno_id}</span>
+        </div>
+      `);
+      if (item.ok) {
+        const btn = el('<button type="button" class="btn-secundario">Abrir WhatsApp</button>');
+        btn.addEventListener('click', () => {
+          window.open(item.link, '_blank', 'noopener');
+          btn.textContent = 'Aberto ✓';
+          btn.disabled = true;
+        });
+        linha.appendChild(btn);
+      } else {
+        linha.appendChild(el(`<span style="font-size:12px;color:#d92d20">${escapeHtml(item.erro)}</span>`));
+      }
+      lista.appendChild(linha);
+    });
+  } catch (err) {
+    lista.innerHTML = '';
+    lista.appendChild(el(`<p style="color:#d92d20">${escapeHtml(err.message)}</p>`));
+  }
+}
+
+document.getElementById('btn-fechar-modal-recup-whatsapp-agendado').addEventListener('click', () => {
+  document.getElementById('modal-recup-whatsapp-agendado').classList.add('oculto');
+  whatsappAgendadoAtualId = null;
+});
+
+document.getElementById('btn-recup-whatsapp-agendado-concluir').addEventListener('click', async () => {
+  if (!whatsappAgendadoAtualId) return;
+  if (!confirmar('Confirma que já abriu e mandou a mensagem de todos os alunos listados? Isso marca o agendamento como concluído.')) return;
+  try {
+    await api(`/api/recuperacao/agendadas/${whatsappAgendadoAtualId}/concluir-whatsapp`, { method: 'POST' });
+    mostrarToast('Agendamento de WhatsApp concluído.');
+    document.getElementById('modal-recup-whatsapp-agendado').classList.add('oculto');
+    whatsappAgendadoAtualId = null;
+    carregarRecupAgendadas();
+    atualizarNotificacaoWhatsappAgendado();
+  } catch (err) { mostrarToast(err.message, true); }
+});
 
 // ---------- Histórico ----------
 

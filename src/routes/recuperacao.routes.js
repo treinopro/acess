@@ -19,6 +19,7 @@ const db = require('../db/client');
 const { autenticar, apenasAdmin } = require('../middleware/auth');
 const acessoTerminal = require('../services/acessoTerminal.service');
 const emailService = require('../services/email.service');
+const { formatarDataSqliteUtc } = require('../utils/data');
 
 const router = express.Router();
 router.use(autenticar, apenasAdmin);
@@ -290,138 +291,420 @@ router.delete('/templates/:id', async (req, res, next) => {
 
 // ---------------- Envio (e-mail real via SMTP | link do WhatsApp manual) ----------------
 
+// Resolve saudação/corpo/assunto/link/dias-grátis efetivos a partir do que
+// veio no corpo da requisição (prioridade) + o que estiver no modelo
+// escolhido (fallback). Compartilhado entre envio imediato (POST /enviar) e
+// agendamento (POST /agendar) — os dois só diferem em O QUE fazer com esse
+// conteúdo resolvido (enviar agora vs. gravar pra enviar depois).
+async function resolverConteudoEnvio(dados) {
+  let template = null;
+  if (dados.template_id) {
+    const r = await db.execute({ sql: 'SELECT * FROM mensagens_templates WHERE id = ?', args: [dados.template_id] });
+    template = r.rows[0] || null;
+  }
+  const saudacao = dados.saudacao ?? template?.saudacao ?? 'Olá {nome}!';
+  const corpo = dados.corpo ?? template?.corpo;
+  if (!corpo) return { erro: 'Informe o corpo da mensagem ou escolha um modelo com corpo preenchido.' };
+
+  return {
+    saudacao,
+    corpo,
+    linkTipo: dados.link_tipo ?? template?.link_tipo ?? 'portal',
+    linkOfertaUrl: dados.link_oferta_url ?? template?.link_oferta_url ?? null,
+    linkOfertaTexto: dados.link_oferta_texto ?? template?.link_oferta_texto ?? null,
+    concederDias: dados.conceder_dias_gratis ?? template?.conceder_dias_gratis ?? null,
+    assunto: dados.assunto || 'Sentimos sua falta na Academia Superação!',
+  };
+}
+
+// Faz de fato o envio (e-mail real via SMTP) ou a geração do link (WhatsApp)
+// para um lote de alunos, com todo o conteúdo já resolvido (sem depender de
+// template_id ainda existir/não ter mudado — quem chama já decidiu saudação/
+// corpo/etc. finais). Usado tanto pelo envio imediato (POST /enviar) quanto
+// pelo job de agendamento automático de e-mail (src/jobs/mensagensAgendadas.js)
+// quanto pela finalização manual de WhatsApp agendado (POST
+// /agendadas/:id/concluir-whatsapp) — centraliza a gravação em
+// mensagens_enviadas e a concessão de dias grátis num só lugar.
+async function processarLoteEnvio({
+  alunoIds, canal, templateId, saudacao, corpo, assunto, linkTipo, linkOfertaUrl, linkOfertaTexto,
+  concederDias, origin, usuarioId,
+}) {
+  const hojeISO = new Date().toISOString().slice(0, 10);
+  const resultados = [];
+  const concessoesCriadas = [];
+  const precisaSenha = usaVariavelSenha(saudacao, corpo);
+
+  for (const alunoId of alunoIds) {
+    // eslint-disable-next-line no-await-in-loop
+    const r = await db.execute({ sql: 'SELECT * FROM alunos WHERE id = ?', args: [alunoId] });
+    const aluno = r.rows[0];
+    if (!aluno) { resultados.push({ aluno_id: alunoId, ok: false, erro: 'Aluno não encontrado.' }); continue; }
+
+    // Só busca/gera a senha de acesso (código sequencial, ver
+    // acessoTerminal.atribuirCodigoAluno) quando o modelo realmente usa
+    // {senha} — evita gerar/gravar código pra quem nunca vai ver essa info.
+    // Visitante NUNCA recebe essa senha (2026-07-19): o código do portal só
+    // faz sentido pareado com o cadastro físico na catraca (cartão/digital
+    // do "sistema antigo"), e visitante nunca passa por esse cadastro —
+    // ver aviso em emailBoasVindas.service.js.
+    const ehVisitante = (aluno.categoria || 'aluno') === 'visitante';
+    // eslint-disable-next-line no-await-in-loop
+    const senha = (precisaSenha && !ehVisitante) ? await acessoTerminal.atribuirCodigoAluno(aluno.id) : null;
+
+    const mensagem = montarMensagem({
+      aluno, saudacao, corpo, linkTipo, linkOfertaUrl, linkOfertaTexto, origin, senha,
+    });
+    let envioOk = false;
+
+    if (canal === 'email') {
+      if (!aluno.email) {
+        resultados.push({ aluno_id: alunoId, nome: aluno.nome, ok: false, erro: 'Aluno sem e-mail cadastrado.' });
+        continue;
+      }
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await emailService.enviarEmail({ para: aluno.email, assunto, texto: mensagem });
+        envioOk = true;
+        // eslint-disable-next-line no-await-in-loop
+        await db.execute({
+          sql: `INSERT INTO mensagens_enviadas (id, aluno_id, canal, template_id, assunto, mensagem, destino, status, criado_por)
+                VALUES (?, ?, 'email', ?, ?, ?, ?, 'enviado', ?)`,
+          args: [uuid(), alunoId, templateId || null, assunto, mensagem, aluno.email, usuarioId],
+        });
+        resultados.push({ aluno_id: alunoId, nome: aluno.nome, ok: true, canal: 'email', destino: aluno.email });
+      } catch (err) {
+        // eslint-disable-next-line no-await-in-loop
+        await db.execute({
+          sql: `INSERT INTO mensagens_enviadas (id, aluno_id, canal, template_id, assunto, mensagem, destino, status, erro, criado_por)
+                VALUES (?, ?, 'email', ?, ?, ?, ?, 'erro', ?, ?)`,
+          args: [uuid(), alunoId, templateId || null, assunto, mensagem, aluno.email, err.message, usuarioId],
+        });
+        resultados.push({ aluno_id: alunoId, nome: aluno.nome, ok: false, erro: err.message });
+      }
+    } else {
+      const telefone = normalizarTelefoneWhatsapp(aluno.telefone);
+      if (!telefone) {
+        resultados.push({ aluno_id: alunoId, nome: aluno.nome, ok: false, erro: 'Aluno sem telefone cadastrado.' });
+        continue;
+      }
+      const link = `https://wa.me/${telefone}?text=${encodeURIComponent(mensagem)}`;
+      envioOk = true;
+      // eslint-disable-next-line no-await-in-loop
+      await db.execute({
+        sql: `INSERT INTO mensagens_enviadas (id, aluno_id, canal, template_id, mensagem, destino, status, criado_por)
+              VALUES (?, ?, 'whatsapp', ?, ?, ?, 'link_gerado', ?)`,
+        args: [uuid(), alunoId, templateId || null, mensagem, aluno.telefone, usuarioId],
+      });
+      resultados.push({
+        aluno_id: alunoId, nome: aluno.nome, ok: true, canal: 'whatsapp', link,
+      });
+    }
+
+    if (envioOk && concederDias) {
+      const validoAte = new Date(Date.now() + (concederDias - 1) * 86400000).toISOString().slice(0, 10);
+      const concessaoId = uuid();
+      // eslint-disable-next-line no-await-in-loop
+      await db.execute({
+        sql: `INSERT INTO concessoes_acesso (id, aluno_id, dias, valido_de, valido_ate, motivo, criado_por)
+              VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        args: [concessaoId, alunoId, concederDias, hojeISO, validoAte,
+          `Concedido junto com mensagem de recuperação (${canal})`, usuarioId],
+      });
+      concessoesCriadas.push({ aluno_id: alunoId, dias: concederDias, valido_ate: validoAte });
+      // Best-effort: atualiza o cache do agente local da catraca na hora,
+      // sem esperar o próximo pull periódico (ver notificarAgenteAtualizacaoAluno).
+      acessoTerminal.notificarAgenteAtualizacaoAluno(alunoId).catch(() => {});
+    }
+  }
+
+  return { resultados, concessoesCriadas };
+}
+
 // POST /api/recuperacao/enviar
-// Envia (e-mail) ou gera o link (WhatsApp) para um ou vários alunos de uma
-// vez. Se `conceder_dias_gratis` vier preenchido (direto no corpo ou herdado
-// do modelo escolhido), cria também uma concessão de acesso especial POR
-// ALUNO — só depois que o envio/geração de link daquele aluno específico deu
-// certo (nunca concede acesso se o e-mail falhou pra alguém no meio do lote).
+// Envia (e-mail) ou gera o link (WhatsApp) AGORA MESMO para um ou vários
+// alunos de uma vez. Se `conceder_dias_gratis` vier preenchido (direto no
+// corpo ou herdado do modelo escolhido), cria também uma concessão de acesso
+// especial POR ALUNO — só depois que o envio/geração de link daquele aluno
+// específico deu certo (nunca concede acesso se o e-mail falhou pra alguém
+// no meio do lote). Ver POST /agendar pra disparo numa data/hora futura.
 router.post('/enviar', async (req, res, next) => {
   try {
     const dados = enviarSchema.parse(req.body);
-
-    let template = null;
-    if (dados.template_id) {
-      const r = await db.execute({ sql: 'SELECT * FROM mensagens_templates WHERE id = ?', args: [dados.template_id] });
-      template = r.rows[0] || null;
-    }
-
-    const saudacao = dados.saudacao ?? template?.saudacao ?? 'Olá {nome}!';
-    const corpo = dados.corpo ?? template?.corpo;
-    if (!corpo) return res.status(400).json({ erro: 'Informe o corpo da mensagem ou escolha um modelo com corpo preenchido.' });
-
-    const linkTipo = dados.link_tipo ?? template?.link_tipo ?? 'portal';
-    const linkOfertaUrl = dados.link_oferta_url ?? template?.link_oferta_url ?? null;
-    const linkOfertaTexto = dados.link_oferta_texto ?? template?.link_oferta_texto ?? null;
-    const concederDias = dados.conceder_dias_gratis ?? template?.conceder_dias_gratis ?? null;
-    const assunto = dados.assunto || 'Sentimos sua falta na Academia Superação!';
+    const conteudo = await resolverConteudoEnvio(dados);
+    if (conteudo.erro) return res.status(400).json({ erro: conteudo.erro });
 
     if (dados.canal === 'email' && !emailService.emailConfigurado()) {
       return res.status(400).json({ erro: 'Envio de e-mail não configurado no servidor. Defina GMAIL_USER e GMAIL_APP_PASSWORD (ver .env.example) e reinicie/faça o redeploy.' });
     }
 
-    const origin = obterOrigin(req);
-    const hojeISO = new Date().toISOString().slice(0, 10);
-    const resultados = [];
-    const concessoesCriadas = [];
-    const precisaSenha = usaVariavelSenha(saudacao, corpo);
-
-    for (const alunoId of dados.aluno_ids) {
-      // eslint-disable-next-line no-await-in-loop
-      const r = await db.execute({ sql: 'SELECT * FROM alunos WHERE id = ?', args: [alunoId] });
-      const aluno = r.rows[0];
-      if (!aluno) { resultados.push({ aluno_id: alunoId, ok: false, erro: 'Aluno não encontrado.' }); continue; }
-
-      // Só busca/gera a senha de acesso (código sequencial, ver
-      // acessoTerminal.atribuirCodigoAluno) quando o modelo realmente usa
-      // {senha} — evita gerar/gravar código pra quem nunca vai ver essa info.
-      // Visitante NUNCA recebe essa senha (2026-07-19): o código do portal só
-      // faz sentido pareado com o cadastro físico na catraca (cartão/digital
-      // do "sistema antigo"), e visitante nunca passa por esse cadastro —
-      // ver aviso em emailBoasVindas.service.js.
-      const ehVisitante = (aluno.categoria || 'aluno') === 'visitante';
-      // eslint-disable-next-line no-await-in-loop
-      const senha = (precisaSenha && !ehVisitante) ? await acessoTerminal.atribuirCodigoAluno(aluno.id) : null;
-
-      const mensagem = montarMensagem({
-        aluno, saudacao, corpo, linkTipo, linkOfertaUrl, linkOfertaTexto, origin, senha,
-      });
-      let envioOk = false;
-
-      if (dados.canal === 'email') {
-        if (!aluno.email) {
-          resultados.push({
-            aluno_id: alunoId, nome: aluno.nome, ok: false, erro: 'Aluno sem e-mail cadastrado.',
-          });
-          continue;
-        }
-        try {
-          // eslint-disable-next-line no-await-in-loop
-          await emailService.enviarEmail({ para: aluno.email, assunto, texto: mensagem });
-          envioOk = true;
-          // eslint-disable-next-line no-await-in-loop
-          await db.execute({
-            sql: `INSERT INTO mensagens_enviadas (id, aluno_id, canal, template_id, assunto, mensagem, destino, status, criado_por)
-                  VALUES (?, ?, 'email', ?, ?, ?, ?, 'enviado', ?)`,
-            args: [uuid(), alunoId, dados.template_id || null, assunto, mensagem, aluno.email, req.usuario.id],
-          });
-          resultados.push({
-            aluno_id: alunoId, nome: aluno.nome, ok: true, canal: 'email', destino: aluno.email,
-          });
-        } catch (err) {
-          // eslint-disable-next-line no-await-in-loop
-          await db.execute({
-            sql: `INSERT INTO mensagens_enviadas (id, aluno_id, canal, template_id, assunto, mensagem, destino, status, erro, criado_por)
-                  VALUES (?, ?, 'email', ?, ?, ?, ?, 'erro', ?, ?)`,
-            args: [uuid(), alunoId, dados.template_id || null, assunto, mensagem, aluno.email, err.message, req.usuario.id],
-          });
-          resultados.push({
-            aluno_id: alunoId, nome: aluno.nome, ok: false, erro: err.message,
-          });
-        }
-      } else {
-        const telefone = normalizarTelefoneWhatsapp(aluno.telefone);
-        if (!telefone) {
-          resultados.push({
-            aluno_id: alunoId, nome: aluno.nome, ok: false, erro: 'Aluno sem telefone cadastrado.',
-          });
-          continue;
-        }
-        const link = `https://wa.me/${telefone}?text=${encodeURIComponent(mensagem)}`;
-        envioOk = true;
-        // eslint-disable-next-line no-await-in-loop
-        await db.execute({
-          sql: `INSERT INTO mensagens_enviadas (id, aluno_id, canal, template_id, mensagem, destino, status, criado_por)
-                VALUES (?, ?, 'whatsapp', ?, ?, ?, 'link_gerado', ?)`,
-          args: [uuid(), alunoId, dados.template_id || null, mensagem, aluno.telefone, req.usuario.id],
-        });
-        resultados.push({
-          aluno_id: alunoId, nome: aluno.nome, ok: true, canal: 'whatsapp', link,
-        });
-      }
-
-      if (envioOk && concederDias) {
-        const validoAte = new Date(Date.now() + (concederDias - 1) * 86400000).toISOString().slice(0, 10);
-        const concessaoId = uuid();
-        // eslint-disable-next-line no-await-in-loop
-        await db.execute({
-          sql: `INSERT INTO concessoes_acesso (id, aluno_id, dias, valido_de, valido_ate, motivo, criado_por)
-                VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          args: [concessaoId, alunoId, concederDias, hojeISO, validoAte,
-            `Concedido junto com mensagem de recuperação (${dados.canal})`, req.usuario.id],
-        });
-        concessoesCriadas.push({ aluno_id: alunoId, dias: concederDias, valido_ate: validoAte });
-        // Best-effort: atualiza o cache do agente local da catraca na hora,
-        // sem esperar o próximo pull periódico (ver notificarAgenteAtualizacaoAluno).
-        acessoTerminal.notificarAgenteAtualizacaoAluno(alunoId).catch(() => {});
-      }
-    }
+    const { resultados, concessoesCriadas } = await processarLoteEnvio({
+      alunoIds: dados.aluno_ids,
+      canal: dados.canal,
+      templateId: dados.template_id,
+      saudacao: conteudo.saudacao,
+      corpo: conteudo.corpo,
+      assunto: conteudo.assunto,
+      linkTipo: conteudo.linkTipo,
+      linkOfertaUrl: conteudo.linkOfertaUrl,
+      linkOfertaTexto: conteudo.linkOfertaTexto,
+      concederDias: conteudo.concederDias,
+      origin: obterOrigin(req),
+      usuarioId: req.usuario.id,
+    });
 
     res.json({ resultados, concessoes_criadas: concessoesCriadas });
   } catch (err) {
     next(err);
   }
 });
+
+// ---------------- Agendamento de envio (data/hora futura) ----------------
+//
+// E-mail: o job src/jobs/mensagensAgendadas.js dispara sozinho quando a hora
+// chega (mesma lógica de processarLoteEnvio do envio imediato).
+// WhatsApp: NUNCA é enviado sozinho (não existe integração automática — só o
+// link wa.me pra abrir manualmente). Quando a hora chega, o item some da
+// lista de "pendentes" e vira uma notificação (GET /agendadas/pendentes-
+// whatsapp) até o admin abrir a tela, passar aluno por aluno (GET
+// /agendadas/:id/preparar-whatsapp gera os links, sem marcar nada ainda) e
+// confirmar no fim (POST /agendadas/:id/concluir-whatsapp).
+
+const agendarSchema = enviarSchema.extend({
+  // "AAAA-MM-DDTHH:MM" (valor cru de <input type="datetime-local">, hora
+  // LOCAL do navegador do admin) — convertido pro formato UTC do banco
+  // abaixo, antes de gravar.
+  agendado_para: z.string().min(1),
+});
+
+router.post('/agendar', async (req, res, next) => {
+  try {
+    const dados = agendarSchema.parse(req.body);
+
+    const dataAgendada = new Date(dados.agendado_para);
+    if (Number.isNaN(dataAgendada.getTime())) {
+      return res.status(400).json({ erro: 'Data/hora de agendamento inválida.' });
+    }
+    if (dataAgendada.getTime() <= Date.now()) {
+      return res.status(400).json({ erro: 'Escolha uma data/hora no futuro para o agendamento.' });
+    }
+
+    const conteudo = await resolverConteudoEnvio(dados);
+    if (conteudo.erro) return res.status(400).json({ erro: conteudo.erro });
+
+    if (dados.canal === 'email' && !emailService.emailConfigurado()) {
+      return res.status(400).json({ erro: 'Envio de e-mail não configurado no servidor. Defina GMAIL_USER e GMAIL_APP_PASSWORD (ver .env.example) e reinicie/faça o redeploy.' });
+    }
+
+    const id = uuid();
+    await db.execute({
+      sql: `INSERT INTO mensagens_agendadas
+              (id, aluno_ids_json, canal, template_id, saudacao, corpo, assunto,
+               link_tipo, link_oferta_url, link_oferta_texto, conceder_dias_gratis,
+               agendado_para, status, criado_por)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendente', ?)`,
+      args: [
+        id, JSON.stringify(dados.aluno_ids), dados.canal, dados.template_id || null,
+        conteudo.saudacao, conteudo.corpo, conteudo.assunto,
+        conteudo.linkTipo, conteudo.linkOfertaUrl, conteudo.linkOfertaTexto, conteudo.concederDias,
+        formatarDataSqliteUtc(dataAgendada), req.usuario.id,
+      ],
+    });
+
+    res.status(201).json({ id, agendado_para: formatarDataSqliteUtc(dataAgendada) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/recuperacao/agendadas?status=pendente — lista pra tela "Mensagens agendadas".
+router.get('/agendadas', async (req, res, next) => {
+  try {
+    const { status } = req.query;
+    const condicoes = [];
+    const args = [];
+    if (status) { condicoes.push('status = ?'); args.push(status); }
+    const where = condicoes.length ? `WHERE ${condicoes.join(' AND ')}` : '';
+    const result = await db.execute({
+      sql: `SELECT * FROM mensagens_agendadas ${where} ORDER BY agendado_para ASC`,
+      args,
+    });
+    res.json(result.rows.map((row) => ({
+      ...row,
+      aluno_ids: JSON.parse(row.aluno_ids_json || '[]'),
+      resultado: row.resultado_json ? JSON.parse(row.resultado_json) : null,
+    })));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/recuperacao/agendadas/:id — cancela um agendamento ainda pendente.
+router.delete('/agendadas/:id', async (req, res, next) => {
+  try {
+    const r = await db.execute({ sql: 'SELECT * FROM mensagens_agendadas WHERE id = ?', args: [req.params.id] });
+    const registro = r.rows[0];
+    if (!registro) return res.status(404).json({ erro: 'Agendamento não encontrado.' });
+    if (registro.status !== 'pendente') return res.status(400).json({ erro: 'Só é possível cancelar agendamentos ainda pendentes.' });
+
+    await db.execute({ sql: "UPDATE mensagens_agendadas SET status = 'cancelado' WHERE id = ?", args: [req.params.id] });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/recuperacao/agendadas/pendentes-whatsapp — WhatsApp cuja hora já
+// chegou e ainda não foi finalizado manualmente. Alimenta o sininho de
+// notificação no menu (ver public/app.js, polling periódico).
+router.get('/agendadas/pendentes-whatsapp', async (req, res, next) => {
+  try {
+    const agora = formatarDataSqliteUtc(new Date());
+    const result = await db.execute({
+      sql: `SELECT * FROM mensagens_agendadas
+            WHERE canal = 'whatsapp' AND status = 'pendente' AND agendado_para <= ?
+            ORDER BY agendado_para ASC`,
+      args: [agora],
+    });
+    res.json(result.rows.map((row) => ({ ...row, aluno_ids: JSON.parse(row.aluno_ids_json || '[]') })));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/recuperacao/agendadas/:id/preparar-whatsapp — monta o link wa.me
+// de cada aluno do lote SEM marcar nada como enviado nem conceder dias
+// grátis ainda (isso só acontece em POST .../concluir-whatsapp, depois que o
+// admin passar por todos). Pensado pra tela mostrar "1 de N", o admin clicar
+// em "Abrir WhatsApp" de cada um, e só then confirmar o lote inteiro no fim.
+router.get('/agendadas/:id/preparar-whatsapp', async (req, res, next) => {
+  try {
+    const r = await db.execute({ sql: 'SELECT * FROM mensagens_agendadas WHERE id = ?', args: [req.params.id] });
+    const registro = r.rows[0];
+    if (!registro) return res.status(404).json({ erro: 'Agendamento não encontrado.' });
+    if (registro.canal !== 'whatsapp') return res.status(400).json({ erro: 'Este agendamento não é de WhatsApp.' });
+    if (registro.status !== 'pendente') return res.status(400).json({ erro: 'Este agendamento já foi concluído ou cancelado.' });
+
+    const origin = obterOrigin(req);
+    const alunoIds = JSON.parse(registro.aluno_ids_json || '[]');
+    const precisaSenha = usaVariavelSenha(registro.saudacao, registro.corpo);
+    const itens = [];
+    for (const alunoId of alunoIds) {
+      // eslint-disable-next-line no-await-in-loop
+      const ra = await db.execute({ sql: 'SELECT * FROM alunos WHERE id = ?', args: [alunoId] });
+      const aluno = ra.rows[0];
+      if (!aluno) { itens.push({ aluno_id: alunoId, ok: false, erro: 'Aluno não encontrado.' }); continue; }
+      const telefone = normalizarTelefoneWhatsapp(aluno.telefone);
+      if (!telefone) { itens.push({ aluno_id: alunoId, nome: aluno.nome, ok: false, erro: 'Aluno sem telefone cadastrado.' }); continue; }
+
+      const ehVisitante = (aluno.categoria || 'aluno') === 'visitante';
+      // eslint-disable-next-line no-await-in-loop
+      const senha = (precisaSenha && !ehVisitante) ? await acessoTerminal.atribuirCodigoAluno(aluno.id) : null;
+      const mensagem = montarMensagem({
+        aluno,
+        saudacao: registro.saudacao,
+        corpo: registro.corpo,
+        linkTipo: registro.link_tipo,
+        linkOfertaUrl: registro.link_oferta_url,
+        linkOfertaTexto: registro.link_oferta_texto,
+        origin,
+        senha,
+      });
+      itens.push({
+        aluno_id: alunoId, nome: aluno.nome, ok: true, link: `https://wa.me/${telefone}?text=${encodeURIComponent(mensagem)}`,
+      });
+    }
+
+    res.json({ id: registro.id, itens });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/recuperacao/agendadas/:id/concluir-whatsapp — chamado depois que
+// o admin passou pelos links um por um na tela. Grava o histórico
+// (mensagens_enviadas) e concede dias grátis (se configurado), exatamente
+// como o envio imediato faria, e marca o agendamento como 'enviado'.
+router.post('/agendadas/:id/concluir-whatsapp', async (req, res, next) => {
+  try {
+    const r = await db.execute({ sql: 'SELECT * FROM mensagens_agendadas WHERE id = ?', args: [req.params.id] });
+    const registro = r.rows[0];
+    if (!registro) return res.status(404).json({ erro: 'Agendamento não encontrado.' });
+    if (registro.canal !== 'whatsapp') return res.status(400).json({ erro: 'Este agendamento não é de WhatsApp.' });
+    if (registro.status !== 'pendente') return res.status(400).json({ erro: 'Este agendamento já foi concluído ou cancelado.' });
+
+    const { resultados, concessoesCriadas } = await processarLoteEnvio({
+      alunoIds: JSON.parse(registro.aluno_ids_json || '[]'),
+      canal: 'whatsapp',
+      templateId: registro.template_id,
+      saudacao: registro.saudacao,
+      corpo: registro.corpo,
+      assunto: registro.assunto,
+      linkTipo: registro.link_tipo,
+      linkOfertaUrl: registro.link_oferta_url,
+      linkOfertaTexto: registro.link_oferta_texto,
+      concederDias: registro.conceder_dias_gratis,
+      origin: obterOrigin(req),
+      usuarioId: req.usuario.id,
+    });
+
+    await db.execute({
+      sql: "UPDATE mensagens_agendadas SET status = 'enviado', resultado_json = ?, processado_em = datetime('now') WHERE id = ?",
+      args: [JSON.stringify(resultados), req.params.id],
+    });
+
+    res.json({ resultados, concessoes_criadas: concessoesCriadas });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Chamada pelo job src/jobs/mensagensAgendadas.js (setInterval no server.js),
+// nunca por uma rota HTTP diretamente — processa todo agendamento de e-mail
+// cuja hora já chegou. Cada item é isolado (um erro não trava os outros,
+// mesmo espírito do lote /acessos/lote em terminal.routes.js).
+async function processarPendentesEmailAgendados() {
+  const agora = formatarDataSqliteUtc(new Date());
+  const result = await db.execute({
+    sql: `SELECT * FROM mensagens_agendadas
+          WHERE canal = 'email' AND status = 'pendente' AND agendado_para <= ?
+          ORDER BY agendado_para ASC`,
+    args: [agora],
+  });
+
+  let processados = 0;
+  for (const registro of result.rows) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const { resultados } = await processarLoteEnvio({
+        alunoIds: JSON.parse(registro.aluno_ids_json || '[]'),
+        canal: 'email',
+        templateId: registro.template_id,
+        saudacao: registro.saudacao,
+        corpo: registro.corpo,
+        assunto: registro.assunto,
+        linkTipo: registro.link_tipo,
+        linkOfertaUrl: registro.link_oferta_url,
+        linkOfertaTexto: registro.link_oferta_texto,
+        concederDias: registro.conceder_dias_gratis,
+        origin: (process.env.APP_URL || '').trim().replace(/\/+$/, ''),
+        usuarioId: registro.criado_por,
+      });
+      // eslint-disable-next-line no-await-in-loop
+      await db.execute({
+        sql: "UPDATE mensagens_agendadas SET status = 'enviado', resultado_json = ?, processado_em = datetime('now') WHERE id = ?",
+        args: [JSON.stringify(resultados), registro.id],
+      });
+      processados += 1;
+    } catch (err) {
+      // eslint-disable-next-line no-await-in-loop
+      await db.execute({
+        sql: "UPDATE mensagens_agendadas SET status = 'erro', resultado_json = ?, processado_em = datetime('now') WHERE id = ?",
+        args: [JSON.stringify({ erro: err.message }), registro.id],
+      });
+    }
+  }
+  return processados;
+}
 
 // ---------------- Concessão de acesso especial (avulsa, sem enviar mensagem) ----------------
 
@@ -613,3 +896,9 @@ router.get('/historico', async (req, res, next) => {
 });
 
 module.exports = router;
+// Um router do Express é uma função — dá pra pendurar uma propriedade nela
+// sem trocar o "formato" do que este arquivo exporta (server.js continua
+// fazendo `app.use('/api/recuperacao', recuperacaoRoutes)` normalmente).
+// Isso deixa src/jobs/mensagensAgendadas.js chamar a função de processamento
+// direto, sem precisar montar uma requisição HTTP fake pra si mesmo.
+module.exports.processarPendentesEmailAgendados = processarPendentesEmailAgendados;

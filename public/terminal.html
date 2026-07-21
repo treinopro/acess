@@ -75,8 +75,14 @@
     width: 100%; padding: 16px; font-size: 22px; border-radius: 12px; border: none; text-align: center;
     margin-bottom: 16px; letter-spacing: 1px;
   }
-  video, img.camera-feed, canvas.preview { border-radius: 16px; width: 320px; height: 240px; object-fit: cover; background: #000; }
-  #video-inicio { width: 360px; height: 270px; }
+  video, img.camera-feed, canvas.preview { border-radius: 16px; width: 340px; height: 255px; object-fit: cover; background: #000; max-width: 92vw; }
+  /* 2026-07-21: quadro da tela inicial (a mais usada, câmera sempre ligada)
+     aumentado bem além do padrão das telas de cadastro/vinculação — pedido
+     explícito do dono do sistema. Responsivo (min(vw, px)) em vez de pixel
+     fixo pra caber bem tanto num tablet pequeno quanto num maior, sempre
+     mantendo a proporção 4:3 da captura (mesma proporção pedida em
+     iniciarCamera, ver terminal.js) sem esticar/distorcer a imagem. */
+  #video-inicio { width: min(94vw, 560px); height: auto; aspect-ratio: 4 / 3; }
   /* Efeito espelho só na exibição (UX natural, como uma câmera de selfie) —
      não afeta a leitura de QR nem o reconhecimento facial, que processam o
      quadro bruto da câmera via canvas/vídeo/imagem, não a versão espelhada na tela. */
@@ -170,7 +176,7 @@
 
   <!-- TELA INICIAL — câmera sempre ativa: reconhece rosto e QR automaticamente -->
   <div class="tela ativa" id="tela-inicio">
-    <div class="logo">ACADEMIA GESTÃO</div>
+    <div class="logo" id="logo-totem">ACADEMIA GESTÃO</div>
     <div class="subtitulo" id="status-inicio">Aproxime-se para reconhecimento facial, ou mostre o QR do seu celular...</div>
 
     <div class="video-wrap">

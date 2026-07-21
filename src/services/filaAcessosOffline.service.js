@@ -20,6 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const db = require('../db/client');
 const dbResiliente = require('./dbResiliente.service');
+const { formatarDataSqliteUtc } = require('../utils/data');
 
 const CAMINHO_FILA = process.env.CAMINHO_FILA_ACESSOS_TOTEM || path.join(__dirname, '..', '..', 'fila-acessos-totem.jsonl');
 const CAMINHO_FILA_TMP = `${CAMINHO_FILA}.tmp`;
@@ -94,10 +95,15 @@ function marcarEnviados(idsEnviados) {
 // circular entre este arquivo e acessoTerminal.service.js — se o esquema de
 // acessos_catraca mudar, ajuste os dois lugares.
 async function gravarNoTurso(evento) {
-  if (evento.criadoEm) {
+  // Mesma normalização de acessoTerminal.registrarAcessoIdempotenteEm — ver
+  // src/utils/data.js. Necessário aqui também porque este arquivo
+  // deliberadamente não importa acessoTerminal.service.js (evita require
+  // circular, ver comentário acima).
+  const criadoEmNormalizado = formatarDataSqliteUtc(evento.criadoEm);
+  if (criadoEmNormalizado) {
     await db.execute({
       sql: 'INSERT OR IGNORE INTO acessos_catraca (id, aluno_id, metodo, resultado, mensagem, criado_em) VALUES (?, ?, ?, ?, ?, ?)',
-      args: [evento.id, evento.alunoId || null, evento.metodo, evento.resultado, evento.mensagem || null, evento.criadoEm],
+      args: [evento.id, evento.alunoId || null, evento.metodo, evento.resultado, evento.mensagem || null, criadoEmNormalizado],
     });
   } else {
     await db.execute({

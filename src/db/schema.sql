@@ -340,6 +340,37 @@ CREATE TABLE IF NOT EXISTS mensagens_enviadas (
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Agendamento de envio de mensagens (2026-07-21): mesma origem de dados de
+-- mensagens_enviadas/mensagens_templates, mas pra disparo numa data/hora
+-- futura em vez de imediato. E-mail é enviado sozinho pelo job
+-- src/jobs/mensagensAgendadas.js quando `agendado_para` chega. WhatsApp NUNCA
+-- é enviado sozinho (mesma limitação do envio imediato — ver
+-- src/routes/recuperacao.routes.js): quando `agendado_para` chega, o item só
+-- vira uma notificação na tela pro admin abrir e finalizar clicando um por
+-- um (GET /agendadas/:id/preparar-whatsapp + POST .../concluir-whatsapp).
+-- O conteúdo final (saudação/corpo/etc.) é resolvido e GRAVADO aqui no
+-- momento de agendar, não no momento de disparar — assim editar/apagar o
+-- modelo depois de agendado não muda o que já foi programado pra enviar.
+CREATE TABLE IF NOT EXISTS mensagens_agendadas (
+  id TEXT PRIMARY KEY,
+  aluno_ids_json TEXT NOT NULL, -- JSON: array de ids de alunos deste lote
+  canal TEXT NOT NULL, -- email | whatsapp
+  template_id TEXT REFERENCES mensagens_templates(id) ON DELETE SET NULL,
+  saudacao TEXT,
+  corpo TEXT NOT NULL,
+  assunto TEXT,
+  link_tipo TEXT NOT NULL DEFAULT 'portal',
+  link_oferta_url TEXT,
+  link_oferta_texto TEXT,
+  conceder_dias_gratis INTEGER,
+  agendado_para TEXT NOT NULL, -- AAAA-MM-DD HH:MM:SS, UTC (mesmo formato de datetime('now'))
+  status TEXT NOT NULL DEFAULT 'pendente', -- pendente | enviado | cancelado | erro
+  resultado_json TEXT, -- snapshot de `resultados` depois de processado (email automático ou whatsapp concluído manualmente)
+  criado_por TEXT REFERENCES usuarios(id),
+  criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+  processado_em TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_alunos_status ON alunos(status);
 CREATE INDEX IF NOT EXISTS idx_alunos_categoria ON alunos(categoria);
 CREATE INDEX IF NOT EXISTS idx_alunos_indicado_por ON alunos(indicado_por_aluno_id);
@@ -354,6 +385,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_alunos_codigo_acesso ON alunos(codigo_aces
 -- ser unico de verdade pra nunca duas pessoas caírem no mesmo login/cartao.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_alunos_biometria_id ON alunos(biometria_id) WHERE biometria_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_acessos_catraca_aluno ON acessos_catraca(aluno_id);
+CREATE INDEX IF NOT EXISTS idx_mensagens_agendadas_status_data ON mensagens_agendadas(status, agendado_para);
 CREATE INDEX IF NOT EXISTS idx_pagamentos_cobranca_cobranca ON pagamentos_cobranca(cobranca_id);
 CREATE INDEX IF NOT EXISTS idx_anamnese_respostas_anamnese ON anamnese_respostas(anamnese_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_usuario ON usuarios(usuario);

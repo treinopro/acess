@@ -13,6 +13,7 @@ const catracaGateway = require('./catracaGateway.service');
 const agenteGateway = require('./agenteGateway.service');
 const dbResiliente = require('./dbResiliente.service');
 const filaAcessosOffline = require('./filaAcessosOffline.service');
+const { formatarDataSqliteUtc } = require('../utils/data');
 
 // 2026-07-21: baixado de 0.6 pra 0.5 depois de um relato real do dono do
 // sistema — aluno SEM rosto cadastrado liberava a catraca, confundido com
@@ -688,7 +689,10 @@ async function registrarAcesso({ alunoId, metodo, resultado, mensagem }) {
     metodo,
     resultado,
     mensagem: mensagem || null,
-    criadoEm: new Date().toISOString(),
+    // Formato compatível com o DEFAULT `datetime('now')` do banco, não
+    // toISOString() puro — ver src/utils/data.js pro motivo (bug de
+    // ordenação corrigido em 2026-07-21).
+    criadoEm: formatarDataSqliteUtc(new Date()),
   };
   try {
     await dbResiliente.comTimeout(
@@ -720,10 +724,16 @@ async function registrarAcesso({ alunoId, metodo, resultado, mensagem }) {
  *    esvaziada.
  */
 async function registrarAcessoIdempotenteEm(cliente, { id, alunoId, metodo, resultado, mensagem, criadoEm }) {
-  if (criadoEm) {
+  // Normaliza pro formato do SQLite (ver src/utils/data.js) não importa a
+  // origem: agente local manda `capturado_em` que pode vir em ISO
+  // ("...T...Z"), e sem isso essas linhas quebravam a ordenação "Últimos
+  // acessos" (bug 2026-07-21). Se vier vazio/ilegível, cai no DEFAULT
+  // `datetime('now')` do banco (branch abaixo) em vez de gravar lixo.
+  const criadoEmNormalizado = formatarDataSqliteUtc(criadoEm);
+  if (criadoEmNormalizado) {
     await cliente.execute({
       sql: 'INSERT OR IGNORE INTO acessos_catraca (id, aluno_id, metodo, resultado, mensagem, criado_em) VALUES (?, ?, ?, ?, ?, ?)',
-      args: [id, alunoId || null, metodo, resultado, mensagem || null, criadoEm],
+      args: [id, alunoId || null, metodo, resultado, mensagem || null, criadoEmNormalizado],
     });
   } else {
     await cliente.execute({

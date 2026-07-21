@@ -131,6 +131,26 @@ async function seedMensagensTemplates() {
   return criados;
 }
 
+// Corrige registros antigos de acessos_catraca gravados em formato ISO
+// ("...T...Z", de `new Date().toISOString()`) em vez do formato do SQLite
+// ("AAAA-MM-DD HH:MM:SS", de `datetime('now')`) — bug que fazia acessos por
+// biometria da catraca (repassados em lote pelo agente local) aparecerem
+// como "mais recentes" que acessos por facial/QR do mesmo dia na tela de
+// Últimos Acessos, mesmo quando o facial foi depois de verdade (comparação
+// de texto: 'T' é "maior" que espaço). Ver src/utils/data.js e
+// acessoTerminal.service.js (2026-07-21) pro fix que evita gravar mais linha
+// assim daqui pra frente — isto aqui só arruma o que já ficou torto.
+// Idempotente: depois de rodar uma vez não sobra nenhuma linha com 'T' na
+// posição certa, então roda de novo sem fazer nada.
+async function corrigirFormatoDatasAcessosAntigos() {
+  const result = await db.execute(
+    `UPDATE acessos_catraca
+     SET criado_em = substr(criado_em, 1, 10) || ' ' || substr(criado_em, 12, 8)
+     WHERE criado_em LIKE '____-__-__T__:__:__%'`,
+  );
+  return result.rowsAffected || 0;
+}
+
 async function migrate() {
   const schemaPath = path.join(__dirname, 'schema.sql');
   const schema = fs.readFileSync(schemaPath, 'utf8');
@@ -164,8 +184,9 @@ async function migrate() {
   }
 
   const templatesSeedCriados = await seedMensagensTemplates();
+  const acessosCorrigidos = await corrigirFormatoDatasAcessosAntigos();
 
-  console.log(`Migração concluída: ${statements.length} statements de schema + ${aplicadas} alteração(ões) incremental(is) nova(s)${templatesSeedCriados ? ` + ${templatesSeedCriados} modelo(s) de mensagem novo(s) criado(s)` : ''}.`);
+  console.log(`Migração concluída: ${statements.length} statements de schema + ${aplicadas} alteração(ões) incremental(is) nova(s)${templatesSeedCriados ? ` + ${templatesSeedCriados} modelo(s) de mensagem novo(s) criado(s)` : ''}${acessosCorrigidos ? ` + ${acessosCorrigidos} registro(s) de acesso com data corrigida` : ''}.`);
 }
 
 migrate()

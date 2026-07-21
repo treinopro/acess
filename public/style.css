@@ -152,8 +152,15 @@ body {
 .janela-flutuante-topo .btn-maximizar-painel { font-size: 14px; margin-right: 2px; }
 .janela-flutuante-corpo { padding: 18px 20px; overflow-y: auto; flex: 1; }
 
-/* Minimizada: só a barra do topo fica visível (recolhe, não fecha de fato). */
-.janela-flutuante-minimizada { resize: none; }
+/* Minimizada: vira uma "aba" presa no rodapé da tela (barra de tarefas), igual
+   qualquer SO — só a barra do topo fica visível (recolhe, não fecha de fato).
+   `top`/`left` continuam sendo ajustados via JS (reposicionarJanelasMinimizadas,
+   em app.js) pra alinhar lado a lado quando há mais de uma minimizada; aqui só
+   trava a altura no rodapé e o tamanho num formato de "aba" compacta. */
+.janela-flutuante-minimizada {
+  position: fixed; top: auto !important; bottom: 12px; width: 260px !important;
+  max-height: none; resize: none;
+}
 .janela-flutuante-minimizada .janela-flutuante-corpo { display: none; }
 
 /* Maximizada: o tamanho/posição em si é aplicado via JS (alternarMaximizarJanela),

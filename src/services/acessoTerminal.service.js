@@ -14,6 +14,7 @@ const agenteGateway = require('./agenteGateway.service');
 const dbResiliente = require('./dbResiliente.service');
 const filaAcessosOffline = require('./filaAcessosOffline.service');
 const { formatarDataSqliteUtc } = require('../utils/data');
+const totemEventos = require('./totemEventos.service');
 
 // 2026-07-21: baixado de 0.6 pra 0.5 depois de um relato real do dono do
 // sistema — aluno SEM rosto cadastrado liberava a catraca, confundido com
@@ -24,11 +25,20 @@ const { formatarDataSqliteUtc } = require('../utils/data');
 // dentro de um limiar tão largo. Um valor menor é mais rígido (nega um
 // aluno de vez em quando, que resolve com CPF/QR) só pra evitar liberar a
 // pessoa errada. Ver também MARGEM_MINIMA_SEGUNDO_MELHOR abaixo, que ataca a
-// mesma causa por outro ângulo. Pode ser sobrescrito por FACE_MATCH_THRESHOLD
-// no .env — se a produção (Northflank) já tem essa variável configurada
-// explicitamente, PRECISA ser atualizada lá também; mudar só aqui/no .env
-// local não muda o valor em produção.
-const FACE_MATCH_THRESHOLD = Number(process.env.FACE_MATCH_THRESHOLD || 0.5);
+// mesma causa por outro ângulo.
+//
+// 2026-07-22: 0.5 se mostrou rígido demais no uso real — um aluno que
+// cadastrou o rosto certinho (pelo celular) não era reconhecido pelo totem
+// depois. Subiu pra 0.56: ainda abaixo do 0.6 "padrão" do face-api.js (então
+// continua mais cauteloso que o default), mas dá folga suficiente pra
+// variação natural de luz/ângulo de uma câmera de tablet sem voltar a abrir
+// a brecha do falso positivo original — essa proteção agora depende mais da
+// MARGEM_MINIMA_SEGUNDO_MELHOR abaixo (que compara contra o 2º colocado, não
+// só o limiar absoluto) do que de um limiar super apertado sozinho. Pode ser
+// sobrescrito por FACE_MATCH_THRESHOLD no .env — se a produção (Northflank)
+// já tem essa variável configurada explicitamente, PRECISA ser atualizada lá
+// também; mudar só aqui/no .env local não muda o valor em produção.
+const FACE_MATCH_THRESHOLD = Number(process.env.FACE_MATCH_THRESHOLD || 0.56);
 
 // Não basta a MENOR distância bater dentro do limiar — se duas pessoas
 // cadastradas ficam quase igualmente próximas do rosto capturado (comum com
@@ -36,8 +46,15 @@ const FACE_MATCH_THRESHOLD = Number(process.env.FACE_MATCH_THRESHOLD || 0.5);
 // arrisca escolher a pessoa errada. Exige que a melhor distância seja
 // nitidamente menor que a segunda melhor; se ficarem "empatadas" dentro
 // dessa margem, o sistema recusa em vez de arriscar (a pessoa tenta de novo
-// ou usa CPF/QR). Configurável via FACE_MATCH_MARGEM_MINIMA no .env.
-const MARGEM_MINIMA_SEGUNDO_MELHOR = Number(process.env.FACE_MATCH_MARGEM_MINIMA || 0.07);
+// ou usa CPF/QR).
+//
+// 2026-07-22: reduzida de 0.07 pra 0.05 junto com a subida do
+// FACE_MATCH_THRESHOLD acima — com um limiar mais folgado, uma margem alta
+// demais passou a recusar até casos de um único bom candidato claramente
+// certo (2º colocado só "meio perto"). 0.05 ainda barra empates genuínos,
+// só é menos agressiva em descartar o candidato certo. Configurável via
+// FACE_MATCH_MARGEM_MINIMA no .env.
+const MARGEM_MINIMA_SEGUNDO_MELHOR = Number(process.env.FACE_MATCH_MARGEM_MINIMA || 0.05);
 
 function gerarCodigoAcesso() {
   // 24 caracteres em base hexadecimal — não sequencial, não adivinhável
@@ -675,6 +692,18 @@ async function notificarAgenteAtualizacaoAluno(alunoId) {
  * nesse modo — quem chama não precisa (nem deve) tratar erro daqui.
  */
 async function registrarAcesso({ alunoId, metodo, resultado, mensagem }) {
+  // 2026-07-22: notifica qualquer totem conectado agora (tela verde + som de
+  // "acesso liberado" — ver totemEventos.service.js) sempre que uma
+  // liberação de verdade acontece, não importa qual ferramenta a disparou
+  // (a própria câmera/QR do totem, o painel admin, a tela de liberação
+  // rápida dos funcionários, ou a biometria lida direto na catraca física).
+  // Best-effort e síncrono (não é `await`ado de propósito): nunca deve
+  // atrasar nem quebrar o registro do acesso em si, que é o que realmente
+  // importa se algo der errado.
+  if (resultado === 'liberado') {
+    try { totemEventos.emitirLiberado({ metodo }); } catch { /* nunca deve derrubar o registro do acesso */ }
+  }
+
   if (!dbResiliente.MODO_TOTEM_OFFLINE) {
     await db.execute({
       sql: 'INSERT INTO acessos_catraca (id, aluno_id, metodo, resultado, mensagem) VALUES (?, ?, ?, ?, ?)',
@@ -744,6 +773,15 @@ async function registrarAcessoIdempotenteEm(cliente, { id, alunoId, metodo, resu
 }
 
 async function registrarAcessoIdempotente(dados) {
+  // 2026-07-22: mesma notificação de totem de registrarAcesso acima (ver
+  // comentário lá) — esta variante é quem registra as liberações feitas pela
+  // biometria lida DIRETO na catraca física (POST /acessos/lote, vindo do
+  // agente local), que não passa por registrarAcesso. Sem isso, exatamente o
+  // caso que o dono do sistema mais queria ("quando ele colocar a biometria
+  // e liberar acesso") ficaria de fora do aviso no totem.
+  if (dados.resultado === 'liberado') {
+    try { totemEventos.emitirLiberado({ metodo: dados.metodo }); } catch { /* nunca deve derrubar o registro do acesso */ }
+  }
   return registrarAcessoIdempotenteEm(db, dados);
 }
 

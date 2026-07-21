@@ -53,6 +53,7 @@
       </nav>
       <div class="sidebar-rodape">
         <button class="btn-liberar-rapido oculto" id="btn-liberar-rapido" title="Libera a catraca imediatamente, sem abrir a janela completa da catraca">⚡ Liberar rápido</button>
+        <a class="btn-liberar-rapido oculto" id="link-liberacao-rapida" href="liberacao-rapida.html" target="_blank" rel="noopener" style="text-decoration:none;display:inline-block" title="Abre uma tela cheia, só com o botão de liberar — ideal pra deixar num tablet/computador da recepção">⚡ Tela de liberação rápida</a>
         <button class="btn-acessos-recentes oculto" id="btn-acessos-recentes">🕓 Acessos recentes</button>
         <span id="usuario-nome"></span>
         <button id="btn-sair">Sair</button>
@@ -245,7 +246,11 @@
               Ou cadastre o rosto agora mesmo, usando a câmera deste computador (não precisa levar o aluno até o totem):
             </p>
             <div id="captura-facial-perfil">
-              <video id="video-facial-perfil" autoplay muted playsinline style="width:280px;height:210px;border-radius:10px;background:#000;object-fit:cover;display:none"></video>
+              <video id="video-facial-perfil" autoplay muted playsinline style="width:280px;height:210px;border-radius:10px;background:#000;object-fit:cover;display:none;transform:scaleX(-1);border:3px solid transparent"></video>
+              <div id="dica-facial-perfil" class="oculto" style="color:#667085;font-size:12px;max-width:280px;margin-top:6px">
+                Peça para o aluno olhar de frente para a câmera, com boa iluminação e sem óculos escuros/boné cobrindo o rosto.
+                Aguarde a borda ficar <strong style="color:#12b76a">verde</strong> (rosto detectado) antes de clicar em "Capturar rosto".
+              </div>
               <div id="status-facial-perfil" style="color:#667085;font-size:13px;margin:6px 0"></div>
               <div class="form-acoes">
                 <button type="button" class="btn-secundario" id="btn-abrir-camera-perfil">Abrir câmera</button>

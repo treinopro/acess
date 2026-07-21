@@ -200,6 +200,7 @@ function mostrarApp() {
   document.getElementById('nav-recuperacao').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
   document.getElementById('btn-acessos-recentes').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
   document.getElementById('btn-liberar-rapido').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
+  document.getElementById('link-liberacao-rapida').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
   document.getElementById('grupo-gerar-recorrentes').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
   carregarSecao('alunos');
   // Aviso de aniversariantes de hoje (feature de Recuperação de Clientes) —
@@ -1664,6 +1665,8 @@ document.getElementById('btn-remover-face').addEventListener('click', async () =
 const FACE_MODELS_URL_PERFIL = 'vendor/face-api/weights';
 let faceModelsCarregados = false;
 let streamCameraPerfil = null;
+let intervaloDeteccaoLivePerfil = null;
+let rostoDetectadoAgoraPerfil = false;
 
 async function garantirModelosFaciais() {
   if (faceModelsCarregados) return;
@@ -1675,18 +1678,59 @@ async function garantirModelosFaciais() {
   faceModelsCarregados = true;
 }
 
+// 2026-07-22: antes disso o fluxo era "às cegas" — a pessoa clicava em
+// "Capturar rosto" sem nenhum retorno de que a câmera realmente enxergava um
+// rosto naquele instante (nunca tinha instrução na tela nem indicação de
+// pronto, diferente do totem que guia passo a passo). Esse loop roda uma
+// detecção leve (sem landmarks/descriptor, só localizar o rosto — barato o
+// bastante pra rodar a cada 400ms sem travar o navegador) só pra pintar a
+// borda do vídeo de verde quando há rosto no quadro, dando o mesmo tipo de
+// feedback em tempo real que o totem já tinha.
+function pararDeteccaoLivePerfil() {
+  if (intervaloDeteccaoLivePerfil) {
+    clearInterval(intervaloDeteccaoLivePerfil);
+    intervaloDeteccaoLivePerfil = null;
+  }
+  rostoDetectadoAgoraPerfil = false;
+}
+
+function iniciarDeteccaoLivePerfil(video, status) {
+  pararDeteccaoLivePerfil();
+  intervaloDeteccaoLivePerfil = setInterval(async () => {
+    if (!streamCameraPerfil || video.readyState < 2) return;
+    try {
+      const deteccao = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions());
+      rostoDetectadoAgoraPerfil = Boolean(deteccao);
+      video.style.borderColor = rostoDetectadoAgoraPerfil ? '#12b76a' : '#d0d5dd';
+      if (!status.dataset.travado) {
+        status.textContent = rostoDetectadoAgoraPerfil
+          ? 'Rosto detectado — pode clicar em "Capturar rosto".'
+          : 'Nenhum rosto no quadro. Aproxime/afaste ou ajuste a iluminação.';
+      }
+    } catch {
+      // ciclo pontual de detecção falhou (quadro instável) — só tenta de novo
+      // no próximo intervalo, sem interromper o loop.
+    }
+  }, 400);
+}
+
 function pararCameraPerfil() {
+  pararDeteccaoLivePerfil();
   if (streamCameraPerfil) {
     streamCameraPerfil.getTracks().forEach((t) => t.stop());
     streamCameraPerfil = null;
   }
   const video = document.getElementById('video-facial-perfil');
   video.style.display = 'none';
+  video.style.borderColor = 'transparent';
   video.srcObject = null;
+  document.getElementById('dica-facial-perfil').classList.add('oculto');
   document.getElementById('btn-abrir-camera-perfil').classList.remove('oculto');
   document.getElementById('btn-capturar-facial-perfil').classList.add('oculto');
   document.getElementById('btn-cancelar-camera-perfil').classList.add('oculto');
-  document.getElementById('status-facial-perfil').textContent = '';
+  const status = document.getElementById('status-facial-perfil');
+  status.textContent = '';
+  delete status.dataset.travado;
 }
 
 document.getElementById('btn-abrir-camera-perfil').addEventListener('click', async () => {
@@ -1694,14 +1738,21 @@ document.getElementById('btn-abrir-camera-perfil').addEventListener('click', asy
   try {
     status.textContent = 'Carregando modelos e abrindo câmera...';
     await garantirModelosFaciais();
-    streamCameraPerfil = await navigator.mediaDevices.getUserMedia({ video: {} });
+    // 2026-07-22: sem constraints, alguns notebooks escolhem uma resolução
+    // baixa/instável (mesma classe de problema já visto na câmera do
+    // totem) — pede um mínimo razoável, sem forçar proporção exata (ver
+    // comentário equivalente em terminal.js/iniciarCamera).
+    streamCameraPerfil = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 } } });
     const video = document.getElementById('video-facial-perfil');
     video.srcObject = streamCameraPerfil;
     video.style.display = 'block';
+    await video.play().catch(() => {}); // autoplay já cobre a maioria dos casos; isso só garante antes de liberar o botão
+    document.getElementById('dica-facial-perfil').classList.remove('oculto');
     document.getElementById('btn-abrir-camera-perfil').classList.add('oculto');
     document.getElementById('btn-capturar-facial-perfil').classList.remove('oculto');
     document.getElementById('btn-cancelar-camera-perfil').classList.remove('oculto');
-    status.textContent = 'Posicione o rosto do aluno no centro e clique em "Capturar rosto".';
+    status.textContent = 'Posicione o rosto do aluno no centro do quadro...';
+    iniciarDeteccaoLivePerfil(video, status);
   } catch (err) {
     status.textContent = `Não foi possível abrir a câmera: ${err.message}`;
   }
@@ -1713,6 +1764,7 @@ document.getElementById('btn-capturar-facial-perfil').addEventListener('click', 
   const status = document.getElementById('status-facial-perfil');
   const video = document.getElementById('video-facial-perfil');
   try {
+    status.dataset.travado = '1'; // pausa as atualizações do loop live enquanto mostra o resultado da captura
     status.textContent = 'Analisando rosto...';
     const deteccao = await faceapi
       .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
@@ -1720,7 +1772,8 @@ document.getElementById('btn-capturar-facial-perfil').addEventListener('click', 
       .withFaceDescriptor();
 
     if (!deteccao) {
-      status.textContent = 'Nenhum rosto detectado. Ajuste a posição/iluminação e tente novamente.';
+      status.textContent = 'Nenhum rosto detectado. Aguarde a borda ficar verde e tente novamente.';
+      delete status.dataset.travado;
       return;
     }
 
@@ -1732,6 +1785,7 @@ document.getElementById('btn-capturar-facial-perfil').addEventListener('click', 
     pararCameraPerfil();
   } catch (err) {
     status.textContent = `Erro ao cadastrar rosto: ${err.message}`;
+    delete status.dataset.travado;
   }
 });
 

@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Liberação rápida — Academia</title>
+
+<!--
+  2026-07-22: tela dedicada, estilo totem, só pra funcionário liberar a
+  catraca rapidamente sem precisar abrir o painel inteiro (index.html) e
+  navegar até a aba de acessos — pedido explícito do dono do sistema.
+
+  Reaproveita o MESMO login/token do painel (localStorage "token"/"usuario",
+  ver public/app.js): se o funcionário já está logado no painel no mesmo
+  navegador, esta página já abre pronta pra usar; senão, mostra um login
+  simples (mesmo endpoint POST /api/auth/login).
+
+  Sem sistema de módulos no front (ver comentário equivalente em
+  terminal.js/app.js) — esta página é autocontida, sem depender de app.js.
+-->
+
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    background: #0f172a; color: #fff;
+    -webkit-user-select: none; user-select: none;
+    transition: background-color 0.25s ease;
+  }
+  body.tela-flash-liberado { background: #065f46; }
+  body.tela-flash-erro { background: #7f1d1d; }
+
+  .tela { display: none; height: 100vh; width: 100vw; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; }
+  .tela.ativa { display: flex; }
+  .oculto { display: none !important; }
+
+  .logo { font-size: 20px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 4px; color: #10b981; }
+  .subtitulo { color: #94a3b8; font-size: 15px; margin-bottom: 32px; }
+
+  /* ---- Login ---- */
+  .caixa-login { background: #1e293b; border-radius: 16px; padding: 28px; width: 320px; max-width: 100%; }
+  .caixa-login h2 { margin: 0 0 18px; font-size: 18px; }
+  .caixa-login input {
+    width: 100%; padding: 14px; font-size: 16px; border-radius: 10px; border: 1px solid #334155;
+    background: #0f172a; color: #fff; margin-bottom: 12px;
+  }
+  .caixa-login button {
+    width: 100%; padding: 14px; font-size: 16px; font-weight: 600; border-radius: 10px; border: none;
+    background: #10b981; color: #06281e; cursor: pointer; margin-top: 4px;
+  }
+  .caixa-login button:disabled { opacity: 0.6; cursor: default; }
+  .erro-login { color: #f87171; font-size: 13px; min-height: 18px; margin-top: 10px; }
+
+  /* ---- Tela principal (liberação) ---- */
+  .btn-liberar {
+    width: min(80vw, 340px); height: min(80vw, 340px); border-radius: 50%;
+    background: #10b981; color: #06281e; border: none; cursor: pointer;
+    font-size: 28px; font-weight: 800; letter-spacing: 0.5px;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 0 10px rgba(16, 185, 129, 0.15);
+    transition: transform 0.08s ease, box-shadow 0.2s ease;
+  }
+  .btn-liberar:active { transform: scale(0.96); }
+  .btn-liberar:disabled { opacity: 0.6; cursor: default; }
+  .btn-liberar.aguardando { background: #334155; color: #94a3b8; box-shadow: none; }
+
+  .status-liberacao { margin-top: 28px; font-size: 18px; min-height: 26px; color: #cbd5e1; }
+  .status-liberacao.ok { color: #10b981; font-weight: 700; }
+  .status-liberacao.erro { color: #f87171; font-weight: 700; }
+
+  .linha-rodape { position: fixed; bottom: 18px; left: 0; right: 0; display: flex; justify-content: center; gap: 12px; }
+  .botao-pequeno {
+    padding: 10px 16px; font-size: 13px; border-radius: 999px; border: 1px solid #334155;
+    background: #1e293b; color: #94a3b8; cursor: pointer;
+  }
+</style>
+</head>
+<body>
+
+  <!-- TELA: login (só aparece se não houver token salvo) -->
+  <div class="tela" id="tela-login">
+    <div class="logo">ACADEMIA GESTÃO</div>
+    <div class="subtitulo">Liberação rápida da catraca</div>
+    <form class="caixa-login" id="form-login">
+      <h2>Entrar</h2>
+      <input id="login-identificador" type="text" placeholder="E-mail ou usuário" autocomplete="username" required />
+      <input id="login-senha" type="password" placeholder="Senha" autocomplete="current-password" required />
+      <button type="submit" id="btn-login">Entrar</button>
+      <div class="erro-login" id="erro-login"></div>
+    </form>
+  </div>
+
+  <!-- TELA: liberação rápida -->
+  <div class="tela" id="tela-liberar">
+    <div class="logo" id="logo-liberar">ACADEMIA GESTÃO</div>
+    <div class="subtitulo">Toque para liberar a catraca</div>
+    <button class="btn-liberar" id="btn-liberar">LIBERAR<br>CATRACA</button>
+    <div class="status-liberacao" id="status-liberacao"></div>
+    <div class="linha-rodape">
+      <button class="botao-pequeno" id="btn-sair">Sair</button>
+      <a class="botao-pequeno" href="index.html" style="text-decoration:none">Abrir painel completo</a>
+    </div>
+  </div>
+
+<script src="liberacao-rapida.js"></script>
+</body>
+</html>

@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const express = require('express');
 const { v4: uuid } = require('uuid');
 const { z } = require('zod');
@@ -7,6 +8,7 @@ const acessoTerminal = require('../services/acessoTerminal.service');
 const mercadopago = require('../services/payment/mercadopago.service');
 const pagamentoContas = require('../services/pagamentoContas.service');
 const emailBoasVindas = require('../services/emailBoasVindas.service');
+const totemEventos = require('../services/totemEventos.service');
 const { criarLimitador } = require('../middleware/rateLimit');
 const db = require('../db/client');
 
@@ -644,6 +646,54 @@ terminal.get('/contas/status/:pagamentoId', autenticarTerminal, async (req, res,
   } catch (err) {
     next(err);
   }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/terminal/eventos/stream?token=... — canal de push (Server-Sent
+// Events) do servidor pro totem: usado só pra avisar "acabou de liberar a
+// catraca AGORA" em tempo real, pra tocar o som/tela verde de confirmação o
+// mais rápido possível (2026-07-22, pedido do dono do sistema), inclusive
+// quando quem liberou foi outra ferramenta (painel admin, tela de liberação
+// rápida dos funcionários) ou a própria biometria da catraca — não só a
+// câmera/QR do próprio totem. Ver src/services/totemEventos.service.js pra o
+// disparo em si.
+//
+// Autenticação por query string (?token=), não pelo header X-Terminal-Token
+// como as outras rotas do totem: a API padrão EventSource do navegador não
+// permite mandar headers customizados, só a URL. Mesmo segredo
+// (TERMINAL_TOKEN), mesma comparação em tempo constante — só o transporte
+// muda.
+terminal.get('/eventos/stream', (req, res) => {
+  const esperado = process.env.TERMINAL_TOKEN;
+  const recebido = req.query.token;
+  const autorizado = Boolean(esperado) && Boolean(recebido)
+    && Buffer.from(String(recebido)).length === Buffer.from(String(esperado)).length
+    && crypto.timingSafeEqual(Buffer.from(String(recebido)), Buffer.from(String(esperado)));
+  if (!autorizado) {
+    return res.status(401).json({ erro: 'Token do terminal inválido ou não informado.' });
+  }
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no', // desliga qualquer buffer de proxy reverso na frente (ex.: nginx) — sem isso o evento pode demorar a chegar
+  });
+  res.write(': conectado\n\n'); // comentário SSE (linha começando com ":") só pra confirmar a conexão logo de cara
+
+  totemEventos.registrarCliente(res);
+
+  // Keep-alive: sem tráfego nenhum por muito tempo, alguns proxies/navegadores
+  // derrubam a conexão sozinhos por inatividade. Um comentário vazio a cada
+  // 25s mantém o canal aberto sem disparar nenhum evento de verdade no totem.
+  const keepAlive = setInterval(() => {
+    try { res.write(': ping\n\n'); } catch { /* conexão já deve estar fechando, o listener 'close' abaixo cuida */ }
+  }, 25000);
+
+  req.on('close', () => {
+    clearInterval(keepAlive);
+    totemEventos.removerCliente(res);
+  });
 });
 
 router.use(terminal);

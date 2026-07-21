@@ -79,6 +79,63 @@ async function carregarConfigSomTotem() {
 }
 carregarConfigSomTotem();
 
+// ---------------------------------------------------------------------------
+// 2026-07-22: aviso em tempo real de QUALQUER liberação da catraca, não só a
+// feita pela própria câmera/QR deste totem — pedido explícito do dono do
+// sistema: quando o painel admin, a tela de liberação rápida dos
+// funcionários, ou a própria biometria lida direto na catraca liberam o
+// acesso, o totem deve mostrar a tela verde e tocar o aviso sonoro "o mais
+// rápido possível", pra quem está parado na frente dele ver a confirmação —
+// mesmo que a liberação em si não tenha vindo do reconhecimento facial dele.
+//
+// Server-Sent Events (ver src/services/totemEventos.service.js e a rota
+// GET /api/terminal/eventos/stream): conexão persistente e de mão única
+// (servidor -> aqui), com reconexão automática nativa do EventSource — não
+// precisa de nenhum código extra de retry aqui.
+// ---------------------------------------------------------------------------
+function mostrarConfirmacaoLiberacaoExterna() {
+  const overlay = document.getElementById('overlay-resultado');
+  if (!overlay) return;
+  // Se o próprio totem já está mostrando o resultado de uma identificação
+  // dele mesmo (facial/QR/CPF) agora, não sobrescreve o texto/nome que já
+  // está na tela — só o caso "liberação vinda de outro lugar" precisa desse
+  // aviso genérico.
+  if (overlay.classList.contains('visivel')) return;
+
+  overlay.classList.remove('negado');
+  overlay.classList.add('liberado', 'visivel');
+  document.body.classList.add('tela-flash-liberado');
+  document.getElementById('overlay-icone').textContent = '✅';
+  document.getElementById('overlay-titulo').textContent = 'Acesso liberado!';
+  document.getElementById('overlay-msg').textContent = 'Pode entrar.';
+  const btnPagarContas = document.getElementById('btn-overlay-pagar-contas');
+  if (btnPagarContas) btnPagarContas.classList.add('oculto');
+  const vencEl = document.getElementById('overlay-vencimento');
+  if (vencEl) vencEl.classList.add('oculto');
+  tocarAvisoSonoro(configSomTotem.acessoLiberado);
+
+  setTimeout(() => {
+    overlay.classList.remove('visivel');
+    document.body.classList.remove('tela-flash-liberado');
+  }, DURACAO_RESULTADO_LIBERADO_MS);
+}
+
+function iniciarEscutaLiberacoesExternas() {
+  if (!('EventSource' in window)) return; // navegador muito antigo — segue sem esse aviso extra, sem quebrar o resto
+  try {
+    const fonte = new EventSource(`/api/terminal/eventos/stream?token=${encodeURIComponent(TERMINAL_TOKEN)}`);
+    fonte.addEventListener('liberado', () => mostrarConfirmacaoLiberacaoExterna());
+    // Sem handler de erro customizado de propósito: o EventSource já tenta
+    // reconectar sozinho (comportamento nativo do navegador) — um totem que
+    // fica minutos sem rede volta a receber eventos assim que a rede volta,
+    // sem nenhum código adicional aqui.
+  } catch {
+    // Best-effort — se falhar ao abrir a conexão, o totem continua
+    // funcionando normalmente, só sem esse aviso extra de liberações externas.
+  }
+}
+iniciarEscutaLiberacoesExternas();
+
 let audioCtxSom = null;
 function tocarBeep(vezes = 1) {
   try {
@@ -422,12 +479,39 @@ async function iniciarCamera(videoEl) {
   // redimensiona pra no máximo LARGURA_MAX_PROCESSAMENTO (480px) antes de
   // rodar qualquer detecção, então o custo pesado (rede neural) continua
   // igual não importa a resolução pedida aqui.
+  //
+  // 2026-07-22: o zoom continuou aparecendo mesmo com resolução alta — a
+  // causa provável é que height:{ideal:960} FORÇA um enquadramento 4:3
+  // exato. Muita câmera frontal de tablet tem sensor nativo 16:9 (ou outra
+  // proporção); pra entregar 4:3 como pedido, o driver da câmera faz o
+  // MESMO recorte digital central do problema original — só que agora
+  // "escondido" atrás de uma resolução maior. Removido o height ideal:
+  // pedindo só a largura, o navegador escolhe o modo nativo mais largo
+  // disponível sem precisar recortar pra bater uma proporção específica. A
+  // tela (CSS, object-fit: cover) já lida bem com qualquer proporção que
+  // vier. também loga a resolução/zoom real entregues pela câmera no
+  // console — se o zoom persistir, dá pra confirmar pelo log se é essa
+  // câmera específica que não respeita nem isso.
   streamAtual = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 960 } },
+    video: { facingMode: 'user', width: { ideal: 1920 } },
   });
   videoEl.srcObject = streamAtual;
   await videoEl.play();
   await afastarZoomDaCamera(streamAtual);
+
+  const [trilhaAtual] = streamAtual.getVideoTracks();
+  if (trilhaAtual && typeof trilhaAtual.getSettings === 'function') {
+    try {
+      const config = trilhaAtual.getSettings();
+      console.log('[camera] resolução/zoom entregues pela câmera:', {
+        width: config.width,
+        height: config.height,
+        zoom: config.zoom,
+      });
+    } catch {
+      // diagnóstico best-effort — não deve impedir a câmera de funcionar
+    }
+  }
 }
 
 // 2026-07-21: mesmo pedindo uma resolução maior (acima), a imagem continuou
@@ -443,12 +527,35 @@ async function iniciarCamera(videoEl) {
 // silencioso nesses casos (a imagem só não fica mais afastada do que já
 // estava, sem quebrar nada).
 async function afastarZoomDaCamera(stream) {
+  const [trilha] = stream.getVideoTracks();
+  if (!trilha) return;
+
+  let aplicouViaTrack = false;
   try {
-    const [trilha] = stream.getVideoTracks();
-    if (!trilha || typeof trilha.getCapabilities !== 'function') return;
-    const capacidades = trilha.getCapabilities();
-    if (!capacidades || !capacidades.zoom) return;
-    await trilha.applyConstraints({ advanced: [{ zoom: capacidades.zoom.min }] });
+    if (typeof trilha.getCapabilities === 'function') {
+      const capacidades = trilha.getCapabilities();
+      if (capacidades && capacidades.zoom) {
+        await trilha.applyConstraints({ advanced: [{ zoom: capacidades.zoom.min }] });
+        aplicouViaTrack = true;
+      }
+    }
+  } catch {
+    // Segue tentando o outro caminho abaixo antes de desistir.
+  }
+  if (aplicouViaTrack) return;
+
+  // 2026-07-22: em alguns WebViews/Chrome de tablet (comum no app do totem),
+  // MediaStreamTrack.getCapabilities() não expõe "zoom" mesmo quando a
+  // câmera suporta controle de zoom — só a API ImageCapture (mais nova,
+  // photo-oriented) enxerga essa capacidade nesses casos. Best-effort: se
+  // nem isso existir/funcionar, segue sem controle de zoom mesmo (mesmo
+  // comportamento de antes, sem quebrar nada).
+  try {
+    if (typeof ImageCapture === 'undefined') return;
+    const captura = new ImageCapture(trilha);
+    const capacidadesFoto = await captura.getPhotoCapabilities();
+    if (!capacidadesFoto || !capacidadesFoto.zoom) return;
+    await trilha.applyConstraints({ advanced: [{ zoom: capacidadesFoto.zoom.min }] });
   } catch {
     // Câmera/navegador sem suporte a controle de zoom por software — segue
     // só com a resolução pedida em getUserMedia mesmo.
@@ -1029,8 +1136,18 @@ const PASSOS_CAPTURA_GUIADA = [
   { id: 'final', instrucao: 'Perfeito! Volte a olhar de frente, centralizado...' },
 ];
 
-const QUADROS_PARA_CONFIRMAR_PASSO_FACIAL = 3; // "segura" a pose por 3 detecções seguidas antes de avançar
-const TIMEOUT_POR_PASSO_FACIAL_MS = 12000; // não conseguiu cumprir o passo? pula sozinho — nunca trava o cadastro
+// 2026-07-22: valores originais (3 quadros / 12s) foram calibrados só com
+// teste sintético, nunca com câmera real — no uso real do totem o cadastro
+// guiado "não funcionava" (relato do dono do sistema). Com 8 passos e 12s de
+// timeout cada, o pior caso (todo passo cai no timeout, sem nenhum
+// movimento reconhecido) levava quase 1min e meio, o que parece
+// completamente travado pra quem está na frente do totem. Reduzido pra um
+// timeout bem mais curto — 6s já é tempo de sobra pra virar/afastar o rosto
+// uma vez que os limiares de pose (ver passoFacialCumprido) também ficaram
+// mais tolerantes — e pra 2 quadros de confirmação, que ainda evita
+// confirmar em cima de um quadro tremido mas não exige quase 1.2s parado.
+const QUADROS_PARA_CONFIRMAR_PASSO_FACIAL = 2; // "segura" a pose por 2 detecções seguidas antes de avançar
+const TIMEOUT_POR_PASSO_FACIAL_MS = 6000; // não conseguiu cumprir o passo? pula sozinho — nunca trava o cadastro
 
 function mediaPontosFaciais(pontos) {
   const soma = pontos.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 });
@@ -1067,6 +1184,12 @@ function calcularPoseFacial(deteccao) {
 // objetivo é confirmar um movimento real, não medir com precisão. Efeito
 // colateral de propósito: ao confirmar "giro1", grava em `contexto` pra que
 // "giro2" saiba exigir o sentido OPOSTO do giro que já foi feito.
+// 2026-07-22: limiares afrouxados — os originais (0.13 giro/inclinação,
+// 1.15/0.87 aproximar/afastar) exigiam um movimento bem mais exagerado do
+// que uma pessoa faz naturalmente ao seguir a instrução na tela, fazendo a
+// maioria dos passos cair no timeout em vez de confirmar (ver
+// TIMEOUT_POR_PASSO_FACIAL_MS acima). Ainda generosos o bastante pra não
+// confirmar um tremor/ruído da detecção como movimento real.
 function passoFacialCumprido(passoId, poseAtual, poseBase, contexto) {
   if (!poseBase) return false;
   const deltaYaw = poseAtual.yaw - poseBase.yaw;
@@ -1075,23 +1198,23 @@ function passoFacialCumprido(passoId, poseAtual, poseBase, contexto) {
 
   switch (passoId) {
     case 'giro1':
-      if (Math.abs(deltaYaw) > 0.13) {
+      if (Math.abs(deltaYaw) > 0.09) {
         contexto.direcaoGiro1 = Math.sign(deltaYaw);
         return true;
       }
       return false;
     case 'giro2':
-      return Math.abs(deltaYaw) > 0.13 && Math.sign(deltaYaw) !== contexto.direcaoGiro1;
+      return Math.abs(deltaYaw) > 0.09 && Math.sign(deltaYaw) !== contexto.direcaoGiro1;
     case 'perto':
-      return razaoTamanho > 1.15;
+      return razaoTamanho > 1.10;
     case 'longe':
-      return razaoTamanho < 0.87;
+      return razaoTamanho < 0.90;
     case 'cima':
-      return deltaPitch < -0.13;
+      return deltaPitch < -0.09;
     case 'baixo':
-      return deltaPitch > 0.13;
+      return deltaPitch > 0.09;
     case 'final':
-      return Math.abs(deltaYaw) < 0.08 && Math.abs(deltaPitch) < 0.1 && razaoTamanho > 0.85 && razaoTamanho < 1.15;
+      return Math.abs(deltaYaw) < 0.1 && Math.abs(deltaPitch) < 0.12 && razaoTamanho > 0.8 && razaoTamanho < 1.2;
     default:
       return false;
   }

@@ -72,7 +72,29 @@ app.use(morgan('dev'));
 app.use(express.json({ limit: '1mb' })); // limite de tamanho do corpo (mitiga payloads gigantes)
 
 // Painel administrativo (frontend estático simples) - acessível em "/"
-app.use(express.static(path.join(__dirname, '..', 'public')));
+//
+// 2026-07-21: setHeaders abaixo força o navegador a SEMPRE revalidar (nunca
+// usar uma cópia em cache sem perguntar ao servidor) o HTML/JS/CSS que
+// pertence ao próprio app (terminal, portal, painel, cadastro pelo celular)
+// — sem isso, um tablet com o totem "Adicionado à tela inicial" pode
+// continuar rodando uma versão antiga por dias mesmo depois de um deploy
+// novo (foi exatamente o caso relatado: mudanças no `git push` não
+// apareciam no totem). Revalidar não é a mesma coisa que "nunca cachear" —
+// o navegador ainda manda a requisição condicional (If-None-Match/
+// If-Modified-Since) e o servidor responde 304 sem reenviar nada quando o
+// arquivo não mudou, então o custo extra é mínimo. Fica de fora da regra
+// tudo dentro de vendor/ (face-api, jsQR, qrcode — bibliotecas de terceiros
+// que só mudam quando alguém baixa uma versão nova de propósito), que
+// continua com o cache padrão do navegador.
+app.use(express.static(path.join(__dirname, '..', 'public'), {
+  setHeaders: (res, filePath) => {
+    const ehVendor = filePath.split(path.sep).includes('vendor');
+    const extensaoDoApp = /\.(html|js|css)$/i.test(filePath);
+    if (!ehVendor && extensaoDoApp) {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
+  },
+}));
 
 app.get('/health', (req, res) => res.json({ status: 'ok', servico: 'academia-gestao' }));
 

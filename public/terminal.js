@@ -860,7 +860,6 @@ async function processarResultado(chamada, { aoVoltar } = {}) {
     overlay.classList.remove('visivel');
     document.body.classList.remove('tela-flash-liberado', 'tela-flash-negado');
     btnPagarContas.classList.add('oculto');
-    document.getElementById('input-cpf').value = '';
     if (aoVoltar) aoVoltar();
   };
 
@@ -885,17 +884,22 @@ async function processarResultado(chamada, { aoVoltar } = {}) {
   setTimeout(fecharOverlay, DURACAO_RESULTADO_MS);
 }
 
-// ---------------- Identificação por CPF (sempre disponível na tela inicial) ----------------
-
-document.getElementById('btn-confirmar-cpf').addEventListener('click', () => {
-  const cpf = document.getElementById('input-cpf').value.trim();
-  if (!cpf) return;
-  pausarDeteccaoContinua();
-  processarResultado(
-    () => api('/api/terminal/acesso/cpf', { method: 'POST', body: JSON.stringify({ cpf }) }),
-    { aoVoltar: () => retomarDeteccaoContinua() },
-  );
-});
+// ---------------- QR fixo pro Portal do Aluno (tela inicial) ----------------
+// 2026-07-21: substituiu a "Liberar com CPF" — ver comentário no HTML sobre
+// o motivo (CPF sozinho não prova identidade). Esse QR é fixo (sempre o
+// mesmo link, não expira, não é pessoal) — só leva pro Portal do Aluno no
+// celular de quem escanear; de lá em diante tudo exige CPF + senha própria
+// do aluno (ver portal.routes.js), então não reabre esse mesmo problema.
+function renderizarQrPortalInicio() {
+  const alvo = document.getElementById('qrcode-portal-inicio');
+  if (!alvo) return;
+  alvo.innerHTML = '';
+  // eslint-disable-next-line no-new
+  new QRCode(alvo, {
+    text: `${window.location.origin}/portal.html`,
+    width: 150, height: 150, colorDark: '#0f172a', colorLight: '#ffffff',
+  });
+}
 
 // ---------------- Vincular acesso (aluno existente, primeira vez no totem) ----------------
 
@@ -1652,4 +1656,5 @@ document.getElementById('btn-voltar-4').addEventListener('click', () => {
 
 // ---------------- Inicialização ----------------
 
+renderizarQrPortalInicio();
 iniciarEscaneamentoContinuo();

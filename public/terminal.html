@@ -184,9 +184,17 @@
       </div>
     </div>
 
+    <!-- 2026-07-21: removida a opção de liberar digitando o CPF — o CPF
+         sozinho não prova que é o dono do cadastro (é dado que pode vazar/
+         ser conhecido por outra pessoa), então bastava saber o CPF de
+         alguém pra abrir a catraca por essa via. No lugar, um QR fixo que
+         leva pro Portal do Aluno no PRÓPRIO celular do cliente — de lá ele
+         cadastra, paga, vê o treino e pega seu QR pessoal de acesso (esse
+         sim, individual e não adivinhável — ver gerarCodigoAcesso em
+         acessoTerminal.service.js). -->
     <div class="painel-identificar">
-      <input class="campo-cpf" id="input-cpf" placeholder="Ou digite seu CPF" inputmode="numeric" maxlength="14" />
-      <button class="botao-grande primario" id="btn-confirmar-cpf" style="width:100%">Liberar com CPF</button>
+      <div class="aviso-caixa" style="margin-bottom:12px">Prefere usar o celular? Aponte a câmera pro QR abaixo — cadastro, pagamentos, treino e seu acesso pessoal, tudo por lá.</div>
+      <div id="qrcode-portal-inicio" style="display:flex;justify-content:center"></div>
     </div>
 
     <div class="linha-botoes-pequenos">

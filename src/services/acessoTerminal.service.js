@@ -14,7 +14,29 @@ const agenteGateway = require('./agenteGateway.service');
 const dbResiliente = require('./dbResiliente.service');
 const filaAcessosOffline = require('./filaAcessosOffline.service');
 
-const FACE_MATCH_THRESHOLD = Number(process.env.FACE_MATCH_THRESHOLD || 0.6);
+// 2026-07-21: baixado de 0.6 pra 0.5 depois de um relato real do dono do
+// sistema — aluno SEM rosto cadastrado liberava a catraca, confundido com
+// outro aluno que TEM rosto cadastrado. 0.6 é o valor que a própria
+// documentação do face-api.js sugere pra "mesma pessoa", mas isso já assume
+// fotos de boa qualidade — numa câmera de tablet, com a resolução/luz de
+// academia, a distância entre pessoas DIFERENTES cai com mais frequência
+// dentro de um limiar tão largo. Um valor menor é mais rígido (nega um
+// aluno de vez em quando, que resolve com CPF/QR) só pra evitar liberar a
+// pessoa errada. Ver também MARGEM_MINIMA_SEGUNDO_MELHOR abaixo, que ataca a
+// mesma causa por outro ângulo. Pode ser sobrescrito por FACE_MATCH_THRESHOLD
+// no .env — se a produção (Northflank) já tem essa variável configurada
+// explicitamente, PRECISA ser atualizada lá também; mudar só aqui/no .env
+// local não muda o valor em produção.
+const FACE_MATCH_THRESHOLD = Number(process.env.FACE_MATCH_THRESHOLD || 0.5);
+
+// Não basta a MENOR distância bater dentro do limiar — se duas pessoas
+// cadastradas ficam quase igualmente próximas do rosto capturado (comum com
+// poucos alunos cadastrados, ou fotos parecidas), escolher só a menor ainda
+// arrisca escolher a pessoa errada. Exige que a melhor distância seja
+// nitidamente menor que a segunda melhor; se ficarem "empatadas" dentro
+// dessa margem, o sistema recusa em vez de arriscar (a pessoa tenta de novo
+// ou usa CPF/QR). Configurável via FACE_MATCH_MARGEM_MINIMA no .env.
+const MARGEM_MINIMA_SEGUNDO_MELHOR = Number(process.env.FACE_MATCH_MARGEM_MINIMA || 0.07);
 
 function gerarCodigoAcesso() {
   // 24 caracteres em base hexadecimal — não sequencial, não adivinhável
@@ -149,6 +171,7 @@ async function encontrarMelhorMatchFacialEm(cliente, descriptorRecebido) {
   const result = await cliente.execute("SELECT * FROM alunos WHERE face_descriptor IS NOT NULL");
   let melhor = null;
   let menorDistancia = Infinity;
+  let segundaMenorDistancia = Infinity; // 2o colocado — ver MARGEM_MINIMA_SEGUNDO_MELHOR
   let candidatosComparados = 0;
 
   for (const aluno of result.rows) {
@@ -163,17 +186,32 @@ async function encontrarMelhorMatchFacialEm(cliente, descriptorRecebido) {
     candidatosComparados += 1;
     const distancia = distanciaEuclidiana(descriptorRecebido, descritorSalvo);
     if (distancia < menorDistancia) {
+      segundaMenorDistancia = menorDistancia;
       menorDistancia = distancia;
       melhor = aluno;
+    } else if (distancia < segundaMenorDistancia) {
+      segundaMenorDistancia = distancia;
     }
   }
 
+  // 2026-07-21: não basta a MENOR distância bater dentro do limiar — se duas
+  // pessoas cadastradas ficam quase igualmente próximas do rosto capturado
+  // (ex.: poucos alunos cadastrados ainda, ou fotos parecidas), escolher só
+  // a menor arrisca escolher a pessoa errada (foi exatamente o bug
+  // relatado: aluno sem rosto cadastrado liberando como se fosse outro
+  // aluno). Só considera "dentro do limite" quando, além de bater o
+  // FACE_MATCH_THRESHOLD, a melhor distância é nitidamente menor que a
+  // segunda melhor — com um único candidato cadastrado (segundaMenorDistancia
+  // continua Infinity), essa exigência não se aplica.
+  const margemSuficiente = !Number.isFinite(segundaMenorDistancia)
+    || (segundaMenorDistancia - menorDistancia) >= MARGEM_MINIMA_SEGUNDO_MELHOR;
   // Sempre devolve o melhor candidato e a distância, mesmo fora do limiar —
   // útil para diagnosticar/ajustar FACE_MATCH_THRESHOLD durante os testes.
-  const dentroDoLimite = Boolean(melhor) && menorDistancia <= FACE_MATCH_THRESHOLD;
+  const dentroDoLimite = Boolean(melhor) && menorDistancia <= FACE_MATCH_THRESHOLD && margemSuficiente;
   return {
     aluno: melhor,
     distancia: Number.isFinite(menorDistancia) ? menorDistancia : null,
+    distanciaSegundoMelhor: Number.isFinite(segundaMenorDistancia) ? segundaMenorDistancia : null,
     dentroDoLimite,
     candidatosComparados,
     limite: FACE_MATCH_THRESHOLD,

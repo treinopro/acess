@@ -65,21 +65,17 @@ const limitadorContas = criarLimitador({
   mensagem: 'Muitas requisições. Aguarde alguns minutos.',
 });
 
-// POST /api/terminal/acesso/cpf { cpf }
-terminal.post('/acesso/cpf', limitadorIdentificacao, autenticarTerminal, async (req, res, next) => {
-  try {
-    const { cpf } = z.object({ cpf: z.string().min(1) }).parse(req.body);
-    const aluno = await acessoTerminal.buscarAlunoPorCpfParaAcesso(cpf);
-    if (!aluno) {
-      await acessoTerminal.registrarAcesso({ alunoId: null, metodo: 'cpf', resultado: 'negado', mensagem: 'CPF não encontrado.' });
-      return res.json({ autorizado: false, motivo: 'CPF não encontrado.' });
-    }
-    const resultado = await acessoTerminal.tentarLiberar({ aluno, metodo: 'cpf' });
-    res.json(resultado);
-  } catch (err) {
-    next(err);
-  }
-});
+// 2026-07-21: REMOVIDA de propósito a rota POST /acesso/cpf (liberar a
+// catraca só com o CPF, sem mais nada). Motivo (pedido do dono do sistema):
+// CPF não é segredo — não prova que quem digitou é o dono do cadastro, e o
+// TERMINAL_TOKEN que "protegia" esta rota já fica visível pra quem inspeciona
+// o front-end do totem (ver comentário mais abaixo), então bastava alguém
+// saber/adivinhar o CPF de um aluno pra abrir a catraca remotamente, sem
+// nem estar na academia. Ficou só como caminho de identificação: QR pessoal
+// (não adivinhável, gerado por gerarCodigoAcesso) e reconhecimento facial —
+// ambos continuam abaixo. `buscarAlunoPorCpfParaAcesso` continua existindo
+// em acessoTerminal.service.js (usada só como lookup interno), mas não tem
+// mais nenhuma rota HTTP que a exponha como forma de liberar acesso.
 
 // POST /api/terminal/acesso/codigo { codigo_acesso } — leitura do QR pessoal do celular
 terminal.post('/acesso/codigo', limitadorIdentificacao, autenticarTerminal, async (req, res, next) => {
@@ -109,15 +105,22 @@ terminal.post('/acesso/facial', limitadorIdentificacao, autenticarTerminal, asyn
     }
 
     if (!match.dentroDoLimite) {
-      // Diagnóstico usado para calibrar FACE_MATCH_THRESHOLD no .env — o log
-      // interno (registrarAcesso) sempre guarda a distância exata, mas a
-      // RESPOSTA HTTP só inclui esse detalhe fora de produção. Em produção,
-      // devolver a distância/limite pra quem quer que esteja chamando a rota
-      // (com o TERMINAL_TOKEN, hoje mais exposto por causa da página de
-      // cadastro pelo celular) ajudaria a calibrar tentativas de bypass.
-      const motivo = `Rosto não reconhecido (mais próximo: distância ${match.distancia.toFixed(3)}, limite ${match.limite}).`;
+      // Diagnóstico usado para calibrar FACE_MATCH_THRESHOLD/FACE_MATCH_MARGEM_MINIMA
+      // no .env — o log interno (registrarAcesso) sempre guarda a distância
+      // exata (inclusive do 2o colocado, quando a recusa foi por match
+      // ambíguo — ver acessoTerminal.service.js), mas a RESPOSTA HTTP só
+      // inclui esse detalhe fora de produção. Em produção, devolver a
+      // distância/limite pra quem quer que esteja chamando a rota (com o
+      // TERMINAL_TOKEN, hoje mais exposto por causa da página de cadastro
+      // pelo celular) ajudaria a calibrar tentativas de bypass.
+      const ambiguo = match.distancia <= match.limite; // bateu o limiar, mas foi recusado pela margem do 2o colocado
+      const motivo = ambiguo
+        ? `Rosto não reconhecido (match ambíguo: distância ${match.distancia.toFixed(3)} muito perto do 2º colocado ${match.distanciaSegundoMelhor?.toFixed(3)}, limite ${match.limite}).`
+        : `Rosto não reconhecido (mais próximo: distância ${match.distancia.toFixed(3)}, limite ${match.limite}).`;
       await acessoTerminal.registrarAcesso({ alunoId: null, metodo: 'facial', resultado: 'negado', mensagem: motivo });
-      const detalheDiagnostico = process.env.NODE_ENV === 'production' ? {} : { distancia: match.distancia, limite: match.limite };
+      const detalheDiagnostico = process.env.NODE_ENV === 'production'
+        ? {}
+        : { distancia: match.distancia, distancia_segundo_melhor: match.distanciaSegundoMelhor, limite: match.limite };
       return res.json({ autorizado: false, motivo: process.env.NODE_ENV === 'production' ? 'Rosto não reconhecido.' : motivo, ...detalheDiagnostico });
     }
 

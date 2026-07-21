@@ -31,10 +31,10 @@ CREATE TABLE IF NOT EXISTS alunos (
   -- que é outro conceito (tipo de aula). Valores: aluno | professor | visitante
   -- | colaborador | bolsista. colaborador e bolsista têm acesso livre (não
   -- dependem de mensalidade em dia) — ver CATEGORIA_ACESSO_LIVRE. visitante
-  -- tem um limite de quantos acessos pode usar (configuracoes.chave =
-  -- 'visitante_limite_acessos'), controlado por contagem de acessos_catraca,
-  -- não por um contador separado. aluno e professor seguem a regra normal de
-  -- mensalidade/status.
+  -- tem um período de acesso gratuito contado em DIAS corridos a partir da
+  -- primeira liberação (configuracoes.chave = 'visitante_limite_dias', padrão
+  -- 1 dia) — ver visitante_liberado_em logo abaixo. aluno e professor seguem a
+  -- regra normal de mensalidade/status.
   categoria TEXT NOT NULL DEFAULT 'aluno',
   -- Preenchido só quando categoria = 'visitante' e o cadastro foi feito por um
   -- aluno indicando um amigo pelo totem (ver POST /api/terminal/auto-cadastro
@@ -42,6 +42,13 @@ CREATE TABLE IF NOT EXISTS alunos (
   -- visitantes (quem indicou quem) quanto pro limite mensal de indicações por
   -- aluno (configuracoes.chave = 'indicacao_limite_mensal').
   indicado_por_aluno_id TEXT REFERENCES alunos(id) ON DELETE SET NULL,
+  -- Data/hora (UTC, mesmo formato de criado_em) da PRIMEIRA liberação de
+  -- acesso deste visitante (2026-07 — antes o limite era contado por número
+  -- de acessos; agora é por dias corridos a partir desta data, ver
+  -- acessoTerminal.service.js/verificarAutorizacaoAluno). NULL até a primeira
+  -- liberação — nesse estado o visitante ainda está dentro do período
+  -- gratuito, mesmo sem nunca ter entrado. Só se aplica a categoria='visitante'.
+  visitante_liberado_em TEXT,
   -- Senha do portal remoto (2026-07): a partir do 1o acesso do aluno ao
   -- portal (GET /api/portal/aluno), ele passa a precisar de CPF + biometria_id
   -- (o mesmo codigo sequencial da catraca) pra entrar. Esta flag marca se

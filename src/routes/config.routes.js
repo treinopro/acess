@@ -38,7 +38,13 @@ const PADROES = {
   // Sistema de visitantes (2026-07) — ver acessoTerminal.service.js e
   // terminal.routes.js. Guardados como string (igual todo o resto desta
   // tabela chave/valor) mas sempre números inteiros ≥ 0 na prática.
-  visitante_limite_acessos: '1',
+  //
+  // 2026-07-19: o limite do visitante deixou de ser contado por NÚMERO DE
+  // ACESSOS (visitante_limite_acessos, removida) e passou a ser por DIAS
+  // CORRIDOS a partir da primeira liberação (visitante_liberado_em, ver
+  // schema.sql) — motivo: um visitante limitado a "1 acesso" não conseguia
+  // nem sair e voltar a entrar no mesmo dia (ex.: foi buscar algo no carro).
+  visitante_limite_dias: '1',
   indicacao_limite_mensal: '2',
 };
 
@@ -124,11 +130,12 @@ router.put('/', autenticar, apenasAdmin, async (req, res, next) => {
         acessoLiberado: SomSituacaoSchema,
         acessoNegado: SomSituacaoSchema,
       }).optional(),
-      // Sistema de visitantes (2026-07): quantos acessos grátis cada visitante
-      // pode usar antes de precisar virar aluno pagante, e quantos amigos
-      // cada aluno pode indicar (cadastrar como visitante) por mês. Ver
+      // Sistema de visitantes (2026-07): quantos DIAS corridos de acesso
+      // grátis cada visitante tem (a partir da primeira liberação) antes de
+      // precisar virar aluno pagante, e quantos amigos cada aluno pode
+      // indicar (cadastrar como visitante) por mês. Ver
       // acessoTerminal.service.js / terminal.routes.js.
-      visitante_limite_acessos: z.number().int().min(0).max(50).optional(),
+      visitante_limite_dias: z.number().int().min(0).max(90).optional(),
       indicacao_limite_mensal: z.number().int().min(0).max(50).optional(),
     });
     const dados = schema.parse(req.body);
@@ -137,7 +144,7 @@ router.put('/', autenticar, apenasAdmin, async (req, res, next) => {
 
     for (const chave of chaves) {
       let valor = (chave === 'menu_ordem' || chave === 'som_totem') ? JSON.stringify(dados[chave]) : dados[chave];
-      if (chave === 'visitante_limite_acessos' || chave === 'indicacao_limite_mensal') valor = String(valor);
+      if (chave === 'visitante_limite_dias' || chave === 'indicacao_limite_mensal') valor = String(valor);
       await db.execute({
         sql: 'INSERT INTO configuracoes (chave, valor) VALUES (?, ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor',
         args: [chave, valor],

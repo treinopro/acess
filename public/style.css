@@ -99,6 +99,14 @@ body {
 }
 .btn-acessos-recentes:hover { background: #0ea472; }
 
+/* Mesmo destaque do botão "Acessos recentes" — ação rápida e frequente da recepção. */
+.btn-liberar-rapido {
+  background: #10b981; color: #fff; border: none; border-radius: 6px; padding: 9px 8px;
+  cursor: pointer; font-size: 13px; font-weight: 600;
+}
+.btn-liberar-rapido:hover { background: #0ea472; }
+.btn-liberar-rapido:disabled { opacity: 0.6; cursor: wait; }
+
 /* ---------- Painel lateral persistente (Acessos recentes) ---------- */
 .painel-lateral {
   position: fixed; top: 0; right: 0; height: 100vh; width: 380px; max-width: 90vw;

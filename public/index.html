@@ -53,6 +53,7 @@
         <button class="nav-btn oculto" id="nav-catraca" data-secao="catraca">Catraca</button>
       </nav>
       <div class="sidebar-rodape">
+        <button class="btn-liberar-rapido oculto" id="btn-liberar-rapido" title="Libera a catraca imediatamente, sem abrir a janela completa da catraca">⚡ Liberar rápido</button>
         <button class="btn-acessos-recentes oculto" id="btn-acessos-recentes">🕓 Acessos recentes</button>
         <span id="usuario-nome"></span>
         <button id="btn-sair">Sair</button>
@@ -1118,14 +1119,16 @@
           <p id="recup-ativos-total" style="font-size:13px;color:#667085;margin-top:8px"></p>
         </div>
 
-        <!-- Painel: Visitantes (2026-07) — relatório de quem entrou como
-             visitante (categoria='visitante'), quantos acessos já usou (contra
-             o limite configurável) e quem indicou, pra campanha de "vire
-             aluno" usando o mesmo mecanismo de envio de sempre. -->
+        <!-- Painel: Visitantes (2026-07, dias corridos desde 2026-07-19) —
+             relatório de quem entrou como visitante (categoria='visitante'),
+             até quando vale o período de acesso gratuito (contra o limite de
+             dias configurável) e quem indicou, pra campanha de "vire aluno"
+             usando o mesmo mecanismo de envio de sempre. -->
         <div class="recup-painel oculto" data-recup-painel="visitantes">
           <p style="font-size:13px;color:#667085;margin:0 0 14px">
-            Quem já passou como visitante — acompanhe quantos acessos cada um já usou (contra o limite
-            configurado em Configurações) e quem indicou, e use pra tentar captar matrícula.
+            Quem já passou como visitante — acompanhe até quando vale o período de acesso gratuito de cada um
+            (dias corridos a partir da primeira entrada, configurável em Configurações) e quem indicou, e use
+            pra tentar captar matrícula.
           </p>
           <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
             <div style="flex:1;min-width:180px">
@@ -1153,7 +1156,7 @@
                 <th>Nome</th>
                 <th>Cadastrado em</th>
                 <th>Indicado por</th>
-                <th>Acessos usados</th>
+                <th>Situação</th>
               </tr>
             </thead>
             <tbody id="recup-visitantes-lista"></tbody>

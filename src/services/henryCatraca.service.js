@@ -22,8 +22,16 @@ const STX = 0x02;
 const ETX = 0x03;
 const MSG_MAX_LEN = 1024;
 
-// Tempo padrão de liberação da catraca, em décimos de segundo (40 = 4s)
-const RELEASE_TIME = '40';
+// Tempo de liberação da catraca (quanto tempo ela fica destravada esperando
+// a pessoa girar, antes de travar sozinha de novo), em décimos de segundo —
+// 100 = 10.0s. 2026-07-19: antes não havia um valor pensado de propósito
+// (ficava em 4s, "40", herdado do exemplo original) — 10s dá tempo suficiente
+// pra girar sem segurar a catraca aberta por tempo demais entre uma pessoa e
+// outra. Configurável via HENRY_RELEASE_TIME_DECIMOS (décimos de segundo) pra
+// ajustar sem precisar mexer em código, caso o equipamento físico se comporte
+// diferente do esperado — teste no equipamento real antes de confiar num
+// valor novo em produção.
+const RELEASE_TIME = String(Number(process.env.HENRY_RELEASE_TIME_DECIMOS) || 100);
 
 function checksum(bytes) {
   if (!bytes.length) return 0;

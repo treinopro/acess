@@ -65,7 +65,17 @@ function obterOrigin(req) {
   return base.replace(/\/+$/, '');
 }
 
+// 2026-07-19: visitante NUNCA recebe o link do Portal do Aluno/QR de acesso
+// (meu-acesso.html) — o período de acesso gratuito dele já bate ou já
+// acabou, então esse link não tem função nenhuma pra essa pessoa. Em vez
+// disso, manda pra página pública de cadastro (mesma usada pelo QR "Usar seu
+// cel" do totem) — vira convite pra se matricular de verdade, sem exigir
+// senha nenhuma (página pública, sem login). Vale mesmo quando o admin
+// escolheu link_tipo='portal' pra campanha inteira (ex.: "Todos os ativos"
+// misturando alunos e visitantes) — visitante nunca deveria receber o link
+// de portal por engano.
 function montarLinkPortal(aluno, origin) {
+  if ((aluno.categoria || 'aluno') === 'visitante') return `${origin}/cadastro-mobile.html`;
   if (aluno.codigo_acesso) return `${origin}/meu-acesso.html?codigo=${aluno.codigo_acesso}`;
   return `${origin}/portal.html`;
 }
@@ -325,8 +335,13 @@ router.post('/enviar', async (req, res, next) => {
       // Só busca/gera a senha de acesso (código sequencial, ver
       // acessoTerminal.atribuirCodigoAluno) quando o modelo realmente usa
       // {senha} — evita gerar/gravar código pra quem nunca vai ver essa info.
+      // Visitante NUNCA recebe essa senha (2026-07-19): o código do portal só
+      // faz sentido pareado com o cadastro físico na catraca (cartão/digital
+      // do "sistema antigo"), e visitante nunca passa por esse cadastro —
+      // ver aviso em emailBoasVindas.service.js.
+      const ehVisitante = (aluno.categoria || 'aluno') === 'visitante';
       // eslint-disable-next-line no-await-in-loop
-      const senha = precisaSenha ? await acessoTerminal.atribuirCodigoAluno(aluno.id) : null;
+      const senha = (precisaSenha && !ehVisitante) ? await acessoTerminal.atribuirCodigoAluno(aluno.id) : null;
 
       const mensagem = montarMensagem({
         aluno, saudacao, corpo, linkTipo, linkOfertaUrl, linkOfertaTexto, origin, senha,
@@ -490,11 +505,12 @@ router.get('/todos-ativos', async (req, res, next) => {
 
 // ---------------- Relatório de visitantes (2026-07) ----------------
 // GET /api/recuperacao/visitantes?busca=&indicado_por_aluno_id=
-// Cada visitante (categoria='visitante'), quantos acessos liberados ele já
-// usou (contra o limite configurável — ver acessoTerminal.service.js /
-// configuracoes.visitante_limite_acessos), e quem indicou (se veio de
-// indicação de um aluno). Também entra nesse mecanismo de recuperação pra
-// campanha de "vire aluno" (usa o mesmo POST /enviar de sempre).
+// Cada visitante (categoria='visitante'), até quando o período de acesso
+// gratuito dele vale (2026-07-19 — contado em DIAS CORRIDOS a partir da
+// primeira liberação, não mais por número de acessos — ver
+// acessoTerminal.service.js / configuracoes.visitante_limite_dias), e quem
+// indicou (se veio de indicação de um aluno). Também entra nesse mecanismo de
+// recuperação pra campanha de "vire aluno" (usa o mesmo POST /enviar de sempre).
 router.get('/visitantes', async (req, res, next) => {
   try {
     const { busca, indicado_por_aluno_id: indicadoPorAlunoId } = req.query;
@@ -504,25 +520,37 @@ router.get('/visitantes', async (req, res, next) => {
     if (indicadoPorAlunoId) { condicoes.push('a.indicado_por_aluno_id = ?'); args.push(indicadoPorAlunoId); }
     const where = `WHERE ${condicoes.join(' AND ')}`;
 
-    const [visitantesResult, limite] = await Promise.all([
+    const [visitantesResult, dias] = await Promise.all([
       db.execute({
-        sql: `SELECT a.id as aluno_id, a.nome, a.telefone, a.email, a.criado_em,
-                a.indicado_por_aluno_id, ind.nome as indicado_por_nome,
-                (SELECT COUNT(*) FROM acessos_catraca ac WHERE ac.aluno_id = a.id AND ac.resultado = 'liberado') as acessos_usados
+        sql: `SELECT a.id as aluno_id, a.nome, a.telefone, a.email, a.criado_em, a.visitante_liberado_em,
+                a.indicado_por_aluno_id, ind.nome as indicado_por_nome
               FROM alunos a
               LEFT JOIN alunos ind ON ind.id = a.indicado_por_aluno_id
               ${where}
               ORDER BY a.criado_em DESC`,
         args,
       }),
-      acessoTerminal.limiteAcessosVisitanteEm(db),
+      acessoTerminal.limiteDiasVisitanteEm(db),
     ]);
 
-    const visitantes = visitantesResult.rows.map((v) => ({
-      ...v,
-      limite_acessos: limite,
-      limite_atingido: v.acessos_usados >= limite,
-    }));
+    const agoraMs = Date.now();
+    const visitantes = visitantesResult.rows.map((v) => {
+      let expiraEm = null;
+      let limiteAtingido = false;
+      if (v.visitante_liberado_em) {
+        const liberadoEm = parseDataHoraFlexivel(v.visitante_liberado_em);
+        if (liberadoEm && !Number.isNaN(liberadoEm.getTime())) {
+          expiraEm = new Date(liberadoEm.getTime() + dias * 86400000).toISOString();
+          limiteAtingido = agoraMs >= new Date(expiraEm).getTime();
+        }
+      }
+      return {
+        ...v,
+        limite_dias: dias,
+        expira_em: expiraEm,
+        limite_atingido: limiteAtingido,
+      };
+    });
 
     res.json(visitantes);
   } catch (err) {

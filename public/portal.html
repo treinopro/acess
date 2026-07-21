@@ -49,6 +49,13 @@
   .total-linha { display: flex; justify-content: space-between; font-size: 17px; font-weight: 700; padding: 10px 0; }
 
   .aviso-caixa { background: #0f172a; border-radius: 10px; padding: 14px; font-size: 13px; color: #cbd5e1; }
+
+  /* Aviso de vencimento da mensalidade — aparece 3 dias antes do vencimento,
+     no dia do vencimento e enquanto continuar em atraso (ver portal.js). */
+  .aviso-vencimento { border-radius: 10px; padding: 12px 14px; font-size: 13px; font-weight: 700; margin-bottom: 16px; width: 100%; max-width: 440px; text-align: left; }
+  .aviso-vencimento.proximo { background: #422006; color: #fbbf24; border: 1px solid #92400e; }
+  .aviso-vencimento.hoje { background: #431407; color: #fb923c; border: 1px solid #c2410c; }
+  .aviso-vencimento.vencido { background: #450a0a; color: #fca5a5; border: 1px solid #b91c1c; }
   video { border-radius: 16px; width: 280px; height: 210px; object-fit: cover; background: #000; transform: scaleX(-1); }
   .status-scan { color: #94a3b8; font-size: 14px; margin-top: 8px; min-height: 20px; }
 
@@ -101,6 +108,8 @@
 
     <div id="painel-hub-dashboard" class="oculto" style="width:100%;max-width:440px">
       <div class="subtitulo" id="hub-saudacao" style="margin-bottom:20px"></div>
+
+      <div class="aviso-vencimento oculto" id="aviso-vencimento-hub"></div>
 
       <div class="cartao" id="card-contas">
         <h3>Contas em aberto</h3>

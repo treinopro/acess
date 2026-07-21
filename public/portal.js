@@ -146,6 +146,9 @@ function resetHub() {
   document.getElementById('painel-hub-cpf').classList.remove('oculto');
   ['painel-hub-primeiro-acesso', 'painel-hub-dashboard', 'painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-comprovante', 'painel-hub-facial']
     .forEach((id) => document.getElementById(id).classList.add('oculto'));
+  const avisoVencimento = document.getElementById('aviso-vencimento-hub');
+  avisoVencimento.classList.add('oculto');
+  avisoVencimento.textContent = '';
 }
 
 // 2026-07: antes esse botão sempre resetava tudo e voltava pro início (digitar
@@ -256,9 +259,73 @@ async function carregarResumoContasHub() {
       resumoEl.textContent = `${resp.contas.length} conta(s) em aberto — total ${formatarMoeda(total)}.`;
       document.getElementById('btn-abrir-contas').disabled = false;
     }
+    atualizarAvisoVencimento(resp.contas);
   } catch (err) {
     document.getElementById('card-contas-resumo').textContent = `Erro ao consultar: ${err.message}`;
   }
+}
+
+// ---- Aviso de vencimento (3 dias antes / "vence hoje" / "vencido há N dias") ----
+// Regra pedida: nos 3 dias anteriores ao vencimento mostra aviso de aproximação;
+// no dia do vencimento mostra "vence hoje"; depois do vencimento, enquanto a conta
+// continuar em aberto (atrasada), mostra "vencido há N dia(s)" contando os dias.
+
+// "vencimento" vem como 'AAAA-MM-DD' (ver formatarData acima) — monta a data em
+// horário local (meio-dia evita qualquer problema de fuso horário na comparação).
+function dataLocalDeIso(dataIso) {
+  const [ano, mes, dia] = dataIso.split('-').map(Number);
+  return new Date(ano, mes - 1, dia, 12, 0, 0);
+}
+
+// Quantos dias faltam até o vencimento (negativo = já venceu há N dias).
+function diasAteVencimento(dataIso) {
+  const hoje = new Date();
+  const hojeSemHora = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate(), 12, 0, 0);
+  const venc = dataLocalDeIso(dataIso);
+  return Math.round((venc - hojeSemHora) / 86400000);
+}
+
+// Entre as contas em aberto, a que está mais perto de vencer (ou mais atrasada) é
+// a que manda no aviso — não faz sentido mostrar "vence em 3 dias" se já tem outra
+// conta vencida há uma semana.
+function contaMaisUrgente(contas) {
+  let escolhida = null;
+  let diasEscolhida = Infinity;
+  contas.forEach((c) => {
+    if (!c.vencimento) return;
+    const dias = diasAteVencimento(c.vencimento);
+    if (dias < diasEscolhida) { diasEscolhida = dias; escolhida = c; }
+  });
+  return escolhida ? { conta: escolhida, dias: diasEscolhida } : null;
+}
+
+function atualizarAvisoVencimento(contas) {
+  const el = document.getElementById('aviso-vencimento-hub');
+  if (!el) return;
+
+  const urgente = contaMaisUrgente(contas);
+  if (!urgente || urgente.dias > 3) {
+    el.classList.add('oculto');
+    el.textContent = '';
+    return;
+  }
+
+  const { dias } = urgente;
+  let texto;
+  let classe;
+  if (dias < 0) {
+    const diasAtraso = Math.abs(dias);
+    texto = `⚠️ Mensalidade vencida há ${diasAtraso} dia${diasAtraso === 1 ? '' : 's'}. Regularize para evitar bloqueio de acesso.`;
+    classe = 'vencido';
+  } else if (dias === 0) {
+    texto = '⏰ Sua mensalidade vence hoje.';
+    classe = 'hoje';
+  } else {
+    texto = `⏳ Sua mensalidade vence em ${dias} dia${dias === 1 ? '' : 's'}.`;
+    classe = 'proximo';
+  }
+  el.textContent = texto;
+  el.className = `aviso-vencimento ${classe}`;
 }
 
 function ocultarPaineisHub() {

@@ -361,7 +361,10 @@ router.post('/cadastro', async (req, res, next) => {
         args: [alunoId, dados.nome, dados.email, dados.telefone, dados.cpf, dados.data_nascimento, indicadoPorAlunoId],
       });
 
-      emailBoasVindas.enviarBoasVindasSeguro({ id: alunoId, nome: dados.nome, email: dados.email }).catch(() => {});
+      // E-mail específico do visitante (2026-07-19, mesmo motivo do totem —
+      // ver terminal.routes.js e o comentário completo em
+      // emailBoasVindas.service.js): nunca manda a senha do Portal do Aluno.
+      emailBoasVindas.enviarBoasVindasVisitanteSeguro({ id: alunoId, nome: dados.nome, email: dados.email }).catch(() => {});
 
       return res.status(201).json({
         visitante: true,

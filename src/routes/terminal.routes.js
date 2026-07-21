@@ -423,7 +423,12 @@ terminal.post('/auto-cadastro', limitadorCadastro, autenticarTerminalOuCadastroP
         args: [alunoId, dados.nome, dados.email, dados.telefone, dados.cpf, dados.data_nascimento, indicadoPorAlunoId],
       });
 
-      emailBoasVindas.enviarBoasVindasSeguro({ id: alunoId, nome: dados.nome, email: dados.email }).catch(() => {});
+      // E-mail específico do visitante (2026-07-19) — NUNCA o e-mail normal
+      // de boas-vindas: aquele gera/manda a senha do Portal do Aluno
+      // (biometria_id), que só faz sentido pareada com cadastro físico na
+      // catraca — o visitante não passa por isso. Ver comentário completo em
+      // emailBoasVindas.service.js.
+      emailBoasVindas.enviarBoasVindasVisitanteSeguro({ id: alunoId, nome: dados.nome, email: dados.email }).catch(() => {});
 
       return res.status(201).json({
         visitante: true,

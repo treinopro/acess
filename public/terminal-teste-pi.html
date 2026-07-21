@@ -3,7 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Totem — Academia</title>
+<title>[TESTE] Totem via Raspberry Pi — NÃO é o totem de produção</title>
+<!-- ARQUIVO DE TESTE (2026-07-19): cópia de terminal.html só pra validar a
+     câmera via Raspberry Pi na rede, sem mexer no totem de verdade
+     (terminal.html/terminal.js, que continua intacto e funcionando como
+     sempre). Usa terminal-teste-pi.js em vez de terminal.js — só isso muda
+     em relação ao totem real. Depois de testado e aprovado na prática, é
+     que vale promover essas mudanças pra terminal.js de verdade. -->
 
 <!-- Modo tela cheia: se o tablet abrir esta página "Adicionar à tela inicial"
      (vira um atalho que abre sem barra de endereço nem UI do navegador),
@@ -83,30 +89,6 @@
   video, img.camera-feed { transform: scaleX(-1); }
   .video-wrap { position: relative; margin-bottom: 16px; }
   .status-scan { color: #94a3b8; font-size: 14px; margin-top: 8px; min-height: 20px; }
-
-  /* Demarcação circular do rosto no cadastro guiado (2026-07) — mesma ideia
-     visual do cadastro de Face ID: um círculo sobre o vídeo que muda de cor
-     conforme o passo atual (parado = cinza, tentando = amarelo, passo
-     cumprido = verde). Só aparece nas telas de cadastro facial
-     (.video-wrap.com-guia), nunca na tela inicial de escaneamento contínuo. */
-  .guia-facial-circulo {
-    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-    width: 64%; aspect-ratio: 1 / 1; max-width: 190px;
-    border-radius: 50%; border: 4px solid rgba(255, 255, 255, 0.4);
-    box-sizing: border-box; pointer-events: none;
-    transition: border-color 0.2s ease, box-shadow 0.2s ease;
-  }
-  .guia-facial-circulo.guia-ativo { border-color: #fbbf24; }
-  .guia-facial-circulo.guia-ok { border-color: #10b981; box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.2); }
-
-  .guia-facial-progresso {
-    width: 100%; max-width: 260px; height: 6px; border-radius: 999px;
-    background: #1e293b; margin: 10px auto 0; overflow: hidden;
-  }
-  .guia-facial-progresso-barra {
-    height: 100%; width: 0%; background: #10b981; border-radius: 999px;
-    transition: width 0.3s ease;
-  }
 
   .resultado-icone { font-size: 72px; margin-bottom: 12px; }
   .resultado-titulo { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
@@ -217,10 +199,8 @@
     <div class="painel-identificar oculto" id="painel-vincular-facial">
       <div class="video-wrap">
         <video id="video-vincular-facial" class="camera-feed" autoplay muted playsinline></video>
-        <div class="guia-facial-circulo"></div>
       </div>
       <div class="status-scan" id="status-vincular-facial">Posicione seu rosto no centro da câmera...</div>
-      <div class="guia-facial-progresso"><div class="guia-facial-progresso-barra" id="progresso-vincular-facial"></div></div>
     </div>
 
     <button class="link-voltar" id="btn-voltar-2">&larr; Voltar</button>
@@ -293,10 +273,8 @@
     <div class="painel-identificar oculto" id="painel-cadastro-facial">
       <div class="video-wrap">
         <video id="video-cadastro-facial" class="camera-feed" autoplay muted playsinline></video>
-        <div class="guia-facial-circulo"></div>
       </div>
       <div class="status-scan" id="status-cadastro-facial">Posicione seu rosto no centro da câmera...</div>
-      <div class="guia-facial-progresso"><div class="guia-facial-progresso-barra" id="progresso-cadastro-facial"></div></div>
     </div>
 
     <button class="link-voltar" id="btn-voltar-3">&larr; Voltar</button>
@@ -356,6 +334,6 @@
     </div>
   </div>
 
-<script src="terminal.js"></script>
+<script src="terminal-teste-pi.js"></script>
 </body>
 </html>

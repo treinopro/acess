@@ -32,6 +32,9 @@ const ALTERACOES_INCREMENTAIS = [
   // detalhado junto da definição de "alunos" em schema.sql.
   "ALTER TABLE alunos ADD COLUMN categoria TEXT NOT NULL DEFAULT 'aluno'",
   "ALTER TABLE alunos ADD COLUMN indicado_por_aluno_id TEXT",
+  // Data da primeira liberação do visitante (2026-07-19 — troca do limite de
+  // "N acessos" para "N dias corridos"). Ver comentário em schema.sql.
+  "ALTER TABLE alunos ADD COLUMN visitante_liberado_em TEXT",
 ];
 
 // Divide um arquivo .sql em statements individuais (o driver libsql nao aceita

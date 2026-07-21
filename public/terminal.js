@@ -383,13 +383,20 @@ async function iniciarCamera(videoEl) {
     return;
   }
 
-  // Resolução baixa de propósito: reconhecimento facial e leitura de QR não
-  // precisam de HD (a pessoa fica perto da câmera), e pedir uma resolução
-  // menor reduz bastante o processamento de cada quadro — sem isso, câmeras
-  // que abrem em resolução alta por padrão deixavam a detecção lenta a
-  // ponto de travar o navegador.
+  // 2026-07-20: pedir uma resolução BAIXA (640x480) fazia várias câmeras
+  // frontais de tablet (sobretudo quando o sensor nativo não tem um modo
+  // 4:3 de baixa resolução) entrarem num recorte digital central pra
+  // "encaixar" no tamanho pedido — na prática, a imagem chega com bem menos
+  // campo de visão do que a câmera realmente enxerga, o que aparece na tela
+  // como se estivesse com zoom. Pedir uma resolução maior evita esse recorte
+  // (o sensor consegue atender de verdade, sem precisar cortar). Isso NÃO
+  // volta a travar a detecção como antes: quem processa QR/rosto nunca usa
+  // este quadro em resolução cheia — desenharQuadroProcessamento() sempre
+  // redimensiona pra no máximo LARGURA_MAX_PROCESSAMENTO (480px) antes de
+  // rodar qualquer detecção, então o custo pesado (rede neural) continua
+  // igual não importa a resolução pedida aqui.
   streamAtual = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+    video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 960 } },
   });
   videoEl.srcObject = streamAtual;
   await videoEl.play();
@@ -620,56 +627,70 @@ async function tickEscaneamento() {
     return;
   }
 
-  // Um único quadro reduzido (ver LARGURA_MAX_PROCESSAMENTO) serve tanto pra
-  // achar QR quanto pra reconhecimento facial — evita decodificar/analisar a
-  // resolução nativa da fonte, que é o que travava o tablet com a webcam USB.
-  const quadro = desenharQuadroProcessamento(video);
-
-  // 1) tenta achar um QR code no quadro atual (celular do aluno)
-  const imageData = ctxProcessamento.getImageData(0, 0, quadro.width, quadro.height);
-  const qr = window.jsQR(imageData.data, quadro.width, quadro.height);
-
-  if (qr && qr.data) {
-    processarResultadoInicio(() => api('/api/terminal/acesso/codigo', {
-      method: 'POST',
-      body: JSON.stringify({ codigo_acesso: qr.data }),
-    }));
-    return;
-  }
-
-  // 2) senão, tenta reconhecimento facial no mesmo quadro — ver cooldown em
-  // INTERVALO_MINIMO_RECONHECIMENTO_PESADO_MS: só paga o custo pesado
-  // (landmarks + descritor) quando vale a pena, não em todo tick.
-  let deteccao = null;
-  let rostoPresente = false;
+  // 2026-07-20: TUDO daqui pra baixo precisa estar dentro do try. Antes, um
+  // erro qualquer não tratado neste bloco (ex.: jsQR num quadro corrompido,
+  // getImageData falhando por um instante) interrompia a função no meio —
+  // como agendarProximoTick() só era chamado na última linha, isso matava o
+  // loop de agendamento PRA SEMPRE: a câmera continuava mostrando imagem
+  // normalmente (o vídeo roda fora do JS), mas ninguém mais era reconhecido
+  // (nem liberado, nem negado) até alguém recarregar o totem manualmente —
+  // sintoma relatado como "o app não está registrando os acessos feitos pelo
+  // facial". Agora um erro pontual só pula esse quadro; o loop sempre
+  // continua no próximo tick.
   try {
-    rostoPresente = await temRostoNoQuadro(quadro);
-  } catch {
-    // ignora erro pontual da detecção barata (ex.: frame instável)
-  }
+    // Um único quadro reduzido (ver LARGURA_MAX_PROCESSAMENTO) serve tanto pra
+    // achar QR quanto pra reconhecimento facial — evita decodificar/analisar a
+    // resolução nativa da fonte, que é o que travava o tablet com a webcam USB.
+    const quadro = desenharQuadroProcessamento(video);
 
-  if (rostoPresente) {
-    const agora = Date.now();
-    if (agora - ultimaTentativaReconhecimentoPesadoEm >= INTERVALO_MINIMO_RECONHECIMENTO_PESADO_MS) {
-      ultimaTentativaReconhecimentoPesadoEm = agora;
-      try {
-        deteccao = await detectarRosto(quadro);
-      } catch {
-        // ignora erros pontuais da etapa pesada (frame mudou/instável nesse
-        // meio tempo) e segue tentando no próximo tick
+    // 1) tenta achar um QR code no quadro atual (celular do aluno)
+    const imageData = ctxProcessamento.getImageData(0, 0, quadro.width, quadro.height);
+    const qr = window.jsQR(imageData.data, quadro.width, quadro.height);
+
+    if (qr && qr.data) {
+      processarResultadoInicio(() => api('/api/terminal/acesso/codigo', {
+        method: 'POST',
+        body: JSON.stringify({ codigo_acesso: qr.data }),
+      }));
+      return;
+    }
+
+    // 2) senão, tenta reconhecimento facial no mesmo quadro — ver cooldown em
+    // INTERVALO_MINIMO_RECONHECIMENTO_PESADO_MS: só paga o custo pesado
+    // (landmarks + descritor) quando vale a pena, não em todo tick.
+    let deteccao = null;
+    let rostoPresente = false;
+    try {
+      rostoPresente = await temRostoNoQuadro(quadro);
+    } catch {
+      // ignora erro pontual da detecção barata (ex.: frame instável)
+    }
+
+    if (rostoPresente) {
+      const agora = Date.now();
+      if (agora - ultimaTentativaReconhecimentoPesadoEm >= INTERVALO_MINIMO_RECONHECIMENTO_PESADO_MS) {
+        ultimaTentativaReconhecimentoPesadoEm = agora;
+        try {
+          deteccao = await detectarRosto(quadro);
+        } catch {
+          // ignora erros pontuais da etapa pesada (frame mudou/instável nesse
+          // meio tempo) e segue tentando no próximo tick
+        }
       }
     }
-  }
 
-  if (!escaneamentoAtivo) return; // pode ter navegado durante o await
+    if (!escaneamentoAtivo) return; // pode ter navegado durante o await
 
-  if (deteccao) {
-    const descriptor = Array.from(deteccao.descriptor);
-    processarResultadoInicio(() => api('/api/terminal/acesso/facial', {
-      method: 'POST',
-      body: JSON.stringify({ descriptor }),
-    }));
-    return;
+    if (deteccao) {
+      const descriptor = Array.from(deteccao.descriptor);
+      processarResultadoInicio(() => api('/api/terminal/acesso/facial', {
+        method: 'POST',
+        body: JSON.stringify({ descriptor }),
+      }));
+      return;
+    }
+  } catch (err) {
+    console.error('Erro num ciclo do escaneamento contínuo (ignorado — tentando de novo no próximo quadro):', err);
   }
 
   agendarProximoTick();
@@ -907,68 +928,276 @@ document.getElementById('btn-buscar-vincular').addEventListener('click', async (
   }
 });
 
+// ---------------- Cadastro facial guiado (liveness, estilo Face ID) ----------------
+// 2026-07-20, pedido do dono do sistema: em vez de capturar o rosto assim
+// que a primeira detecção válida aparece, guia a pessoa por uma sequência de
+// poses (virar a cabeça pros dois lados, aproximar/afastar do círculo,
+// levantar/abaixar o queixo) antes de capturar de fato — mesma ideia do
+// cadastro de Face ID do iPhone. Dificulta "cadastrar" uma foto impressa ou
+// a tela de outro celular no lugar de um rosto de verdade, e garante que o
+// cadastro sempre termina com a pessoa de frente e centralizada (melhor
+// qualidade pro reconhecimento do dia a dia).
+//
+// Cada passo compara a pose ATUAL contra uma referência tirada no passo
+// "centro" — não usa ângulos fixos em graus, porque cada rosto/câmera/
+// distância é diferente; calibrar relativo à própria pessoa, no início da
+// sequência, é bem mais confiável que um limiar absoluto universal.
+//
+// Sobre "esquerda/direita": a detecção roda sobre o quadro CRU da câmera,
+// não o espelhado que aparece na tela (ver `transform: scaleX(-1)` no CSS),
+// então o sinal matemático de "virou pra que lado" não necessariamente bate
+// com o rótulo esquerda/direita que a pessoa percebe no próprio espelho —
+// e isso não dá pra validar sem um tablet de verdade na mão. Pra não
+// arriscar instrução invertida, os dois passos de giro pedem só "vire pra
+// um lado" / "agora pro lado oposto", sem apostar em qual rótulo é qual —
+// cumpre o objetivo (girar a cabeça nos dois sentidos) sem esse risco.
+const PASSOS_CAPTURA_GUIADA = [
+  { id: 'centro', instrucao: 'Centralize seu rosto no círculo e fique parado...' },
+  { id: 'giro1', instrucao: 'De frente para a câmera, vire o rosto para um dos lados' },
+  { id: 'giro2', instrucao: 'Agora vire para o lado oposto' },
+  { id: 'perto', instrucao: 'Volte a olhar de frente e aproxime seu rosto do círculo' },
+  { id: 'longe', instrucao: 'Agora afaste um pouco o rosto, sem sair do quadro' },
+  { id: 'cima', instrucao: 'Olhando de frente, levante um pouco o queixo' },
+  { id: 'baixo', instrucao: 'Agora abaixe um pouco o queixo' },
+  { id: 'final', instrucao: 'Perfeito! Volte a olhar de frente, centralizado...' },
+];
+
+const QUADROS_PARA_CONFIRMAR_PASSO_FACIAL = 3; // "segura" a pose por 3 detecções seguidas antes de avançar
+const TIMEOUT_POR_PASSO_FACIAL_MS = 12000; // não conseguiu cumprir o passo? pula sozinho — nunca trava o cadastro
+
+function mediaPontosFaciais(pontos) {
+  const soma = pontos.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 });
+  return { x: soma.x / pontos.length, y: soma.y / pontos.length };
+}
+
+// Estima a pose (giro horizontal, inclinação vertical, tamanho aparente do
+// rosto no quadro) a partir dos 68 pontos de referência do face-api —
+// aproximação leve o bastante pra rodar em tempo real num tablet, longe da
+// precisão de um modelo 3D de pose, mas suficiente pra comparar contra a
+// própria referência da pessoa (ver comentário acima da lista de passos).
+function calcularPoseFacial(deteccao) {
+  const pts = deteccao.landmarks.positions;
+  const jawEsq = pts[0];
+  const jawDir = pts[16];
+  const baseNariz = pts[33];
+  const queixo = pts[8];
+  const olhoEsq = mediaPontosFaciais(pts.slice(36, 42));
+  const olhoDir = mediaPontosFaciais(pts.slice(42, 48));
+
+  const larguraRosto = Math.hypot(jawDir.x - jawEsq.x, jawDir.y - jawEsq.y) || 1;
+  const meioJawX = (jawEsq.x + jawDir.x) / 2;
+  const yaw = (baseNariz.x - meioJawX) / larguraRosto;
+
+  const linhaOlhosY = (olhoEsq.y + olhoDir.y) / 2;
+  const alturaRosto = Math.abs(queixo.y - linhaOlhosY) || 1;
+  const pitch = (baseNariz.y - linhaOlhosY) / alturaRosto;
+
+  return { yaw, pitch, tamanho: larguraRosto };
+}
+
+// Decide se o passo atual foi cumprido, sempre relativo à pose de referência
+// (capturada no passo "centro"). Limiares generosos de propósito — o
+// objetivo é confirmar um movimento real, não medir com precisão. Efeito
+// colateral de propósito: ao confirmar "giro1", grava em `contexto` pra que
+// "giro2" saiba exigir o sentido OPOSTO do giro que já foi feito.
+function passoFacialCumprido(passoId, poseAtual, poseBase, contexto) {
+  if (!poseBase) return false;
+  const deltaYaw = poseAtual.yaw - poseBase.yaw;
+  const deltaPitch = poseAtual.pitch - poseBase.pitch;
+  const razaoTamanho = poseAtual.tamanho / poseBase.tamanho;
+
+  switch (passoId) {
+    case 'giro1':
+      if (Math.abs(deltaYaw) > 0.13) {
+        contexto.direcaoGiro1 = Math.sign(deltaYaw);
+        return true;
+      }
+      return false;
+    case 'giro2':
+      return Math.abs(deltaYaw) > 0.13 && Math.sign(deltaYaw) !== contexto.direcaoGiro1;
+    case 'perto':
+      return razaoTamanho > 1.15;
+    case 'longe':
+      return razaoTamanho < 0.87;
+    case 'cima':
+      return deltaPitch < -0.13;
+    case 'baixo':
+      return deltaPitch > 0.13;
+    case 'final':
+      return Math.abs(deltaYaw) < 0.08 && Math.abs(deltaPitch) < 0.1 && razaoTamanho > 0.85 && razaoTamanho < 1.15;
+    default:
+      return false;
+  }
+}
+
 // Lógica de cadastro facial compartilhada entre "vincular" (aluno já existia)
 // e o passo final do auto cadastro novo — ambos só diferem no CPF usado e no
-// que fazer ao concluir.
+// que fazer ao concluir. Conduz a sequência de PASSOS_CAPTURA_GUIADA acima
+// antes de mandar o descritor pro servidor.
 async function iniciarCadastroFacial({ video, statusEl, cpf, aoConcluir }) {
+  const painel = statusEl.closest('.painel-identificar');
+  const circulo = video.closest('.video-wrap')?.querySelector('.guia-facial-circulo') || null;
+  const barraProgresso = painel ? painel.querySelector('.guia-facial-progresso-barra') : null;
+  if (barraProgresso) barraProgresso.style.width = '0%';
+  if (circulo) circulo.classList.remove('guia-ativo', 'guia-ok');
+
   try {
     statusEl.textContent = 'Carregando...';
     await carregarModelosFaciais();
     await iniciarCamera(video);
-    statusEl.textContent = 'Posicione seu rosto no centro da câmera...';
   } catch (err) {
     statusEl.textContent = `Erro: ${err.message}`;
     return;
   }
 
-  const tick = async () => {
-    // Mesma proteção do escaneamento contínuo: espera o quadro estar pronto e
-    // processa numa cópia reduzida (ver LARGURA_MAX_PROCESSAMENTO), pra não
-    // travar com a resolução nativa da webcam USB; e não deixa um erro
-    // pontual de detecção (frame instável) parar o loop de vez.
-    if (!elementoCameraPronto(video)) {
-      setTimeout(tick, 400);
-      return;
+  let passoAtual = 0;
+  let poseBase = null;
+  let quadrosConfirmandoPasso = 0;
+  let inicioPassoEm = Date.now();
+  const contexto = { direcaoGiro1: 0 };
+
+  function atualizarUI() {
+    const passo = PASSOS_CAPTURA_GUIADA[passoAtual];
+    if (!passo) return;
+    statusEl.textContent = passo.instrucao;
+    if (barraProgresso) {
+      const pct = Math.round((passoAtual / (PASSOS_CAPTURA_GUIADA.length - 1)) * 100);
+      barraProgresso.style.width = `${pct}%`;
     }
-    const quadro = desenharQuadroProcessamento(video);
-    // Mesmo cooldown do escaneamento contínuo (ver
-    // INTERVALO_MINIMO_RECONHECIMENTO_PESADO_MS): só roda a etapa pesada
-    // (landmarks + descritor) quando a barata já achou uma caixa de rosto, e
-    // no máximo uma vez a cada intervalo — evita travar enquanto a pessoa
-    // ainda está se posicionando pro cadastro.
-    let deteccao = null;
-    let rostoPresente = false;
+  }
+  atualizarUI();
+
+  function marcarPassoOk() {
+    if (!circulo) return;
+    circulo.classList.remove('guia-ativo');
+    circulo.classList.add('guia-ok');
+    setTimeout(() => circulo.classList.remove('guia-ok'), 300);
+  }
+
+  function avancarPasso() {
+    quadrosConfirmandoPasso = 0;
+    inicioPassoEm = Date.now();
+    passoAtual += 1;
+    atualizarUI();
+  }
+
+  async function concluirCaptura(deteccaoFinal) {
+    pararCamera();
+    statusEl.textContent = 'Cadastrando...';
     try {
-      rostoPresente = await temRostoNoQuadro(quadro);
-    } catch {
-      // ignora erro pontual da detecção barata
+      await api('/api/terminal/vincular/facial', {
+        method: 'POST',
+        body: JSON.stringify({ cpf, descriptor: Array.from(deteccaoFinal.descriptor) }),
+      });
+      statusEl.textContent = 'Rosto cadastrado com sucesso!';
+      if (barraProgresso) barraProgresso.style.width = '100%';
+      setTimeout(() => { if (aoConcluir) aoConcluir(); }, 3000);
+    } catch (err2) {
+      statusEl.textContent = `Erro ao cadastrar: ${err2.message}`;
+    } finally {
+      passoAtual = PASSOS_CAPTURA_GUIADA.length; // sinaliza pro loop parar de reagendar
     }
-    if (rostoPresente) {
-      const agora = Date.now();
-      if (agora - ultimaTentativaReconhecimentoPesadoEm >= INTERVALO_MINIMO_RECONHECIMENTO_PESADO_MS) {
-        ultimaTentativaReconhecimentoPesadoEm = agora;
+  }
+
+  const tick = async () => {
+    // Mesma proteção do escaneamento contínuo (2026-07-20): TUDO fica dentro
+    // do try, e o próximo quadro é sempre reagendado no finally — um erro
+    // pontual (frame instável, canvas indisponível por um instante) nunca
+    // deve travar o cadastro guiado pra sempre.
+    try {
+      if (!elementoCameraPronto(video)) return;
+
+      const quadro = desenharQuadroProcessamento(video);
+      let deteccao = null;
+      let rostoPresente = false;
+      try {
+        rostoPresente = await temRostoNoQuadro(quadro);
+      } catch {
+        // ignora erro pontual da detecção barata
+      }
+      if (rostoPresente) {
         try {
           deteccao = await detectarRosto(quadro);
         } catch {
-          // ignora erro pontual e segue tentando
+          // ignora erro pontual da etapa pesada
         }
       }
-    }
-    if (deteccao) {
-      pararCamera();
-      try {
-        await api('/api/terminal/vincular/facial', {
-          method: 'POST',
-          body: JSON.stringify({ cpf, descriptor: Array.from(deteccao.descriptor) }),
-        });
-        statusEl.textContent = 'Rosto cadastrado com sucesso!';
-        setTimeout(() => { if (aoConcluir) aoConcluir(); }, 3000);
-      } catch (err2) {
-        statusEl.textContent = `Erro ao cadastrar: ${err2.message}`;
+
+      if (!deteccao) {
+        quadrosConfirmandoPasso = 0;
+        if (circulo) circulo.classList.remove('guia-ativo');
+        return;
       }
-      return;
+
+      const pose = calcularPoseFacial(deteccao);
+      const passo = PASSOS_CAPTURA_GUIADA[passoAtual];
+      if (!passo) return; // já concluído/cancelado
+
+      if (passo.id === 'centro') {
+        // Passo inicial: a própria pose vira a referência — só precisa
+        // segurar parado por alguns quadros seguidos pra calibrar direito
+        // (evita calibrar em cima de um quadro tremido/borrado).
+        poseBase = pose;
+        quadrosConfirmandoPasso += 1;
+        if (circulo) circulo.classList.add('guia-ativo');
+        if (quadrosConfirmandoPasso >= QUADROS_PARA_CONFIRMAR_PASSO_FACIAL) {
+          marcarPassoOk();
+          avancarPasso();
+        } else if (Date.now() - inicioPassoEm > TIMEOUT_POR_PASSO_FACIAL_MS) {
+          // Não conseguiu ficar parado o suficiente pra calibrar direito —
+          // melhor cadastrar com o que já temos do que travar aqui.
+          await concluirCaptura(deteccao);
+        }
+        return;
+      }
+
+      const cumprido = passoFacialCumprido(passo.id, pose, poseBase, contexto);
+
+      if (passo.id === 'final') {
+        if (cumprido) {
+          quadrosConfirmandoPasso += 1;
+          if (circulo) circulo.classList.add('guia-ativo');
+          if (quadrosConfirmandoPasso >= QUADROS_PARA_CONFIRMAR_PASSO_FACIAL) {
+            await concluirCaptura(deteccao);
+          }
+        } else {
+          quadrosConfirmandoPasso = 0;
+          if (circulo) circulo.classList.remove('guia-ativo');
+          // Mesma rede de segurança dos passos de movimento: se a pessoa não
+          // conseguir voltar exatamente pro centro, captura com a última
+          // detecção válida em vez de travar o cadastro na última tela.
+          if (Date.now() - inicioPassoEm > TIMEOUT_POR_PASSO_FACIAL_MS) {
+            await concluirCaptura(deteccao);
+          }
+        }
+        return;
+      }
+
+      if (cumprido) {
+        quadrosConfirmandoPasso += 1;
+        if (circulo) circulo.classList.add('guia-ativo');
+        if (quadrosConfirmandoPasso >= QUADROS_PARA_CONFIRMAR_PASSO_FACIAL) {
+          marcarPassoOk();
+          avancarPasso();
+        }
+      } else {
+        quadrosConfirmandoPasso = 0;
+        if (circulo) circulo.classList.remove('guia-ativo');
+        // Passo demorando demais (câmera ruim, ângulo difícil pra essa
+        // pessoa/aparelho): pula sozinho em vez de travar o cadastro pra
+        // sempre — melhor terminar sem 100% da sequência do que deixar a
+        // pessoa presa numa tela sem conseguir continuar.
+        if (Date.now() - inicioPassoEm > TIMEOUT_POR_PASSO_FACIAL_MS) {
+          avancarPasso();
+        }
+      }
+    } catch (err) {
+      console.error('Erro num ciclo do cadastro facial guiado (ignorado — tentando de novo):', err);
+    } finally {
+      if (passoAtual < PASSOS_CAPTURA_GUIADA.length) {
+        setTimeout(tick, 400);
+      }
     }
-    setTimeout(tick, 400);
   };
   tick();
 }

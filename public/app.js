@@ -199,6 +199,7 @@ function mostrarApp() {
   document.getElementById('nav-catraca').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
   document.getElementById('nav-recuperacao').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
   document.getElementById('btn-acessos-recentes').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
+  document.getElementById('btn-liberar-rapido').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
   document.getElementById('grupo-gerar-recorrentes').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
   carregarSecao('alunos');
   // Aviso de aniversariantes de hoje (feature de Recuperação de Clientes) —
@@ -390,6 +391,32 @@ function fecharJanelaCatraca() {
   document.getElementById('janela-catraca').classList.add('oculto');
 }
 document.getElementById('btn-fechar-janela-catraca').addEventListener('click', fecharJanelaCatraca);
+
+// ---------------- Liberar rápido (atalho no menu lateral) ----------------
+// Mesma ação do modo "Liberar somente um acesso" (sem indicar pessoa) da janela
+// da catraca, só que num único clique direto do menu, sem precisar abrir a
+// janela inteira — pensado pro dia a dia da recepção (alguém chega, clica,
+// libera). A janela completa da catraca continua existindo do jeito que já
+// era, com todas as opções (indicar pessoa, pânico, IP/porta manual etc.).
+document.getElementById('btn-liberar-rapido').addEventListener('click', async () => {
+  const botao = document.getElementById('btn-liberar-rapido');
+  botao.disabled = true;
+  try {
+    await api('/api/terminal/catraca/liberar', {
+      method: 'POST',
+      body: JSON.stringify({ mensagem: 'Liberação rápida pelo menu lateral' }),
+    });
+    mostrarToast('Catraca liberada.');
+    // Se a janela da catraca estiver aberta, atualiza o histórico dela também.
+    if (!document.getElementById('janela-catraca').classList.contains('oculto')) {
+      carregarAcessosCatraca();
+    }
+  } catch (err) {
+    mostrarToast(err.message, true);
+  } finally {
+    botao.disabled = false;
+  }
+});
 
 // Torna uma janela flutuante arrastável a partir de uma "alça" (ex.: a barra do topo).
 // Reaproveitável para outras janelas flutuantes que venham a existir no futuro.
@@ -3866,8 +3893,9 @@ document.getElementById('btn-recup-ativos-enviar-selecionados').addEventListener
 });
 
 // ---------- Visitantes (2026-07) ----------
-// Relatório de quem entrou como visitante — acessos usados (contra o limite
-// configurável) e quem indicou (ver GET /api/recuperacao/visitantes) — mesmo
+// Relatório de quem entrou como visitante — período de acesso gratuito
+// (2026-07-19: dias corridos a partir da primeira liberação, não mais número
+// de acessos) e quem indicou (ver GET /api/recuperacao/visitantes) — mesmo
 // mecanismo de envio de sempre pra tentar captar matrícula.
 
 async function carregarVisitantes() {
@@ -3893,14 +3921,23 @@ async function carregarVisitantes() {
     linhas.forEach((linha) => {
       recupEstado.visitantesCache.set(linha.aluno_id, linha);
       const cadastradoEm = formatarDataOuDataHora(linha.criado_em);
-      const acessosTexto = `${linha.acessos_usados}/${linha.limite_acessos}`;
+      // 2026-07-19: período gratuito em dias corridos, não mais número de
+      // acessos — ver comentário em GET /api/recuperacao/visitantes.
+      let statusTexto;
+      if (!linha.visitante_liberado_em) {
+        statusTexto = 'Ainda não entrou';
+      } else if (linha.expira_em) {
+        statusTexto = `Expira em ${formatarDataOuDataHora(linha.expira_em)}`;
+      } else {
+        statusTexto = `${linha.limite_dias} dia(s) a partir de ${formatarDataOuDataHora(linha.visitante_liberado_em)}`;
+      }
       const tr = el(`
         <tr style="${linha.limite_atingido ? 'background:#fff7ed' : ''}">
           <td><input type="checkbox" class="recup-visitantes-check" style="width:auto" /></td>
           <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${escapeHtml(linha.nome)}</span></td>
           <td>${cadastradoEm}</td>
           <td>${escapeHtml(linha.indicado_por_nome) || '—'}</td>
-          <td>${acessosTexto}${linha.limite_atingido ? ' <span class="badge atrasado">Limite atingido</span>' : ''}</td>
+          <td>${statusTexto}${linha.limite_atingido ? ' <span class="badge atrasado">Período encerrado</span>' : ''}</td>
         </tr>
       `);
       tr.querySelector('.nome-clicavel').addEventListener('click', () => abrirPerfilAluno(linha.aluno_id));

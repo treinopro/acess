@@ -34,13 +34,24 @@ async function carregarSessaoSFace() {
   if (sessaoSFace) return sessaoSFace;
   if (sessaoSFaceCarregando) return sessaoSFaceCarregando;
   sessaoSFaceCarregando = (async () => {
-    ort.env.wasm.wasmPaths = ONNX_WASM_DIR;
+    // 2026-07-27: caminho relativo cru ("vendor/onnx/runtime/") funciona pro
+    // fetch() do .wasm, mas o onnxruntime-web carrega o .mjs (glue code do
+    // Emscripten que instancia o .wasm) via import() dinâmico — e um
+    // especificador relativo sem "./" na frente não é uma URL válida pra
+    // import() (erro real visto em produção: "Module name,
+    // '.../ort-wasm-simd-threaded.mjs' does not resolve to a valid URL").
+    // Resolvendo pra URL absoluta (baseado na própria página, funciona igual
+    // em portal.html/terminal.html/index.html/cadastro-mobile.html, todos na
+    // raiz de public/) evita esse problema de vez.
+    ort.env.wasm.wasmPaths = new URL(ONNX_WASM_DIR, document.baseURI).href;
     // Força execução single-thread, sem Web Worker: o modo multi-thread do
     // onnxruntime-web depende de SharedArrayBuffer, que só fica disponível
-    // com cabeçalhos COOP/COEP no servidor (não configurados aqui) — sem
-    // isso, o modo multi-thread cai num arquivo .mjs de worker que nem foi
-    // baixado pro vendor/. Modelo é pequeno (SFace int8 ~10MB), single-thread
-    // já roda rápido o bastante num tablet/celular comum.
+    // com cabeçalhos COOP/COEP no servidor (não configurados aqui). Modelo é
+    // pequeno (SFace int8 ~10MB), single-thread já roda rápido o bastante
+    // num tablet/celular comum. (O .mjs ao lado do .wasm em vendor/onnx/
+    // runtime/ não é opcional pra rodar em Worker — é o glue code do
+    // Emscripten que instancia o .wasm; precisa estar lá mesmo com
+    // numThreads=1.)
     ort.env.wasm.numThreads = 1;
     ort.env.wasm.proxy = false;
     sessaoSFace = await ort.InferenceSession.create(SFACE_MODEL_URL, {

@@ -9,6 +9,9 @@
      necessário se o aluno optar por cadastrar o rosto por aqui. -->
 <script src="vendor/qrcode.min.js"></script>
 <script src="vendor/face-api/face-api.min.js"></script>
+<script src="vendor/onnx/runtime/ort.wasm.min.js"></script>
+<script src="facial-sface.js"></script>
+<script src="facial-guiado.js"></script>
 
 <style>
   * { box-sizing: border-box; }
@@ -58,6 +61,28 @@
   .aviso-vencimento.vencido { background: #450a0a; color: #fca5a5; border: 1px solid #b91c1c; }
   video { border-radius: 16px; width: 280px; height: 210px; object-fit: cover; background: #000; transform: scaleX(-1); }
   .status-scan { color: #94a3b8; font-size: 14px; margin-top: 8px; min-height: 20px; }
+
+  /* Cadastro facial guiado (liveness) — mesmo visual usado no totem (ver
+     terminal.html): círculo sobre o vídeo que muda de cor conforme o passo
+     atual, e barra de progresso da sequência. */
+  .video-wrap { position: relative; display: flex; justify-content: center; margin-bottom: 8px; }
+  .guia-facial-circulo {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: 64%; aspect-ratio: 1 / 1; max-width: 190px;
+    border-radius: 50%; border: 4px solid rgba(255, 255, 255, 0.4);
+    box-sizing: border-box; pointer-events: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+  .guia-facial-circulo.guia-ativo { border-color: #fbbf24; }
+  .guia-facial-circulo.guia-ok { border-color: #10b981; box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.2); }
+  .guia-facial-progresso {
+    width: 100%; max-width: 260px; height: 6px; border-radius: 999px;
+    background: #0f172a; margin: 10px auto 0; overflow: hidden;
+  }
+  .guia-facial-progresso-barra {
+    height: 100%; width: 0%; background: #10b981; border-radius: 999px;
+    transition: width 0.3s ease;
+  }
 
   .comprovante .linha { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed #334155; }
   .comprovante .linha:last-child { border-bottom: none; font-weight: 700; }
@@ -182,8 +207,12 @@
     <!-- Cadastro facial -->
     <div class="cartao oculto" id="painel-hub-facial">
       <h3>Cadastrar reconhecimento facial</h3>
-      <div style="display:flex;justify-content:center;margin-bottom:8px"><video id="video-facial-hub" autoplay muted playsinline></video></div>
+      <div class="video-wrap">
+        <video id="video-facial-hub" autoplay muted playsinline></video>
+        <div class="guia-facial-circulo"></div>
+      </div>
       <div class="status-scan" id="status-facial-hub">Posicione seu rosto no centro da câmera...</div>
+      <div class="guia-facial-progresso"><div class="guia-facial-progresso-barra"></div></div>
     </div>
 
     <button class="link-voltar" id="btn-voltar-hub">&larr; Voltar</button>
@@ -229,8 +258,12 @@
 
     <div class="cartao oculto" id="painel-cadastro-portal-facial">
       <h3>Cadastrar reconhecimento facial</h3>
-      <div style="display:flex;justify-content:center;margin-bottom:8px"><video id="video-cadastro-portal-facial" autoplay muted playsinline></video></div>
+      <div class="video-wrap">
+        <video id="video-cadastro-portal-facial" autoplay muted playsinline></video>
+        <div class="guia-facial-circulo"></div>
+      </div>
       <div class="status-scan" id="status-cadastro-portal-facial">Posicione seu rosto no centro da câmera...</div>
+      <div class="guia-facial-progresso"><div class="guia-facial-progresso-barra"></div></div>
     </div>
 
     <button class="link-voltar" id="btn-voltar-cadastro-portal">&larr; Voltar ao início</button>

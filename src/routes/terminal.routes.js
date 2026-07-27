@@ -98,7 +98,7 @@ terminal.post('/acesso/codigo', limitadorIdentificacao, autenticarTerminal, asyn
 // POST /api/terminal/acesso/facial { descriptor: number[128] } — reconhecimento facial recorrente
 terminal.post('/acesso/facial', limitadorIdentificacao, autenticarTerminal, async (req, res, next) => {
   try {
-    const { descriptor } = z.object({ descriptor: z.array(z.number()).min(16) }).parse(req.body);
+    const { descriptor } = z.object({ descriptor: z.array(z.number()).length(128) }).parse(req.body);
     const match = await acessoTerminal.encontrarMelhorMatchFacialParaAcesso(descriptor);
 
     if (!match.aluno) {
@@ -107,28 +107,29 @@ terminal.post('/acesso/facial', limitadorIdentificacao, autenticarTerminal, asyn
     }
 
     if (!match.dentroDoLimite) {
-      // Diagnóstico usado para calibrar FACE_MATCH_THRESHOLD/FACE_MATCH_MARGEM_MINIMA
-      // no .env — o log interno (registrarAcesso) sempre guarda a distância
-      // exata (inclusive do 2o colocado, quando a recusa foi por match
-      // ambíguo — ver acessoTerminal.service.js), mas a RESPOSTA HTTP só
-      // inclui esse detalhe fora de produção. Em produção, devolver a
-      // distância/limite pra quem quer que esteja chamando a rota (com o
-      // TERMINAL_TOKEN, hoje mais exposto por causa da página de cadastro
-      // pelo celular) ajudaria a calibrar tentativas de bypass.
-      const ambiguo = match.distancia <= match.limite; // bateu o limiar, mas foi recusado pela margem do 2o colocado
+      // Diagnóstico usado para calibrar FACE_MATCH_LIMIAR_COSSENO/
+      // FACE_MATCH_MARGEM_MINIMA_COSSENO no .env — o log interno
+      // (registrarAcesso) sempre guarda a similaridade exata (inclusive do
+      // 2o colocado, quando a recusa foi por match ambíguo — ver
+      // acessoTerminal.service.js), mas a RESPOSTA HTTP só inclui esse
+      // detalhe fora de produção. Em produção, devolver a similaridade/limite
+      // pra quem quer que esteja chamando a rota (com o TERMINAL_TOKEN, hoje
+      // mais exposto por causa da página de cadastro pelo celular) ajudaria
+      // a calibrar tentativas de bypass.
+      const ambiguo = match.similaridade >= match.limite; // bateu o limiar, mas foi recusado pela margem do 2o colocado
       const motivo = ambiguo
-        ? `Rosto não reconhecido (match ambíguo: distância ${match.distancia.toFixed(3)} muito perto do 2º colocado ${match.distanciaSegundoMelhor?.toFixed(3)}, limite ${match.limite}).`
-        : `Rosto não reconhecido (mais próximo: distância ${match.distancia.toFixed(3)}, limite ${match.limite}).`;
+        ? `Rosto não reconhecido (match ambíguo: similaridade ${match.similaridade.toFixed(3)} muito perto do 2º colocado ${match.similaridadeSegundoMelhor?.toFixed(3)}, limite ${match.limite}).`
+        : `Rosto não reconhecido (mais próximo: similaridade ${match.similaridade.toFixed(3)}, limite ${match.limite}).`;
       await acessoTerminal.registrarAcesso({ alunoId: null, metodo: 'facial', resultado: 'negado', mensagem: motivo });
       const detalheDiagnostico = process.env.NODE_ENV === 'production'
         ? {}
-        : { distancia: match.distancia, distancia_segundo_melhor: match.distanciaSegundoMelhor, limite: match.limite };
+        : { similaridade: match.similaridade, similaridade_segundo_melhor: match.similaridadeSegundoMelhor, limite: match.limite };
       return res.json({ autorizado: false, motivo: process.env.NODE_ENV === 'production' ? 'Rosto não reconhecido.' : motivo, ...detalheDiagnostico });
     }
 
     const resultado = await acessoTerminal.tentarLiberar({ aluno: match.aluno, metodo: 'facial' });
-    const detalheDistancia = process.env.NODE_ENV === 'production' ? {} : { distancia: match.distancia };
-    res.json({ ...resultado, ...detalheDistancia });
+    const detalheSimilaridade = process.env.NODE_ENV === 'production' ? {} : { similaridade: match.similaridade };
+    res.json({ ...resultado, ...detalheSimilaridade });
   } catch (err) {
     next(err);
   }
@@ -294,7 +295,7 @@ terminal.get('/vincular/codigo', limitadorVinculacao, autenticarTerminal, async 
 // (painel -> perfil do aluno -> aba "Biometria & acesso").
 terminal.post('/vincular/facial', limitadorVinculacao, autenticarTerminalOuCadastroPublico, async (req, res, next) => {
   try {
-    const { cpf, descriptor } = z.object({ cpf: z.string().min(1), descriptor: z.array(z.number()).min(16) }).parse(req.body);
+    const { cpf, descriptor } = z.object({ cpf: z.string().min(1), descriptor: z.array(z.number()).length(128) }).parse(req.body);
     const aluno = await acessoTerminal.buscarAlunoPorCpf(cpf);
     if (!aluno) return res.status(404).json({ erro: 'CPF não encontrado.' });
 

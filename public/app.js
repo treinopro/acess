@@ -1670,10 +1670,15 @@ let rostoDetectadoAgoraPerfil = false;
 
 async function garantirModelosFaciais() {
   if (faceModelsCarregados) return;
+  // 2026-07-27: faceRecognitionNet do face-api não é mais carregado aqui —
+  // o embedding salvo passou a ser o do SFace (ver facial-sface.js), pra
+  // ficar no mesmo formato usado pelo totem/portal/cadastro pelo celular
+  // (reconhecimento é 1:N contra TODOS os alunos, então um descritor de
+  // outro modelo aqui simplesmente nunca bateria com nada).
   await Promise.all([
     faceapi.nets.tinyFaceDetector.loadFromUri(FACE_MODELS_URL_PERFIL),
     faceapi.nets.faceLandmark68Net.loadFromUri(FACE_MODELS_URL_PERFIL),
-    faceapi.nets.faceRecognitionNet.loadFromUri(FACE_MODELS_URL_PERFIL),
+    carregarSessaoSFace(),
   ]);
   faceModelsCarregados = true;
 }
@@ -1768,8 +1773,7 @@ document.getElementById('btn-capturar-facial-perfil').addEventListener('click', 
     status.textContent = 'Analisando rosto...';
     const deteccao = await faceapi
       .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
-      .withFaceLandmarks()
-      .withFaceDescriptor();
+      .withFaceLandmarks();
 
     if (!deteccao) {
       status.textContent = 'Nenhum rosto detectado. Aguarde a borda ficar verde e tente novamente.';
@@ -1777,9 +1781,10 @@ document.getElementById('btn-capturar-facial-perfil').addEventListener('click', 
       return;
     }
 
+    const descriptor = await obterEmbeddingSFace(video, deteccao);
     await api(`/api/alunos/${perfilAtualId}/face`, {
       method: 'PUT',
-      body: JSON.stringify({ descriptor: Array.from(deteccao.descriptor) }),
+      body: JSON.stringify({ descriptor }),
     });
     mostrarToast('Rosto cadastrado com sucesso.');
     pararCameraPerfil();

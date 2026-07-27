@@ -15,8 +15,6 @@
 // abre a catraca nem expõe o código de acesso de outro aluno.
 const CADASTRO_PUBLICO_TOKEN = 'p9QmZ4kR7vXbN2eK6yL1sD8fJ0wA5hT3cG9uY4rM7oV';
 
-const FACE_MODELS_URL = 'vendor/face-api/weights';
-
 async function api(caminho, opcoes = {}) {
   const resp = await fetch(caminho, {
     ...opcoes,
@@ -187,17 +185,13 @@ function mostrarSucesso(resp) {
 }
 
 // ---------------- Passo opcional: reconhecimento facial pelo celular ----------------
+// Carregamento dos modelos e a mecânica de captura (com liveness — mesma
+// sequência de passos guiados do totem) agora vêm de facial-guiado.js. Antes
+// este arquivo cadastrava o rosto na primeira detecção "crua" (sem
+// liveness), igual o portal — mesmo mecanismo divergente relatado em
+// 2026-07-27.
 
 let streamAtual = null;
-let modelosFaciaisCarregados = false;
-
-async function carregarModelosFaciais() {
-  if (modelosFaciaisCarregados) return;
-  await faceapi.nets.tinyFaceDetector.loadFromUri(FACE_MODELS_URL);
-  await faceapi.nets.faceLandmark68Net.loadFromUri(FACE_MODELS_URL);
-  await faceapi.nets.faceRecognitionNet.loadFromUri(FACE_MODELS_URL);
-  modelosFaciaisCarregados = true;
-}
 
 document.getElementById('btn-cadastro-facial').addEventListener('click', async () => {
   mostrarTela('tela-facial');
@@ -210,33 +204,25 @@ document.getElementById('btn-cadastro-facial').addEventListener('click', async (
     streamAtual = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
     video.srcObject = streamAtual;
     await video.play();
-    statusEl.textContent = 'Posicione seu rosto no centro da câmera...';
   } catch (err) {
     statusEl.textContent = `Erro: ${err.message}`;
     return;
   }
 
-  const tick = async () => {
-    const deteccao = await faceapi
-      .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
-      .withFaceLandmarks()
-      .withFaceDescriptor();
-    if (deteccao) {
-      streamAtual.getTracks().forEach((t) => t.stop());
-      try {
-        await api('/api/terminal/vincular/facial', {
-          method: 'POST',
-          body: JSON.stringify({ cpf: cadastroCpfAtual, descriptor: Array.from(deteccao.descriptor) }),
-        });
-        statusEl.textContent = 'Rosto cadastrado com sucesso! Pode fechar esta página e ir até a catraca.';
-      } catch (err2) {
-        statusEl.textContent = `Erro ao cadastrar: ${err2.message}`;
-      }
-      return;
-    }
-    setTimeout(tick, 400);
-  };
-  tick();
+  await executarCadastroFacialGuiado({
+    video,
+    statusEl,
+    enviarDescritor: async (descriptor) => {
+      if (streamAtual) { streamAtual.getTracks().forEach((t) => t.stop()); streamAtual = null; }
+      await api('/api/terminal/vincular/facial', {
+        method: 'POST',
+        body: JSON.stringify({ cpf: cadastroCpfAtual, descriptor }),
+      });
+    },
+    aoConcluir: () => {
+      statusEl.textContent = 'Rosto cadastrado com sucesso! Pode fechar esta página e ir até a catraca.';
+    },
+  });
 });
 
 // ---------------- Inicialização ----------------

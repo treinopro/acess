@@ -59,56 +59,35 @@ function pararCamera() {
   }
 }
 
-let modelosFaciaisCarregados = false;
-let modelosFaciaisCarregando = null;
-async function carregarModelosFaciais() {
-  if (modelosFaciaisCarregados) return;
-  if (modelosFaciaisCarregando) return modelosFaciaisCarregando;
-  modelosFaciaisCarregando = (async () => {
-    await faceapi.nets.tinyFaceDetector.loadFromUri('vendor/face-api/weights');
-    await faceapi.nets.faceLandmark68Net.loadFromUri('vendor/face-api/weights');
-    await faceapi.nets.faceRecognitionNet.loadFromUri('vendor/face-api/weights');
-    modelosFaciaisCarregados = true;
-  })();
-  return modelosFaciaisCarregando;
-}
-
-async function detectarRosto(video) {
-  return faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptor();
-}
-
-// Cadastro facial genérico (usado tanto no hub quanto no fim do cadastro novo).
+// Carregamento dos modelos e a mecânica de captura (com liveness — mesma
+// sequência de passos guiados do totem) agora vêm de facial-guiado.js. Antes
+// este arquivo tinha sua própria versão "crua" (cadastrava na primeira
+// detecção, sem liveness) — era exatamente o mecanismo diferente do totem
+// relatado em 2026-07-27. Aqui só cuidamos do que é específico do portal:
+// carregar câmera/modelos antes e mandar o descritor pro endpoint do portal
+// (com senha) ao final.
 async function iniciarCadastroFacial({ video, statusEl, cpf, senha, aoConcluir }) {
   try {
     statusEl.textContent = 'Carregando...';
     await carregarModelosFaciais();
     await iniciarCamera(video);
-    statusEl.textContent = 'Posicione seu rosto no centro da câmera...';
   } catch (err) {
     statusEl.textContent = `Erro: ${err.message}`;
     return;
   }
 
-  const tick = async () => {
-    if (!streamAtual) return; // câmera foi parada (usuário navegou embora)
-    const deteccao = await detectarRosto(video);
-    if (deteccao) {
+  await executarCadastroFacialGuiado({
+    video,
+    statusEl,
+    enviarDescritor: async (descriptor) => {
       pararCamera();
-      try {
-        await api('/api/portal/vincular/facial', {
-          method: 'POST',
-          body: JSON.stringify({ cpf, senha, descriptor: Array.from(deteccao.descriptor) }),
-        });
-        statusEl.textContent = 'Rosto cadastrado com sucesso!';
-        setTimeout(() => { if (aoConcluir) aoConcluir(); }, 2500);
-      } catch (err2) {
-        statusEl.textContent = `Erro ao cadastrar: ${err2.message}`;
-      }
-      return;
-    }
-    setTimeout(tick, 400);
-  };
-  tick();
+      await api('/api/portal/vincular/facial', {
+        method: 'POST',
+        body: JSON.stringify({ cpf, senha, descriptor }),
+      });
+    },
+    aoConcluir,
+  });
 }
 
 // ---------------- Início ----------------

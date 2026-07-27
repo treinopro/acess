@@ -599,7 +599,7 @@ router.delete('/:id/face', async (req, res, next) => {
 // admin (câmera do computador da recepção), sem precisar levar o aluno ao totem.
 router.put('/:id/face', async (req, res, next) => {
   try {
-    const { descriptor } = z.object({ descriptor: z.array(z.number()).min(16) }).parse(req.body);
+    const { descriptor } = z.object({ descriptor: z.array(z.number()).length(128) }).parse(req.body);
     await acessoTerminal.salvarFaceDescriptor(req.params.id, descriptor);
     res.json({ ok: true });
   } catch (err) {

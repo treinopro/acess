@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS alunos (
   observacoes TEXT,
   biometria_id TEXT, -- referencia/ID do template biometrico cadastrado no leitor externo (catraca/app)
   codigo_acesso TEXT, -- codigo estavel para QR/"cartao de embarque" e fallback manual no totem
-  face_descriptor TEXT, -- descritor facial (JSON, 128 floats do face-api.js) para reconhecimento facial recorrente no totem
+  face_descriptor TEXT, -- embedding facial (JSON, 128 floats do SFace/OpenCV Zoo, normalizado L2 — ver public/facial-sface.js) para reconhecimento facial recorrente no totem. Trocado de face-api.js em 2026-07-27 (ver scripts/zerar-face-descriptor-modelo-antigo.js) — os dois formatos NÃO são comparáveis entre si.
   treino_modo TEXT DEFAULT 'nativo', -- nativo | app_externo (ver tabela "treinos" mais abaixo)
   -- Categoria da pessoa (2026-07 — sistema de modalidades/perfis e visitantes,
   -- ver acessoTerminal.service.js e src/routes/terminal.routes.js). Chamamos

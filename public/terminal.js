@@ -7,10 +7,9 @@
 // o totem perante a API — mantenha o dispositivo fisicamente controlado.
 const TERMINAL_TOKEN = '533910a1b2ff8e90e62194b1b2f61c1e641e724e9d00b2d4f50e96bbce3e9e63';
 
-// URL dos modelos do face-api.js — hospedados localmente em public/vendor/,
-// já que o totem roda numa rede sem internet. Ver README (seção do totem)
-// para o comando que baixa esses arquivos uma vez, num PC com internet.
-const FACE_MODELS_URL = 'vendor/face-api/weights';
+// Modelos do face-api.js, carregamento, pose e cadastro guiado (liveness)
+// agora moram em facial-guiado.js — mesmo mecanismo usado pelo portal remoto
+// e pelo cadastro pelo celular (ver esse arquivo e terminal.html/script).
 
 // Quanto tempo (ms) a tela de resultado fica visível antes de voltar sozinha
 // a escanear. Curto o suficiente para não travar a fila, longo o bastante
@@ -593,65 +592,13 @@ function alturaCamera(el) {
   return USAR_WEBCAM_USB ? el.naturalHeight : el.videoHeight;
 }
 
-// ---------------- Motor de cálculo do TensorFlow.js (usado por dentro do face-api) ----------------
-// O face-api roda a rede neural em cima do TensorFlow.js, que escolhe um
-// "backend" (motor de cálculo) sozinho. Se o navegador do tablet não tiver
-// WebGL disponível/habilitado (comum em tablets mais simples), o TensorFlow.js
-// cai pro backend "cpu" — que faz a conta na CPU, de forma síncrona, e
-// TRAVA a página inteira (cliques, animação, tudo) durante cada detecção.
-// É exatamente o sintoma relatado: a imagem da câmera continua fluida (ela é
-// atualizada pelo próprio navegador, fora do JavaScript), mas a página para
-// de responder bem na hora de tentar reconhecer o rosto.
+// Motor do TensorFlow.js, carregamento dos modelos, OPCOES_DETECTOR_FACIAL,
+// detectarRostoComLandmarks/temRostoNoQuadro e motorTensorflowAtivo agora
+// vêm de facial-guiado.js (mesmo mecanismo do portal e do cadastro pelo
+// celular). Fica só aqui o que é específico do totem: o cooldown entre
+// tentativas pesadas de reconhecimento (abaixo) e o limite de resolução de
+// processamento da câmera do totem/webcam USB.
 //
-// Aqui forçamos o backend "webgl" (usa a GPU do aparelho) explicitamente
-// antes de carregar os modelos — isso deixa cada detecção ordens de
-// magnitude mais rápida quando o aparelho tem WebGL disponível (praticamente
-// todo Android tem). Se por algum motivo não tiver, o TensorFlow.js volta
-// sozinho pro "cpu" (não quebra, só continua lento).
-let motorTensorflowAtivo = 'desconhecido';
-
-async function prepararMotorTensorflow() {
-  try {
-    if (faceapi.tf && typeof faceapi.tf.setBackend === 'function') {
-      await faceapi.tf.setBackend('webgl');
-      await faceapi.tf.ready();
-    }
-  } catch (err) {
-    // Se "webgl" não estiver disponível, deixa o TensorFlow.js decidir
-    // sozinho (cai pro "cpu") — não é um erro fatal, só mais lento.
-  }
-  motorTensorflowAtivo = (faceapi.tf && faceapi.tf.getBackend && faceapi.tf.getBackend()) || 'desconhecido';
-}
-
-// ---------------- Modelos de reconhecimento facial ----------------
-
-let modelosFaciaisCarregados = false;
-let modelosFaciaisCarregando = null;
-
-async function carregarModelosFaciais() {
-  if (modelosFaciaisCarregados) return;
-  if (modelosFaciaisCarregando) return modelosFaciaisCarregando;
-  modelosFaciaisCarregando = (async () => {
-    await prepararMotorTensorflow();
-    await faceapi.nets.tinyFaceDetector.loadFromUri(FACE_MODELS_URL);
-    await faceapi.nets.faceLandmark68Net.loadFromUri(FACE_MODELS_URL);
-    await faceapi.nets.faceRecognitionNet.loadFromUri(FACE_MODELS_URL);
-    modelosFaciaisCarregados = true;
-  })();
-  return modelosFaciaisCarregando;
-}
-
-// inputSize menor (padrão do face-api é 416) = a rede analisa uma versão
-// bem menor de cada quadro, o que acelera MUITO a detecção com uma perda de
-// precisão pequena — mais que suficiente pra alguém posicionado perto da
-// câmera, que é o caso do totem. Foi esse ajuste (junto com a resolução
-// menor da câmera) que resolveu o travamento/lentidão do reconhecimento.
-// Reduzido de 224 pra 160 depois de constatar que o travamento acontece
-// justamente durante o processamento (não no vídeo em si) — valor menor
-// diminui ainda mais o tempo que cada detecção trava a página, sobretudo em
-// aparelhos sem aceleração por GPU disponível pro TensorFlow.js.
-const OPCOES_DETECTOR_FACIAL = new faceapi.TinyFaceDetectorOptions({ inputSize: 160 });
-
 // CAUSA do travamento do navegador durante o reconhecimento (2026-07,
 // confirmado pelo usuário: "quando não tem ninguém na frente da câmera volta
 // a ficar fluida"): a detecção "barata" (TinyFaceDetector sozinho, só achando
@@ -676,21 +623,6 @@ const OPCOES_DETECTOR_FACIAL = new faceapi.TinyFaceDetectorOptions({ inputSize: 
 // repetir a parte pesada em sequência enquanto a pessoa ainda está chegando.
 const INTERVALO_MINIMO_RECONHECIMENTO_PESADO_MS = 1200;
 let ultimaTentativaReconhecimentoPesadoEm = 0;
-
-async function detectarRosto(fonte) {
-  return faceapi
-    .detectSingleFace(fonte, OPCOES_DETECTOR_FACIAL)
-    .withFaceLandmarks()
-    .withFaceDescriptor();
-}
-
-// Só a etapa barata (acha a caixa do rosto, sem landmarks/descritor) — usada
-// pra decidir SE vale a pena pagar o custo da etapa pesada (ver cooldown
-// acima).
-async function temRostoNoQuadro(fonte) {
-  const caixa = await faceapi.detectSingleFace(fonte, OPCOES_DETECTOR_FACIAL);
-  return Boolean(caixa);
-}
 
 // ---------------- Limite de resolução de processamento ----------------
 // A câmera embutida (getUserMedia) já é pedida em 640x480 (ver iniciarCamera),
@@ -831,7 +763,7 @@ async function tickEscaneamento() {
       if (agora - ultimaTentativaReconhecimentoPesadoEm >= INTERVALO_MINIMO_RECONHECIMENTO_PESADO_MS) {
         ultimaTentativaReconhecimentoPesadoEm = agora;
         try {
-          deteccao = await detectarRosto(quadro);
+          deteccao = await detectarRostoComLandmarks(quadro);
         } catch {
           // ignora erros pontuais da etapa pesada (frame mudou/instável nesse
           // meio tempo) e segue tentando no próximo tick
@@ -842,12 +774,29 @@ async function tickEscaneamento() {
     if (!escaneamentoAtivo) return; // pode ter navegado durante o await
 
     if (deteccao) {
-      const descriptor = Array.from(deteccao.descriptor);
-      processarResultadoInicio(() => api('/api/terminal/acesso/facial', {
-        method: 'POST',
-        body: JSON.stringify({ descriptor }),
-      }));
-      return;
+      // 2026-07-27: antes, QUALQUER detecção (mesmo rosto parcial, de lado ou
+      // muito longe) ia direto pro reconhecimento no servidor — foi assim que
+      // aconteceu o caso relatado de reconhecer o aluno errado mostrando só a
+      // parte de cima da cabeça. Um descritor gerado a partir de um
+      // enquadramento ruim não é confiável pra comparar com ninguém, então
+      // essa checagem barra ANTES de gastar uma tentativa de reconhecimento —
+      // ver qualidadeDeteccaoParaReconhecimento em facial-guiado.js.
+      const qualidade = qualidadeDeteccaoParaReconhecimento(deteccao, quadro.width);
+      if (qualidade.ok) {
+        // 2026-07-27: descritor trocado pro embedding do SFace (ver
+        // facial-sface.js) — o antigo (face-api) não é mais usado nem pra
+        // cadastro nem pra reconhecimento (corte seco combinado com o dono
+        // do sistema, ver migração que zera face_descriptor no banco).
+        const descriptor = await obterEmbeddingSFace(quadro, deteccao);
+        processarResultadoInicio(() => api('/api/terminal/acesso/facial', {
+          method: 'POST',
+          body: JSON.stringify({ descriptor }),
+        }));
+        return;
+      }
+      // Rosto de baixa confiança: não manda pro reconhecimento — só deixa a
+      // pessoa se reposicionar, o escaneamento continua normalmente.
+      document.getElementById('status-inicio').textContent = 'Aproxime-se e olhe de frente para a câmera...';
     }
   } catch (err) {
     console.error('Erro num ciclo do escaneamento contínuo (ignorado — tentando de novo no próximo quadro):', err);
@@ -1103,134 +1052,12 @@ document.getElementById('btn-buscar-vincular').addEventListener('click', async (
 });
 
 // ---------------- Cadastro facial guiado (liveness, estilo Face ID) ----------------
-// 2026-07-20, pedido do dono do sistema: em vez de capturar o rosto assim
-// que a primeira detecção válida aparece, guia a pessoa por uma sequência de
-// poses (virar a cabeça pros dois lados, aproximar/afastar do círculo,
-// levantar/abaixar o queixo) antes de capturar de fato — mesma ideia do
-// cadastro de Face ID do iPhone. Dificulta "cadastrar" uma foto impressa ou
-// a tela de outro celular no lugar de um rosto de verdade, e garante que o
-// cadastro sempre termina com a pessoa de frente e centralizada (melhor
-// qualidade pro reconhecimento do dia a dia).
-//
-// Cada passo compara a pose ATUAL contra uma referência tirada no passo
-// "centro" — não usa ângulos fixos em graus, porque cada rosto/câmera/
-// distância é diferente; calibrar relativo à própria pessoa, no início da
-// sequência, é bem mais confiável que um limiar absoluto universal.
-//
-// Sobre "esquerda/direita": a detecção roda sobre o quadro CRU da câmera,
-// não o espelhado que aparece na tela (ver `transform: scaleX(-1)` no CSS),
-// então o sinal matemático de "virou pra que lado" não necessariamente bate
-// com o rótulo esquerda/direita que a pessoa percebe no próprio espelho —
-// e isso não dá pra validar sem um tablet de verdade na mão. Pra não
-// arriscar instrução invertida, os dois passos de giro pedem só "vire pra
-// um lado" / "agora pro lado oposto", sem apostar em qual rótulo é qual —
-// cumpre o objetivo (girar a cabeça nos dois sentidos) sem esse risco.
-const PASSOS_CAPTURA_GUIADA = [
-  { id: 'centro', instrucao: 'Centralize seu rosto no círculo e fique parado...' },
-  { id: 'giro1', instrucao: 'De frente para a câmera, vire o rosto para um dos lados' },
-  { id: 'giro2', instrucao: 'Agora vire para o lado oposto' },
-  { id: 'perto', instrucao: 'Volte a olhar de frente e aproxime seu rosto do círculo' },
-  { id: 'longe', instrucao: 'Agora afaste um pouco o rosto, sem sair do quadro' },
-  { id: 'cima', instrucao: 'Olhando de frente, levante um pouco o queixo' },
-  { id: 'baixo', instrucao: 'Agora abaixe um pouco o queixo' },
-  { id: 'final', instrucao: 'Perfeito! Volte a olhar de frente, centralizado...' },
-];
-
-// 2026-07-22: valores originais (3 quadros / 12s) foram calibrados só com
-// teste sintético, nunca com câmera real — no uso real do totem o cadastro
-// guiado "não funcionava" (relato do dono do sistema). Com 8 passos e 12s de
-// timeout cada, o pior caso (todo passo cai no timeout, sem nenhum
-// movimento reconhecido) levava quase 1min e meio, o que parece
-// completamente travado pra quem está na frente do totem. Reduzido pra um
-// timeout bem mais curto — 6s já é tempo de sobra pra virar/afastar o rosto
-// uma vez que os limiares de pose (ver passoFacialCumprido) também ficaram
-// mais tolerantes — e pra 2 quadros de confirmação, que ainda evita
-// confirmar em cima de um quadro tremido mas não exige quase 1.2s parado.
-const QUADROS_PARA_CONFIRMAR_PASSO_FACIAL = 2; // "segura" a pose por 2 detecções seguidas antes de avançar
-const TIMEOUT_POR_PASSO_FACIAL_MS = 6000; // não conseguiu cumprir o passo? pula sozinho — nunca trava o cadastro
-
-function mediaPontosFaciais(pontos) {
-  const soma = pontos.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 });
-  return { x: soma.x / pontos.length, y: soma.y / pontos.length };
-}
-
-// Estima a pose (giro horizontal, inclinação vertical, tamanho aparente do
-// rosto no quadro) a partir dos 68 pontos de referência do face-api —
-// aproximação leve o bastante pra rodar em tempo real num tablet, longe da
-// precisão de um modelo 3D de pose, mas suficiente pra comparar contra a
-// própria referência da pessoa (ver comentário acima da lista de passos).
-function calcularPoseFacial(deteccao) {
-  const pts = deteccao.landmarks.positions;
-  const jawEsq = pts[0];
-  const jawDir = pts[16];
-  const baseNariz = pts[33];
-  const queixo = pts[8];
-  const olhoEsq = mediaPontosFaciais(pts.slice(36, 42));
-  const olhoDir = mediaPontosFaciais(pts.slice(42, 48));
-
-  const larguraRosto = Math.hypot(jawDir.x - jawEsq.x, jawDir.y - jawEsq.y) || 1;
-  const meioJawX = (jawEsq.x + jawDir.x) / 2;
-  const yaw = (baseNariz.x - meioJawX) / larguraRosto;
-
-  const linhaOlhosY = (olhoEsq.y + olhoDir.y) / 2;
-  const alturaRosto = Math.abs(queixo.y - linhaOlhosY) || 1;
-  const pitch = (baseNariz.y - linhaOlhosY) / alturaRosto;
-
-  return { yaw, pitch, tamanho: larguraRosto };
-}
-
-// Decide se o passo atual foi cumprido, sempre relativo à pose de referência
-// (capturada no passo "centro"). Limiares generosos de propósito — o
-// objetivo é confirmar um movimento real, não medir com precisão. Efeito
-// colateral de propósito: ao confirmar "giro1", grava em `contexto` pra que
-// "giro2" saiba exigir o sentido OPOSTO do giro que já foi feito.
-// 2026-07-22: limiares afrouxados — os originais (0.13 giro/inclinação,
-// 1.15/0.87 aproximar/afastar) exigiam um movimento bem mais exagerado do
-// que uma pessoa faz naturalmente ao seguir a instrução na tela, fazendo a
-// maioria dos passos cair no timeout em vez de confirmar (ver
-// TIMEOUT_POR_PASSO_FACIAL_MS acima). Ainda generosos o bastante pra não
-// confirmar um tremor/ruído da detecção como movimento real.
-function passoFacialCumprido(passoId, poseAtual, poseBase, contexto) {
-  if (!poseBase) return false;
-  const deltaYaw = poseAtual.yaw - poseBase.yaw;
-  const deltaPitch = poseAtual.pitch - poseBase.pitch;
-  const razaoTamanho = poseAtual.tamanho / poseBase.tamanho;
-
-  switch (passoId) {
-    case 'giro1':
-      if (Math.abs(deltaYaw) > 0.09) {
-        contexto.direcaoGiro1 = Math.sign(deltaYaw);
-        return true;
-      }
-      return false;
-    case 'giro2':
-      return Math.abs(deltaYaw) > 0.09 && Math.sign(deltaYaw) !== contexto.direcaoGiro1;
-    case 'perto':
-      return razaoTamanho > 1.10;
-    case 'longe':
-      return razaoTamanho < 0.90;
-    case 'cima':
-      return deltaPitch < -0.09;
-    case 'baixo':
-      return deltaPitch > 0.09;
-    case 'final':
-      return Math.abs(deltaYaw) < 0.1 && Math.abs(deltaPitch) < 0.12 && razaoTamanho > 0.8 && razaoTamanho < 1.2;
-    default:
-      return false;
-  }
-}
-
-// Lógica de cadastro facial compartilhada entre "vincular" (aluno já existia)
-// e o passo final do auto cadastro novo — ambos só diferem no CPF usado e no
-// que fazer ao concluir. Conduz a sequência de PASSOS_CAPTURA_GUIADA acima
-// antes de mandar o descritor pro servidor.
+// A sequência de passos (liveness) e a mecânica de captura em si moram em
+// facial-guiado.js (executarCadastroFacialGuiado), compartilhadas com o
+// portal remoto e o cadastro pelo celular. Aqui só cuidamos do que é
+// específico do totem: carregar modelos/câmera antes (com suporte a webcam
+// USB) e mandar o descritor pro endpoint do totem ao final.
 async function iniciarCadastroFacial({ video, statusEl, cpf, aoConcluir }) {
-  const painel = statusEl.closest('.painel-identificar');
-  const circulo = video.closest('.video-wrap')?.querySelector('.guia-facial-circulo') || null;
-  const barraProgresso = painel ? painel.querySelector('.guia-facial-progresso-barra') : null;
-  if (barraProgresso) barraProgresso.style.width = '0%';
-  if (circulo) circulo.classList.remove('guia-ativo', 'guia-ok');
-
   try {
     statusEl.textContent = 'Carregando...';
     await carregarModelosFaciais();
@@ -1240,156 +1067,20 @@ async function iniciarCadastroFacial({ video, statusEl, cpf, aoConcluir }) {
     return;
   }
 
-  let passoAtual = 0;
-  let poseBase = null;
-  let quadrosConfirmandoPasso = 0;
-  let inicioPassoEm = Date.now();
-  const contexto = { direcaoGiro1: 0 };
-
-  function atualizarUI() {
-    const passo = PASSOS_CAPTURA_GUIADA[passoAtual];
-    if (!passo) return;
-    statusEl.textContent = passo.instrucao;
-    if (barraProgresso) {
-      const pct = Math.round((passoAtual / (PASSOS_CAPTURA_GUIADA.length - 1)) * 100);
-      barraProgresso.style.width = `${pct}%`;
-    }
-  }
-  atualizarUI();
-
-  function marcarPassoOk() {
-    if (!circulo) return;
-    circulo.classList.remove('guia-ativo');
-    circulo.classList.add('guia-ok');
-    setTimeout(() => circulo.classList.remove('guia-ok'), 300);
-  }
-
-  function avancarPasso() {
-    quadrosConfirmandoPasso = 0;
-    inicioPassoEm = Date.now();
-    passoAtual += 1;
-    atualizarUI();
-  }
-
-  async function concluirCaptura(deteccaoFinal) {
-    pararCamera();
-    statusEl.textContent = 'Cadastrando...';
-    try {
+  await executarCadastroFacialGuiado({
+    video,
+    statusEl,
+    elementoCameraPronto,
+    desenharQuadro: desenharQuadroProcessamento,
+    enviarDescritor: async (descriptor) => {
+      pararCamera();
       await api('/api/terminal/vincular/facial', {
         method: 'POST',
-        body: JSON.stringify({ cpf, descriptor: Array.from(deteccaoFinal.descriptor) }),
+        body: JSON.stringify({ cpf, descriptor }),
       });
-      statusEl.textContent = 'Rosto cadastrado com sucesso!';
-      if (barraProgresso) barraProgresso.style.width = '100%';
-      setTimeout(() => { if (aoConcluir) aoConcluir(); }, 3000);
-    } catch (err2) {
-      statusEl.textContent = `Erro ao cadastrar: ${err2.message}`;
-    } finally {
-      passoAtual = PASSOS_CAPTURA_GUIADA.length; // sinaliza pro loop parar de reagendar
-    }
-  }
-
-  const tick = async () => {
-    // Mesma proteção do escaneamento contínuo (2026-07-20): TUDO fica dentro
-    // do try, e o próximo quadro é sempre reagendado no finally — um erro
-    // pontual (frame instável, canvas indisponível por um instante) nunca
-    // deve travar o cadastro guiado pra sempre.
-    try {
-      if (!elementoCameraPronto(video)) return;
-
-      const quadro = desenharQuadroProcessamento(video);
-      let deteccao = null;
-      let rostoPresente = false;
-      try {
-        rostoPresente = await temRostoNoQuadro(quadro);
-      } catch {
-        // ignora erro pontual da detecção barata
-      }
-      if (rostoPresente) {
-        try {
-          deteccao = await detectarRosto(quadro);
-        } catch {
-          // ignora erro pontual da etapa pesada
-        }
-      }
-
-      if (!deteccao) {
-        quadrosConfirmandoPasso = 0;
-        if (circulo) circulo.classList.remove('guia-ativo');
-        return;
-      }
-
-      const pose = calcularPoseFacial(deteccao);
-      const passo = PASSOS_CAPTURA_GUIADA[passoAtual];
-      if (!passo) return; // já concluído/cancelado
-
-      if (passo.id === 'centro') {
-        // Passo inicial: a própria pose vira a referência — só precisa
-        // segurar parado por alguns quadros seguidos pra calibrar direito
-        // (evita calibrar em cima de um quadro tremido/borrado).
-        poseBase = pose;
-        quadrosConfirmandoPasso += 1;
-        if (circulo) circulo.classList.add('guia-ativo');
-        if (quadrosConfirmandoPasso >= QUADROS_PARA_CONFIRMAR_PASSO_FACIAL) {
-          marcarPassoOk();
-          avancarPasso();
-        } else if (Date.now() - inicioPassoEm > TIMEOUT_POR_PASSO_FACIAL_MS) {
-          // Não conseguiu ficar parado o suficiente pra calibrar direito —
-          // melhor cadastrar com o que já temos do que travar aqui.
-          await concluirCaptura(deteccao);
-        }
-        return;
-      }
-
-      const cumprido = passoFacialCumprido(passo.id, pose, poseBase, contexto);
-
-      if (passo.id === 'final') {
-        if (cumprido) {
-          quadrosConfirmandoPasso += 1;
-          if (circulo) circulo.classList.add('guia-ativo');
-          if (quadrosConfirmandoPasso >= QUADROS_PARA_CONFIRMAR_PASSO_FACIAL) {
-            await concluirCaptura(deteccao);
-          }
-        } else {
-          quadrosConfirmandoPasso = 0;
-          if (circulo) circulo.classList.remove('guia-ativo');
-          // Mesma rede de segurança dos passos de movimento: se a pessoa não
-          // conseguir voltar exatamente pro centro, captura com a última
-          // detecção válida em vez de travar o cadastro na última tela.
-          if (Date.now() - inicioPassoEm > TIMEOUT_POR_PASSO_FACIAL_MS) {
-            await concluirCaptura(deteccao);
-          }
-        }
-        return;
-      }
-
-      if (cumprido) {
-        quadrosConfirmandoPasso += 1;
-        if (circulo) circulo.classList.add('guia-ativo');
-        if (quadrosConfirmandoPasso >= QUADROS_PARA_CONFIRMAR_PASSO_FACIAL) {
-          marcarPassoOk();
-          avancarPasso();
-        }
-      } else {
-        quadrosConfirmandoPasso = 0;
-        if (circulo) circulo.classList.remove('guia-ativo');
-        // Passo demorando demais (câmera ruim, ângulo difícil pra essa
-        // pessoa/aparelho): pula sozinho em vez de travar o cadastro pra
-        // sempre — melhor terminar sem 100% da sequência do que deixar a
-        // pessoa presa numa tela sem conseguir continuar.
-        if (Date.now() - inicioPassoEm > TIMEOUT_POR_PASSO_FACIAL_MS) {
-          avancarPasso();
-        }
-      }
-    } catch (err) {
-      console.error('Erro num ciclo do cadastro facial guiado (ignorado — tentando de novo):', err);
-    } finally {
-      if (passoAtual < PASSOS_CAPTURA_GUIADA.length) {
-        setTimeout(tick, 400);
-      }
-    }
-  };
-  tick();
+    },
+    aoConcluir,
+  });
 }
 
 document.getElementById('btn-cadastrar-facial-vincular').addEventListener('click', async () => {

@@ -223,7 +223,7 @@ router.post('/vincular/facial', limitadorVincularFacial, async (req, res, next) 
     const { cpf, senha, descriptor } = z.object({
       cpf: z.string().min(1),
       senha: z.string().min(1),
-      descriptor: z.array(z.number()).min(16),
+      descriptor: z.array(z.number()).length(128), // 128 = tamanho do embedding do SFace (ver public/facial-sface.js)
     }).parse(req.body);
     const autenticado = await autenticarAlunoPortal(cpf, senha);
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });

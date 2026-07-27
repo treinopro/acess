@@ -16,45 +16,34 @@ const filaAcessosOffline = require('./filaAcessosOffline.service');
 const { formatarDataSqliteUtc } = require('../utils/data');
 const totemEventos = require('./totemEventos.service');
 
-// 2026-07-21: baixado de 0.6 pra 0.5 depois de um relato real do dono do
-// sistema — aluno SEM rosto cadastrado liberava a catraca, confundido com
-// outro aluno que TEM rosto cadastrado. 0.6 é o valor que a própria
-// documentação do face-api.js sugere pra "mesma pessoa", mas isso já assume
-// fotos de boa qualidade — numa câmera de tablet, com a resolução/luz de
-// academia, a distância entre pessoas DIFERENTES cai com mais frequência
-// dentro de um limiar tão largo. Um valor menor é mais rígido (nega um
-// aluno de vez em quando, que resolve com CPF/QR) só pra evitar liberar a
-// pessoa errada. Ver também MARGEM_MINIMA_SEGUNDO_MELHOR abaixo, que ataca a
-// mesma causa por outro ângulo.
-//
-// 2026-07-22: 0.5 se mostrou rígido demais no uso real — um aluno que
-// cadastrou o rosto certinho (pelo celular) não era reconhecido pelo totem
-// depois. Subiu pra 0.56: ainda abaixo do 0.6 "padrão" do face-api.js (então
-// continua mais cauteloso que o default), mas dá folga suficiente pra
-// variação natural de luz/ângulo de uma câmera de tablet sem voltar a abrir
-// a brecha do falso positivo original — essa proteção agora depende mais da
-// MARGEM_MINIMA_SEGUNDO_MELHOR abaixo (que compara contra o 2º colocado, não
-// só o limiar absoluto) do que de um limiar super apertado sozinho. Pode ser
-// sobrescrito por FACE_MATCH_THRESHOLD no .env — se a produção (Northflank)
-// já tem essa variável configurada explicitamente, PRECISA ser atualizada lá
-// também; mudar só aqui/no .env local não muda o valor em produção.
-const FACE_MATCH_THRESHOLD = Number(process.env.FACE_MATCH_THRESHOLD || 0.56);
+// 2026-07-27: reconhecimento facial trocado de face-api.js pro SFace
+// (OpenCV Zoo, ver public/facial-sface.js) — modelo bem mais discriminativo,
+// e principalmente: outra métrica. O antigo comparava por DISTÂNCIA
+// EUCLIDIANA (menor = mais parecido, limiar ~0.56 depois de ajustes reais em
+// produção — ver histórico no git). O SFace usa SIMILARIDADE DE COSSENO
+// (maior = mais parecido, 1.0 = idêntico), com 0.363 sendo o limiar que a
+// própria documentação/demo do OpenCV Zoo recomenda pra "mesma pessoa" (ver
+// sface.py no repositório oficial). Por ser uma métrica e uma faixa de
+// valores totalmente diferentes do limiar antigo, o nome da env var também
+// mudou de propósito — reaproveitar FACE_MATCH_THRESHOLD (valor ~0.56, da
+// métrica antiga) aqui seria um limiar sem sentido nenhum pra cosseno.
+// Ainda cauteloso/configurável do mesmo jeito: ver MARGEM_MINIMA_SEGUNDO_
+// MELHOR_COSSENO abaixo, que ataca falso-positivo por outro ângulo (o motivo
+// de existir essa margem é o MESMO caso real relatado 2026-07-21 — aluno sem
+// rosto cadastrado liberando como se fosse outro aluno). Este limiar é só o
+// ponto de partida recomendado pelo OpenCV — pode precisar de ajuste fino
+// depois de uso real no totem, igual aconteceu com o antigo.
+const FACE_MATCH_LIMIAR_COSSENO = Number(process.env.FACE_MATCH_LIMIAR_COSSENO || 0.363);
 
-// Não basta a MENOR distância bater dentro do limiar — se duas pessoas
-// cadastradas ficam quase igualmente próximas do rosto capturado (comum com
-// poucos alunos cadastrados, ou fotos parecidas), escolher só a menor ainda
-// arrisca escolher a pessoa errada. Exige que a melhor distância seja
-// nitidamente menor que a segunda melhor; se ficarem "empatadas" dentro
+// Não basta a MAIOR similaridade bater o limiar — se duas pessoas
+// cadastradas ficam quase igualmente parecidas com o rosto capturado (comum
+// com poucos alunos cadastrados, ou rostos parecidos), escolher só a maior
+// ainda arrisca escolher a pessoa errada. Exige que a melhor similaridade
+// seja nitidamente maior que a segunda melhor; se ficarem "empatadas" dentro
 // dessa margem, o sistema recusa em vez de arriscar (a pessoa tenta de novo
-// ou usa CPF/QR).
-//
-// 2026-07-22: reduzida de 0.07 pra 0.05 junto com a subida do
-// FACE_MATCH_THRESHOLD acima — com um limiar mais folgado, uma margem alta
-// demais passou a recusar até casos de um único bom candidato claramente
-// certo (2º colocado só "meio perto"). 0.05 ainda barra empates genuínos,
-// só é menos agressiva em descartar o candidato certo. Configurável via
-// FACE_MATCH_MARGEM_MINIMA no .env.
-const MARGEM_MINIMA_SEGUNDO_MELHOR = Number(process.env.FACE_MATCH_MARGEM_MINIMA || 0.05);
+// ou usa CPF/QR). Mesma lógica que já existia pro modelo antigo, só invertida
+// (lá era distância — menor melhor —, aqui é similaridade — maior melhor).
+const MARGEM_MINIMA_SEGUNDO_MELHOR_COSSENO = Number(process.env.FACE_MATCH_MARGEM_MINIMA_COSSENO || 0.05);
 
 function gerarCodigoAcesso() {
   // 24 caracteres em base hexadecimal — não sequencial, não adivinhável
@@ -174,22 +163,30 @@ async function buscarAlunoPorCodigoAcesso(codigo) {
   return buscarAlunoPorCodigoAcessoEm(db, codigo);
 }
 
-function distanciaEuclidiana(a, b) {
-  let soma = 0;
-  for (let i = 0; i < a.length; i++) soma += (a[i] - b[i]) ** 2;
-  return Math.sqrt(soma);
+// Normaliza defensivamente antes de comparar — o cliente (facial-sface.js)
+// já manda o embedding normalizado L2, mas não custa garantir aqui também
+// (produto escalar de dois vetores unitários = similaridade de cosseno).
+function similaridadeCosseno(a, b) {
+  let dot = 0, normaA = 0, normaB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normaA += a[i] * a[i];
+    normaB += b[i] * b[i];
+  }
+  const denom = Math.sqrt(normaA) * Math.sqrt(normaB);
+  return denom > 0 ? dot / denom : 0;
 }
 
 /**
- * Compara o descritor facial recebido do totem contra todos os alunos que já
- * têm face_descriptor cadastrado, e retorna o de menor distância dentro do
- * limiar aceito (ou null se ninguém bateu).
+ * Compara o embedding facial (SFace) recebido do totem contra todos os
+ * alunos que já têm face_descriptor cadastrado, e retorna o de maior
+ * similaridade dentro do limiar aceito (ou null se ninguém bateu).
  */
 async function encontrarMelhorMatchFacialEm(cliente, descriptorRecebido) {
   const result = await cliente.execute("SELECT * FROM alunos WHERE face_descriptor IS NOT NULL");
   let melhor = null;
-  let menorDistancia = Infinity;
-  let segundaMenorDistancia = Infinity; // 2o colocado — ver MARGEM_MINIMA_SEGUNDO_MELHOR
+  let maiorSimilaridade = -Infinity;
+  let segundaMaiorSimilaridade = -Infinity; // 2o colocado — ver MARGEM_MINIMA_SEGUNDO_MELHOR_COSSENO
   let candidatosComparados = 0;
 
   for (const aluno of result.rows) {
@@ -202,37 +199,37 @@ async function encontrarMelhorMatchFacialEm(cliente, descriptorRecebido) {
     if (!Array.isArray(descritorSalvo) || descritorSalvo.length !== descriptorRecebido.length) continue;
 
     candidatosComparados += 1;
-    const distancia = distanciaEuclidiana(descriptorRecebido, descritorSalvo);
-    if (distancia < menorDistancia) {
-      segundaMenorDistancia = menorDistancia;
-      menorDistancia = distancia;
+    const similaridade = similaridadeCosseno(descriptorRecebido, descritorSalvo);
+    if (similaridade > maiorSimilaridade) {
+      segundaMaiorSimilaridade = maiorSimilaridade;
+      maiorSimilaridade = similaridade;
       melhor = aluno;
-    } else if (distancia < segundaMenorDistancia) {
-      segundaMenorDistancia = distancia;
+    } else if (similaridade > segundaMaiorSimilaridade) {
+      segundaMaiorSimilaridade = similaridade;
     }
   }
 
-  // 2026-07-21: não basta a MENOR distância bater dentro do limiar — se duas
-  // pessoas cadastradas ficam quase igualmente próximas do rosto capturado
-  // (ex.: poucos alunos cadastrados ainda, ou fotos parecidas), escolher só
-  // a menor arrisca escolher a pessoa errada (foi exatamente o bug
-  // relatado: aluno sem rosto cadastrado liberando como se fosse outro
-  // aluno). Só considera "dentro do limite" quando, além de bater o
-  // FACE_MATCH_THRESHOLD, a melhor distância é nitidamente menor que a
-  // segunda melhor — com um único candidato cadastrado (segundaMenorDistancia
-  // continua Infinity), essa exigência não se aplica.
-  const margemSuficiente = !Number.isFinite(segundaMenorDistancia)
-    || (segundaMenorDistancia - menorDistancia) >= MARGEM_MINIMA_SEGUNDO_MELHOR;
-  // Sempre devolve o melhor candidato e a distância, mesmo fora do limiar —
-  // útil para diagnosticar/ajustar FACE_MATCH_THRESHOLD durante os testes.
-  const dentroDoLimite = Boolean(melhor) && menorDistancia <= FACE_MATCH_THRESHOLD && margemSuficiente;
+  // Não basta a MAIOR similaridade bater o limiar — se duas pessoas
+  // cadastradas ficam quase igualmente parecidas com o rosto capturado
+  // (ex.: poucos alunos cadastrados ainda, ou rostos parecidos), escolher só
+  // a maior arrisca escolher a pessoa errada (mesma categoria do bug real
+  // relatado 2026-07-21 com o modelo antigo). Só considera "dentro do
+  // limite" quando, além de bater o FACE_MATCH_LIMIAR_COSSENO, a melhor
+  // similaridade é nitidamente maior que a segunda melhor — com um único
+  // candidato cadastrado (segundaMaiorSimilaridade continua -Infinity), essa
+  // exigência não se aplica.
+  const margemSuficiente = !Number.isFinite(segundaMaiorSimilaridade)
+    || (maiorSimilaridade - segundaMaiorSimilaridade) >= MARGEM_MINIMA_SEGUNDO_MELHOR_COSSENO;
+  // Sempre devolve o melhor candidato e a similaridade, mesmo fora do limiar
+  // — útil para diagnosticar/ajustar FACE_MATCH_LIMIAR_COSSENO no uso real.
+  const dentroDoLimite = Boolean(melhor) && maiorSimilaridade >= FACE_MATCH_LIMIAR_COSSENO && margemSuficiente;
   return {
     aluno: melhor,
-    distancia: Number.isFinite(menorDistancia) ? menorDistancia : null,
-    distanciaSegundoMelhor: Number.isFinite(segundaMenorDistancia) ? segundaMenorDistancia : null,
+    similaridade: Number.isFinite(maiorSimilaridade) ? maiorSimilaridade : null,
+    similaridadeSegundoMelhor: Number.isFinite(segundaMaiorSimilaridade) ? segundaMaiorSimilaridade : null,
     dentroDoLimite,
     candidatosComparados,
-    limite: FACE_MATCH_THRESHOLD,
+    limite: FACE_MATCH_LIMIAR_COSSENO,
   };
 }
 

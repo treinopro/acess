@@ -110,12 +110,27 @@ function calcularPoseFacial(deteccao) {
 // servidor comparar; se não passar, o quadro é descartado e a pessoa
 // continua sendo escaneada normalmente (sem travar, sem pedir nada demais de
 // quem já está bem posicionado).
-const CONFIANCA_MINIMA_DETECCAO = 0.7;
-const LARGURA_MINIMA_ROSTO_FRACAO = 0.16; // rosto precisa ocupar pelo menos ~16% da largura do quadro
-const PROPORCAO_MIN_CAIXA_ROSTO = 0.6; // largura/altura da caixa — um rosto de verdade fica nessa faixa
-const PROPORCAO_MAX_CAIXA_ROSTO = 1.35;
-const YAW_MAXIMO_RECONHECIMENTO = 0.32; // limiar absoluto (sem calibração por pessoa, ao contrário do cadastro guiado)
-const PITCH_MAXIMO_RECONHECIMENTO = 0.32;
+// 2026-07-27 (relato real: reconhecimento "não fazia nada" ao voltar pra
+// tela inicial, embora funcionasse logo depois do cadastro guiado): os
+// valores originais abaixo (0.16/0.32/0.32) nunca foram calibrados com
+// câmera real, só escolhidos por precaução. Yaw/pitch aqui são limiares
+// ABSOLUTOS — ao contrário do cadastro guiado, que calibra a pose relativa
+// ao próprio "centro" de cada pessoa (imune ao ângulo de montagem da
+// câmera), aqui não há essa calibração. Se a câmera do totem estiver
+// montada um pouco acima/abaixo da altura dos olhos (bem comum), TODO MUNDO
+// já começa com um pitch "neutro" deslocado — um limiar apertado como 0.32
+// podia estar rejeitando praticamente todo mundo, todas as vezes, sem
+// nenhum aviso visual (só um texto discreto). Afrouxado bem além do que
+// pareceria necessário de propósito: a defesa real contra rosto parcial já
+// vem mais do tamanho/proporção da caixa do que do ângulo fino — pose aqui
+// só precisa barrar casos bem extremos (rosto bem de lado, olhando bem pra
+// baixo/cima), não variação normal de câmera/postura.
+const CONFIANCA_MINIMA_DETECCAO = 0.6;
+const LARGURA_MINIMA_ROSTO_FRACAO = 0.10; // rosto precisa ocupar pelo menos ~10% da largura do quadro
+const PROPORCAO_MIN_CAIXA_ROSTO = 0.55; // largura/altura da caixa — um rosto de verdade fica nessa faixa
+const PROPORCAO_MAX_CAIXA_ROSTO = 1.45;
+const YAW_MAXIMO_RECONHECIMENTO = 0.5;
+const PITCH_MAXIMO_RECONHECIMENTO = 0.5;
 
 function qualidadeDeteccaoParaReconhecimento(deteccao, larguraQuadro) {
   const caixa = deteccao.detection ? deteccao.detection.box : deteccao.box;

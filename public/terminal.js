@@ -773,6 +773,15 @@ async function tickEscaneamento() {
 
     if (!escaneamentoAtivo) return; // pode ter navegado durante o await
 
+    // Círculo-guia (mesmo visual do cadastro guiado, ver facial-guiado.js):
+    // cinza/neutro sem rosto, amarelo com rosto detectado mas ainda não bom
+    // o bastante, verde no instante em que passa a qualidade e tenta
+    // reconhecer. Além de dar feedback pra pessoa se posicionar, deixa
+    // visível NA HORA se o problema é só enquadramento (círculo fica amarelo
+    // e nunca verde) — antes disso, um rosto rejeitado pela checagem de
+    // qualidade não dava nenhum sinal visual, só um texto discreto.
+    const circulo = document.getElementById('guia-facial-inicio');
+
     if (deteccao) {
       // 2026-07-27: antes, QUALQUER detecção (mesmo rosto parcial, de lado ou
       // muito longe) ia direto pro reconhecimento no servidor — foi assim que
@@ -783,20 +792,36 @@ async function tickEscaneamento() {
       // ver qualidadeDeteccaoParaReconhecimento em facial-guiado.js.
       const qualidade = qualidadeDeteccaoParaReconhecimento(deteccao, quadro.width);
       if (qualidade.ok) {
-        // 2026-07-27: descritor trocado pro embedding do SFace (ver
-        // facial-sface.js) — o antigo (face-api) não é mais usado nem pra
-        // cadastro nem pra reconhecimento (corte seco combinado com o dono
-        // do sistema, ver migração que zera face_descriptor no banco).
-        const descriptor = await obterEmbeddingSFace(quadro, deteccao);
-        processarResultadoInicio(() => api('/api/terminal/acesso/facial', {
-          method: 'POST',
-          body: JSON.stringify({ descriptor }),
-        }));
-        return;
+        if (circulo) { circulo.classList.remove('guia-ativo'); circulo.classList.add('guia-ok'); }
+        try {
+          // 2026-07-27: descritor trocado pro embedding do SFace (ver
+          // facial-sface.js) — o antigo (face-api) não é mais usado nem pra
+          // cadastro nem pra reconhecimento (corte seco combinado com o dono
+          // do sistema, ver migração que zera face_descriptor no banco).
+          const descriptor = await obterEmbeddingSFace(quadro, deteccao);
+          processarResultadoInicio(() => api('/api/terminal/acesso/facial', {
+            method: 'POST',
+            body: JSON.stringify({ descriptor }),
+          }));
+          return;
+        } catch (errSFace) {
+          // 2026-07-27: antes, um erro aqui (ex.: modelo/wasm não carregou
+          // direito) era engolido pelo catch de fora sem nenhum aviso — a
+          // tela ficava com "aproxime-se" pra sempre, sem pista nenhuma do
+          // motivo real. Agora aparece no texto de status (visível na tela
+          // do totem, sem precisar de devtools) e o loop continua tentando.
+          console.error('Erro ao calcular o reconhecimento facial (SFace):', errSFace);
+          document.getElementById('status-inicio').textContent = `Erro no reconhecimento facial: ${errSFace.message} (tentando de novo...)`;
+          if (circulo) circulo.classList.remove('guia-ok');
+        }
+      } else {
+        // Rosto de baixa confiança: não manda pro reconhecimento — só deixa a
+        // pessoa se reposicionar, o escaneamento continua normalmente.
+        if (circulo) { circulo.classList.add('guia-ativo'); circulo.classList.remove('guia-ok'); }
+        document.getElementById('status-inicio').textContent = 'Aproxime-se e olhe de frente para a câmera...';
       }
-      // Rosto de baixa confiança: não manda pro reconhecimento — só deixa a
-      // pessoa se reposicionar, o escaneamento continua normalmente.
-      document.getElementById('status-inicio').textContent = 'Aproxime-se e olhe de frente para a câmera...';
+    } else if (circulo) {
+      circulo.classList.remove('guia-ativo', 'guia-ok');
     }
   } catch (err) {
     console.error('Erro num ciclo do escaneamento contínuo (ignorado — tentando de novo no próximo quadro):', err);

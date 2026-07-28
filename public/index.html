@@ -829,6 +829,7 @@
           <button class="relatorio-tab-btn" data-relatorio="acesso-pessoal">Acesso Pessoal</button>
           <button class="relatorio-tab-btn" data-relatorio="ultimo-acesso">Último Acesso</button>
           <button class="relatorio-tab-btn" data-relatorio="pessoas">Pessoas</button>
+          <button class="relatorio-tab-btn" data-relatorio="risco-cancelamento">Risco de Cancelamento</button>
         </div>
 
         <!-- Relatório: Contas a Receber -->
@@ -994,6 +995,33 @@
             <tbody id="rel-pessoas-lista"></tbody>
           </table>
           <p id="rel-pessoas-total" style="font-size:13px;color:#667085;margin-top:8px"></p>
+        </div>
+
+        <!-- Relatório: Risco de Cancelamento (em atraso + sem acesso) — ferramenta de
+             desativação/cancelamento em massa pra quem parou de vir e não paga. -->
+        <div class="relatorio-painel oculto" data-relatorio-painel="risco-cancelamento">
+          <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
+            <div><label>Sem acesso desde</label><input type="date" id="rel-risco-sem-acesso-desde" /></div>
+            <button type="button" class="btn-primario" id="btn-rel-risco-buscar">Filtrar</button>
+          </div>
+          <p style="font-size:13px;color:#667085;margin:8px 0">
+            Mostra alunos <strong>ativos</strong> que têm pelo menos uma mensalidade <strong>em atraso</strong> e não têm nenhum acesso registrado desde a data acima (ou nunca acessaram) — os dois sinais juntos de quem parou de vir e não está pagando.
+          </p>
+          <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#667085">
+              <input type="checkbox" id="rel-risco-selecionar-todos" style="width:auto" /> Selecionar todos
+            </label>
+            <span id="rel-risco-selecionados-contagem" style="font-size:13px;color:#667085"></span>
+            <button type="button" class="btn-secundario perigo" id="btn-rel-risco-desativar" disabled>Desativar cadastro dos selecionados</button>
+            <button type="button" class="btn-secundario perigo" id="btn-rel-risco-cancelar-matriculas" disabled>Cancelar matrícula(s) dos selecionados</button>
+          </div>
+          <table class="tabela">
+            <thead>
+              <tr><th></th><th>Aluno</th><th>CPF</th><th>Telefone</th><th>Valor em atraso</th><th>Último acesso</th></tr>
+            </thead>
+            <tbody id="rel-risco-lista"></tbody>
+          </table>
+          <p id="rel-risco-total" style="font-size:13px;color:#667085;margin-top:8px"></p>
         </div>
       </section>
 

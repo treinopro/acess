@@ -181,6 +181,32 @@ router.patch('/matriculas/:id/status', async (req, res, next) => {
   }
 });
 
+// POST /api/planos/matriculas/cancelar-em-massa { aluno_ids: [...] }
+// Ferramenta de "Risco de Cancelamento" (Relatórios) — cancela de uma vez
+// TODAS as matrículas ativas/pendentes/trancadas de cada aluno informado
+// (mesmo efeito do botão "Cancelar" do perfil, um por um). Interrompe a
+// geração automática de mensalidades futuras; não apaga histórico nenhum.
+router.post('/matriculas/cancelar-em-massa', async (req, res, next) => {
+  try {
+    const { aluno_ids: alunoIds } = z.object({ aluno_ids: z.array(z.string().min(1)).min(1) }).parse(req.body);
+    const resultados = [];
+    for (const alunoId of alunoIds) {
+      try {
+        const result = await db.execute({
+          sql: "UPDATE matriculas SET status = 'cancelada' WHERE aluno_id = ? AND status IN ('ativa', 'pendente', 'trancada')",
+          args: [alunoId],
+        });
+        resultados.push({ aluno_id: alunoId, ok: true, matriculas_canceladas: result.rowsAffected });
+      } catch (err) {
+        resultados.push({ aluno_id: alunoId, ok: false, erro: err.message });
+      }
+    }
+    res.json({ resultados });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/planos/matriculas?aluno_id=...&incluir_inativos=true — lista matrículas
 // (todas ou de um aluno). Ao listar todos os alunos, por padrão só mostra quem está com
 // status='ativo'; passe incluir_inativos=true (checkbox "mostrar inativos") pra ver todos.

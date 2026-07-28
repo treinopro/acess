@@ -3540,6 +3540,7 @@ document.querySelectorAll('.relatorio-tab-btn').forEach((btn) => {
     trocarAbaRelatorio(btn.dataset.relatorio);
     if (btn.dataset.relatorio === 'pessoas') buscarRelatorioPessoas();
     if (btn.dataset.relatorio === 'matriculas') buscarRelatorioMatriculas();
+    if (btn.dataset.relatorio === 'risco-cancelamento') buscarRelatorioRiscoCancelamento();
   });
 });
 
@@ -3916,6 +3917,121 @@ async function buscarRelatorioPessoas() {
 document.getElementById('btn-rel-pessoas-buscar').addEventListener('click', buscarRelatorioPessoas);
 document.getElementById('rel-pessoas-mostrar-inativos').addEventListener('change', buscarRelatorioPessoas);
 document.getElementById('rel-pessoas-so-incompletos').addEventListener('change', buscarRelatorioPessoas);
+
+// ---- Relatório: Risco de Cancelamento (em atraso + sem acesso) ----
+// Cruza duas fontes já existentes — cobranças em atraso (/api/pagamentos/cobrancas)
+// e último acesso por aluno (/api/terminal/acessos/ultimo-por-aluno) — do mesmo
+// jeito que a coluna "risco de cancelamento" da tela de Contas a Receber já faz
+// (ver carregarContas/buscarMapaUltimoAcessoParaContas acima). Só alunos ATIVOS
+// entram aqui (ambos os endpoints já filtram status='ativo' por padrão) — não
+// faz sentido "desativar"/cancelar quem já está inativo.
+let riscoCancelamentoLista = []; // último resultado buscado: [{aluno_id, aluno_nome, aluno_cpf, aluno_telefone, valor_atraso_centavos, ultimo_acesso}]
+const riscoSelecionados = new Set();
+
+async function buscarRelatorioRiscoCancelamento() {
+  try {
+    let semAcessoDesde = document.getElementById('rel-risco-sem-acesso-desde').value;
+    if (!semAcessoDesde) {
+      const padrao = new Date();
+      padrao.setDate(padrao.getDate() - 30);
+      semAcessoDesde = `${padrao.getFullYear()}-${String(padrao.getMonth() + 1).padStart(2, '0')}-${String(padrao.getDate()).padStart(2, '0')}`;
+      document.getElementById('rel-risco-sem-acesso-desde').value = semAcessoDesde;
+    }
+
+    const [contasAtrasadas, acessos] = await Promise.all([
+      api('/api/pagamentos/cobrancas?status=atrasado'),
+      api(`/api/terminal/acessos/ultimo-por-aluno?data_inicio=${semAcessoDesde}&data_fim=${hojeLocalISO()}`),
+    ]);
+    const mapaUltimoAcesso = new Map(acessos.map((a) => [a.aluno_id, a.ultimo_acesso]));
+
+    const porAluno = new Map();
+    contasAtrasadas.forEach((c) => {
+      if (mapaUltimoAcesso.has(c.aluno_id)) return; // teve acesso no período — não é "sumido"
+      const atual = porAluno.get(c.aluno_id) || {
+        aluno_id: c.aluno_id, aluno_nome: c.aluno_nome, aluno_cpf: c.aluno_cpf,
+        aluno_telefone: c.aluno_telefone, valor_atraso_centavos: 0,
+      };
+      atual.valor_atraso_centavos += c.valor_centavos;
+      porAluno.set(c.aluno_id, atual);
+    });
+    riscoCancelamentoLista = Array.from(porAluno.values()).sort((a, b) => b.valor_atraso_centavos - a.valor_atraso_centavos);
+    riscoSelecionados.clear();
+    document.getElementById('rel-risco-selecionar-todos').checked = false;
+
+    const tbody = document.getElementById('rel-risco-lista');
+    tbody.innerHTML = riscoCancelamentoLista.length ? '' : '<tr><td colspan="6">Ninguém encontrado com esses critérios.</td></tr>';
+    riscoCancelamentoLista.forEach((r) => {
+      const tr = el(`
+        <tr>
+          <td><input type="checkbox" class="rel-risco-check" data-id="${r.aluno_id}" /></td>
+          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${escapeHtml(r.aluno_nome)}</span></td>
+          <td>${escapeHtml(r.aluno_cpf) || '—'}</td>
+          <td>${escapeHtml(r.aluno_telefone) || '—'}</td>
+          <td>${formatarMoeda(r.valor_atraso_centavos)}</td>
+          <td><span style="color:#c2410c;font-weight:600">Nunca acessou/sem acesso desde ${formatarDataOuDataHora(semAcessoDesde)}</span></td>
+        </tr>
+      `);
+      tr.querySelector('.nome-clicavel').addEventListener('click', () => abrirPerfilAluno(r.aluno_id));
+      tr.querySelector('.rel-risco-check').addEventListener('change', (ev) => {
+        if (ev.target.checked) riscoSelecionados.add(r.aluno_id); else riscoSelecionados.delete(r.aluno_id);
+        atualizarContagemRiscoSelecionados();
+      });
+      tbody.appendChild(tr);
+    });
+    document.getElementById('rel-risco-total').textContent = riscoCancelamentoLista.length
+      ? `${riscoCancelamentoLista.length} aluno(s) em risco — total em atraso ${formatarMoeda(riscoCancelamentoLista.reduce((s, r) => s + r.valor_atraso_centavos, 0))}`
+      : '';
+    atualizarContagemRiscoSelecionados();
+  } catch (err) { mostrarToast(err.message, true); }
+}
+document.getElementById('btn-rel-risco-buscar').addEventListener('click', buscarRelatorioRiscoCancelamento);
+
+function atualizarContagemRiscoSelecionados() {
+  const n = riscoSelecionados.size;
+  document.getElementById('rel-risco-selecionados-contagem').textContent = n ? `${n} selecionado(s)` : '';
+  document.getElementById('btn-rel-risco-desativar').disabled = n === 0;
+  document.getElementById('btn-rel-risco-cancelar-matriculas').disabled = n === 0;
+}
+
+document.getElementById('rel-risco-selecionar-todos').addEventListener('change', (ev) => {
+  riscoSelecionados.clear();
+  if (ev.target.checked) riscoCancelamentoLista.forEach((r) => riscoSelecionados.add(r.aluno_id));
+  document.querySelectorAll('.rel-risco-check').forEach((chk) => { chk.checked = ev.target.checked; });
+  atualizarContagemRiscoSelecionados();
+});
+
+function nomesParaConfirmacao(ids) {
+  const nomes = ids.map((id) => riscoCancelamentoLista.find((r) => r.aluno_id === id)?.aluno_nome || id);
+  return nomes.length > 4 ? `${nomes.slice(0, 4).join(', ')} e mais ${nomes.length - 4}` : nomes.join(', ');
+}
+
+document.getElementById('btn-rel-risco-desativar').addEventListener('click', async () => {
+  const ids = Array.from(riscoSelecionados);
+  if (!ids.length) return;
+  if (!confirmar(`Isso vai INATIVAR o cadastro de ${ids.length} aluno(s): ${nomesParaConfirmacao(ids)}. Eles deixam de conseguir acessar a academia e somem das listas normais (o cadastro continua salvo — dá pra reativar depois em Alunos > editar > Status). Confirmar?`)) return;
+  try {
+    const { resultados } = await api('/api/alunos/desativar-em-massa', { method: 'POST', body: JSON.stringify({ aluno_ids: ids }) });
+    const erros = resultados.filter((r) => !r.ok);
+    mostrarToast(erros.length
+      ? `${resultados.length - erros.length} desativado(s), ${erros.length} com erro.`
+      : `${resultados.length} aluno(s) desativado(s).`, erros.length > 0);
+    buscarRelatorioRiscoCancelamento();
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+document.getElementById('btn-rel-risco-cancelar-matriculas').addEventListener('click', async () => {
+  const ids = Array.from(riscoSelecionados);
+  if (!ids.length) return;
+  if (!confirmar(`Isso vai CANCELAR a(s) matrícula(s) ativa(s) de ${ids.length} aluno(s): ${nomesParaConfirmacao(ids)}. Isso interrompe a geração automática das próximas mensalidades (o histórico de cobranças já geradas não é apagado). Confirmar?`)) return;
+  try {
+    const { resultados } = await api('/api/planos/matriculas/cancelar-em-massa', { method: 'POST', body: JSON.stringify({ aluno_ids: ids }) });
+    const erros = resultados.filter((r) => !r.ok);
+    const totalCanceladas = resultados.reduce((s, r) => s + (r.matriculas_canceladas || 0), 0);
+    mostrarToast(erros.length
+      ? `${totalCanceladas} matrícula(s) cancelada(s), ${erros.length} aluno(s) com erro.`
+      : `${totalCanceladas} matrícula(s) cancelada(s) em ${resultados.length} aluno(s).`, erros.length > 0);
+  } catch (err) { mostrarToast(err.message, true); }
+});
 
 // ---------------- Painel lateral "Acessos recentes" (persiste entre abas) ----------------
 // Reaproveita o mesmo endpoint /api/terminal/acessos usado na aba Catraca. O painel fica

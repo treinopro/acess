@@ -519,6 +519,39 @@ router.patch('/:id/status', async (req, res, next) => {
   }
 });
 
+// POST /api/alunos/desativar-em-massa { aluno_ids: [...] }
+// Ferramenta de "Risco de Cancelamento" (Relatórios) — inativa o cadastro de
+// vários alunos de uma vez (ex.: quem está em atraso e sumiu da academia).
+// Reaproveita a MESMA lógica do PATCH /:id/status acima, um aluno de cada
+// vez, pra não duplicar o mecanismo de fila/offline — só que sem o
+// enfileiramento pro modo offline (ferramenta de painel administrativo, não
+// crítica pro totem continuar funcionando; se o Turso estiver fora do ar,
+// simplesmente falha e avisa, sem gravar em fila local). Não apaga nada:
+// "inativo" continua reversível a qualquer momento (editar o aluno de volta
+// pra "ativo").
+router.post('/desativar-em-massa', async (req, res, next) => {
+  try {
+    const { aluno_ids: alunoIds } = z.object({ aluno_ids: z.array(z.string().min(1)).min(1) }).parse(req.body);
+    const resultados = [];
+    for (const alunoId of alunoIds) {
+      try {
+        const result = await db.execute({ sql: "UPDATE alunos SET status = 'inativo' WHERE id = ?", args: [alunoId] });
+        if (result.rowsAffected === 0) {
+          resultados.push({ aluno_id: alunoId, ok: false, erro: 'Aluno não encontrado.' });
+          continue;
+        }
+        acessoTerminal.notificarAgenteAtualizacaoAluno(alunoId);
+        resultados.push({ aluno_id: alunoId, ok: true });
+      } catch (err) {
+        resultados.push({ aluno_id: alunoId, ok: false, erro: err.message });
+      }
+    }
+    res.json({ resultados });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // PATCH /api/alunos/:id/biometria  { biometria_id }
 // Ponto de integração com leitores biométricos/catracas: o dispositivo (ou o
 // software dele) cadastra o template no leitor e envia de volta um ID/hash de

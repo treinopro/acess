@@ -2564,7 +2564,10 @@ async function buscarMapaUltimoAcessoParaContas() {
   if (ate) params.set('data_fim', ate);
   try {
     const lista = await api(`/api/terminal/acessos/ultimo-por-aluno?${params.toString()}`);
-    return new Map(lista.map((a) => [a.aluno_id, a.ultimo_acesso]));
+    // Guarda o registro inteiro (não só a data) — agora inclui tentativas
+    // negadas também, então quem consome o mapa precisa saber o resultado
+    // pra não tratar "foi na academia e foi barrado" como "sumiu".
+    return new Map(lista.map((a) => [a.aluno_id, a]));
   } catch (err) {
     // Não trava a listagem de contas se a busca de acessos falhar (ex.: sem permissão) —
     // só fica sem a coluna preenchida.
@@ -2623,17 +2626,22 @@ async function carregarContas() {
       totalValor += c.valor_centavos;
       totalPago += valorPago;
 
-      // Coluna "Último acesso": se não tem nenhum acesso registrado no período escolhido
-      // acima, e a conta está atrasada, isso é o sinal de risco de cancelamento que a
-      // recepção quer enxergar (parou de vir + tem conta em aberto). Se mapaUltimoAcesso
+      // Coluna "Último acesso": se não tem NENHUMA tentativa registrada (liberada OU
+      // negada) no período escolhido acima, e a conta está atrasada, isso é o sinal de
+      // risco de cancelamento que a recepção quer enxergar (parou de vir + tem conta em
+      // aberto) — 2026-07-28: uma tentativa NEGADA (ex.: barrado por mensalidade
+      // atrasada) conta como "ainda está vindo", só não conseguiu entrar; não é a mesma
+      // coisa que ter sumido, e agora é mostrada em vez de escondida. Se mapaUltimoAcesso
       // for null, a busca falhou (ex.: usuário sem permissão de admin) — mostra "—" em
       // vez de dizer "nunca acessou", que seria enganoso.
-      const ultimoAcesso = mapaUltimoAcesso ? mapaUltimoAcesso.get(c.aluno_id) : undefined;
-      const semAcessoNoPeriodo = mapaUltimoAcesso !== null && !ultimoAcesso;
+      const infoAcesso = mapaUltimoAcesso ? mapaUltimoAcesso.get(c.aluno_id) : undefined;
+      const semAcessoNoPeriodo = mapaUltimoAcesso !== null && !infoAcesso;
       const riscoCancelamento = c.status === 'atrasado' && semAcessoNoPeriodo;
       let celulaAcesso;
-      if (ultimoAcesso) {
-        celulaAcesso = formatarDataOuDataHora(ultimoAcesso);
+      if (infoAcesso) {
+        const negado = infoAcesso.resultado !== 'liberado';
+        celulaAcesso = formatarDataOuDataHora(infoAcesso.ultimo_acesso);
+        if (negado) celulaAcesso += ' <span class="badge atrasado" style="margin-left:4px">negado</span>';
       } else if (mapaUltimoAcesso === null) {
         celulaAcesso = '—';
       } else if (periodoAcessoAtivo) {
@@ -3840,12 +3848,15 @@ async function buscarRelatorioUltimoAcesso() {
 
     const lista = await api(`/api/terminal/acessos/ultimo-por-aluno${params.toString() ? '?' + params.toString() : ''}`);
     const tbody = document.getElementById('rel-ultimo-lista');
-    tbody.innerHTML = lista.length ? '' : '<tr><td colspan="2">Nenhum acesso encontrado.</td></tr>';
+    tbody.innerHTML = lista.length ? '' : '<tr><td colspan="3">Nenhum acesso encontrado.</td></tr>';
     lista.forEach((a) => {
+      // 2026-07-28: agora conta tentativa negada também (não só liberada) —
+      // ver comentário em GET /acessos/ultimo-por-aluno (terminal.routes.js).
       const trUltimo = el(`
         <tr>
           <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${escapeHtml(a.aluno_nome)}</span></td>
           <td>${parseDataHoraServidor(a.ultimo_acesso).toLocaleString('pt-BR')}</td>
+          <td><span class="badge ${a.resultado === 'liberado' ? 'ativo' : 'atrasado'}">${escapeHtml(a.resultado)}</span>${a.resultado !== 'liberado' && a.mensagem ? ` <span style="color:#667085;font-size:12px">(${escapeHtml(a.mensagem)})</span>` : ''}</td>
         </tr>
       `);
       trUltimo.querySelector('.nome-clicavel').addEventListener('click', () => abrirPerfilAluno(a.aluno_id));

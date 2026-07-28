@@ -883,30 +883,38 @@ admin.get('/acessos', async (req, res, next) => {
 });
 
 // GET /api/terminal/acessos/ultimo-por-aluno?data_inicio=&data_fim=&busca=&incluir_inativos=
-// relatório "Último Acesso": um registro por aluno, com a data/hora do acesso mais recente
-// (que tenha sido efetivamente liberado). O período, quando informado, restringe quais acessos
-// contam pra esse "mais recente" — útil pra achar quem não vem há tempos. Por padrão só traz
-// alunos com status='ativo'; passe incluir_inativos=true (checkbox "mostrar inativos") pra
-// incluir todo mundo.
+// relatório "Último Acesso": um registro por aluno, com a tentativa de acesso mais recente
+// — liberada OU negada (2026-07-28: antes só contava 'liberado', o que escondia quem estava
+// indo na academia mas sendo barrado — ex.: por mensalidade em atraso — como se tivesse
+// sumido, quando na verdade estava tentando entrar. Ver acessoTerminal.service.js/
+// registrarAcesso pra todos os métodos que gravam aqui). O período, quando informado,
+// restringe quais tentativas contam pra esse "mais recente" — útil pra achar quem não vem
+// há tempos DE VERDADE (nem liberado nem negado). Por padrão só traz alunos com
+// status='ativo'; passe incluir_inativos=true (checkbox "mostrar inativos") pra incluir
+// todo mundo. Devolve também o resultado/mensagem dessa última tentativa, pra quem consome
+// esta rota poder mostrar "negado" em vez de simplesmente omitir.
 admin.get('/acessos/ultimo-por-aluno', async (req, res, next) => {
   try {
     const {
       data_inicio: dataInicio, data_fim: dataFim, busca, incluir_inativos: incluirInativos,
     } = req.query;
-    const condicoes = ["ac.resultado = 'liberado'"];
+    const condicoes = [];
     const args = [];
     if (!(incluirInativos === 'true' || incluirInativos === '1')) { condicoes.push("a.status = 'ativo'"); }
     if (dataInicio) { condicoes.push('date(ac.criado_em) >= ?'); args.push(dataInicio); }
     if (dataFim) { condicoes.push('date(ac.criado_em) <= ?'); args.push(dataFim); }
     if (busca) { condicoes.push('a.nome LIKE ?'); args.push(`%${busca}%`); }
-    const where = `WHERE ${condicoes.join(' AND ')}`;
+    const where = condicoes.length ? `WHERE ${condicoes.join(' AND ')}` : '';
 
     const result = await db.execute({
-      sql: `SELECT a.id as aluno_id, a.nome as aluno_nome, MAX(ac.criado_em) as ultimo_acesso
-            FROM acessos_catraca ac
-            JOIN alunos a ON a.id = ac.aluno_id
-            ${where}
-            GROUP BY a.id, a.nome
+      sql: `SELECT aluno_id, aluno_nome, ultimo_acesso, resultado, mensagem FROM (
+              SELECT a.id as aluno_id, a.nome as aluno_nome, ac.criado_em as ultimo_acesso,
+                     ac.resultado, ac.mensagem,
+                     ROW_NUMBER() OVER (PARTITION BY a.id ORDER BY ac.criado_em DESC) as rn
+              FROM acessos_catraca ac
+              JOIN alunos a ON a.id = ac.aluno_id
+              ${where}
+            ) WHERE rn = 1
             ORDER BY ultimo_acesso DESC`,
       args,
     });

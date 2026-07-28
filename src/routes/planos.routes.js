@@ -185,19 +185,42 @@ router.patch('/matriculas/:id/status', async (req, res, next) => {
 // (todas ou de um aluno). Ao listar todos os alunos, por padrão só mostra quem está com
 // status='ativo'; passe incluir_inativos=true (checkbox "mostrar inativos") pra ver todos.
 // Quando aluno_id é informado (tela do próprio aluno) não filtra por status.
+// data_inicio_de/data_inicio_ate (2026-07): filtro por período pro relatório
+// "Matrículas" (Relatórios) — "a partir da data selecionada" busca
+// m.data_inicio >= data_inicio_de. Campos extras (cpf/telefone/e-mail do
+// aluno, valor do plano) também são só pro relatório (dados completos pra
+// imprimir/exportar) — a tela normal de matrículas do perfil já tem esses
+// dados de outra fonte e ignora os campos a mais.
 router.get('/matriculas', async (req, res, next) => {
   try {
-    const { aluno_id: alunoId, incluir_inativos: incluirInativos } = req.query;
+    const {
+      aluno_id: alunoId, incluir_inativos: incluirInativos,
+      data_inicio_de: dataInicioDe, data_inicio_ate: dataInicioAte,
+    } = req.query;
     const mostrarTodos = incluirInativos === 'true' || incluirInativos === '1';
-    const sql = alunoId
-      ? `SELECT m.*, a.nome as aluno_nome, p.nome as plano_nome FROM matriculas m
-         JOIN alunos a ON a.id = m.aluno_id JOIN planos p ON p.id = m.plano_id
-         WHERE m.aluno_id = ? ORDER BY m.data_inicio DESC`
-      : `SELECT m.*, a.nome as aluno_nome, p.nome as plano_nome FROM matriculas m
-         JOIN alunos a ON a.id = m.aluno_id JOIN planos p ON p.id = m.plano_id
-         ${mostrarTodos ? '' : "WHERE a.status = 'ativo'"}
-         ORDER BY m.data_inicio DESC`;
-    const result = await db.execute({ sql, args: alunoId ? [alunoId] : [] });
+    const colunas = `m.*, a.nome as aluno_nome, a.cpf as aluno_cpf, a.telefone as aluno_telefone,
+                     a.email as aluno_email, p.nome as plano_nome, p.valor_centavos as plano_valor_centavos`;
+    const juncoes = `FROM matriculas m JOIN alunos a ON a.id = m.aluno_id JOIN planos p ON p.id = m.plano_id`;
+
+    if (alunoId) {
+      const result = await db.execute({
+        sql: `SELECT ${colunas} ${juncoes} WHERE m.aluno_id = ? ORDER BY m.data_inicio DESC`,
+        args: [alunoId],
+      });
+      return res.json(result.rows);
+    }
+
+    const condicoes = [];
+    const args = [];
+    if (!mostrarTodos) condicoes.push("a.status = 'ativo'");
+    if (dataInicioDe) { condicoes.push('m.data_inicio >= ?'); args.push(dataInicioDe); }
+    if (dataInicioAte) { condicoes.push('m.data_inicio <= ?'); args.push(dataInicioAte); }
+    const where = condicoes.length ? `WHERE ${condicoes.join(' AND ')}` : '';
+
+    const result = await db.execute({
+      sql: `SELECT ${colunas} ${juncoes} ${where} ORDER BY m.data_inicio DESC`,
+      args,
+    });
     res.json(result.rows);
   } catch (err) {
     next(err);

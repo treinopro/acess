@@ -3539,8 +3539,48 @@ document.querySelectorAll('.relatorio-tab-btn').forEach((btn) => {
   btn.addEventListener('click', () => {
     trocarAbaRelatorio(btn.dataset.relatorio);
     if (btn.dataset.relatorio === 'pessoas') buscarRelatorioPessoas();
+    if (btn.dataset.relatorio === 'matriculas') buscarRelatorioMatriculas();
   });
 });
+
+// ---- Impressão/exportação de relatórios (via diálogo de impressão do navegador —
+// "Salvar como PDF" já é uma opção padrão desse diálogo em qualquer navegador
+// moderno, sem precisar de nenhuma biblioteca de geração de PDF no servidor) ----
+function imprimirRelatorioTabela({ titulo, subtitulo, colunas, linhas, rodape }) {
+  const janela = window.open('', '_blank');
+  if (!janela) {
+    mostrarToast('Não foi possível abrir a janela de impressão — verifique se o navegador bloqueou pop-ups.', true);
+    return;
+  }
+  const linhasHtml = linhas.length
+    ? linhas.map((linha) => `<tr>${linha.map((valor) => `<td>${valor}</td>`).join('')}</tr>`).join('')
+    : `<tr><td colspan="${colunas.length}">Nenhum registro encontrado.</td></tr>`;
+  janela.document.write(`<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="UTF-8"><title>${escapeHtml(titulo)}</title>
+<style>
+  body { font-family: Arial, Helvetica, sans-serif; padding: 24px; color: #111; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .subtitulo { font-size: 12px; color: #555; margin: 0 0 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; }
+  th { background: #f2f2f2; }
+  .rodape { margin-top: 16px; font-size: 12px; color: #555; }
+  @media print { body { padding: 0; } }
+</style></head>
+<body>
+  <h1>${escapeHtml(titulo)}</h1>
+  <p class="subtitulo">${escapeHtml(subtitulo || '')}</p>
+  <table><thead><tr>${colunas.map((c) => `<th>${escapeHtml(c)}</th>`).join('')}</tr></thead>
+  <tbody>${linhasHtml}</tbody></table>
+  ${rodape ? `<p class="rodape">${escapeHtml(rodape)}</p>` : ''}
+</body></html>`);
+  janela.document.close();
+  janela.focus();
+  // Pequeno atraso pra garantir que o layout terminou de renderizar antes do
+  // diálogo de impressão abrir (abrir print() na mesma tick às vezes imprime
+  // uma página em branco em alguns navegadores).
+  setTimeout(() => janela.print(), 300);
+}
 
 function trocarAbaRelatorio(nome) {
   document.querySelectorAll('.relatorio-tab-btn').forEach((b) => b.classList.toggle('ativo', b.dataset.relatorio === nome));
@@ -3557,6 +3597,9 @@ async function carregarSecaoRelatorios() {
 }
 
 // ---- Relatório: Financeiro (Contas a Receber) ----
+let ultimoRelatorioFinanceiro = []; // cache do último resultado buscado, usado pelo botão "Imprimir/Salvar PDF"
+let ultimoRelatorioFinanceiroFiltros = '';
+
 async function buscarRelatorioFinanceiro() {
   try {
     const params = new URLSearchParams();
@@ -3576,6 +3619,13 @@ async function buscarRelatorioFinanceiro() {
     if (mostrarInativos) params.set('incluir_inativos', 'true');
 
     const contas = await api(`/api/pagamentos/cobrancas${params.toString() ? '?' + params.toString() : ''}`);
+    ultimoRelatorioFinanceiro = contas;
+    const descricaoFiltros = [];
+    if (vencDe || vencAte) descricaoFiltros.push(`Vencimento de ${vencDe ? formatarDataOuDataHora(vencDe) : '—'} até ${vencAte ? formatarDataOuDataHora(vencAte) : '—'}`);
+    if (alunoId) descricaoFiltros.push(`Aluno: ${document.getElementById('rel-fin-aluno').selectedOptions[0]?.textContent || ''}`);
+    if (status) descricaoFiltros.push(`Status: ${status}`);
+    ultimoRelatorioFinanceiroFiltros = descricaoFiltros.join(' | ') || 'Todos os lançamentos';
+
     const tbody = document.getElementById('rel-fin-lista');
     tbody.innerHTML = contas.length ? '' : '<tr><td colspan="7">Nenhuma conta encontrada.</td></tr>';
     let totalValor = 0;
@@ -3606,6 +3656,102 @@ async function buscarRelatorioFinanceiro() {
 }
 document.getElementById('btn-rel-fin-buscar').addEventListener('click', buscarRelatorioFinanceiro);
 document.getElementById('rel-fin-mostrar-inativos').addEventListener('change', buscarRelatorioFinanceiro);
+
+document.getElementById('btn-rel-fin-imprimir').addEventListener('click', () => {
+  const colunas = ['Aluno', 'CPF', 'Descrição', 'Plano', 'Valor', 'Vencimento', 'Status', 'Data Pago', 'Valor Pago', 'Forma Pagamento'];
+  let totalValor = 0;
+  let totalPago = 0;
+  const linhas = ultimoRelatorioFinanceiro.map((c) => {
+    const valorPago = Number(c.valor_pago_centavos || 0) || (c.status === 'pago' ? c.valor_centavos : 0);
+    const dataPago = c.data_pago_calc || (c.status === 'pago' ? c.pago_em : null);
+    totalValor += c.valor_centavos;
+    totalPago += valorPago;
+    return [
+      escapeHtml(c.aluno_nome), escapeHtml(c.aluno_cpf) || '—', escapeHtml(c.descricao) || '—',
+      escapeHtml(c.plano_nome) || '—', formatarMoeda(c.valor_centavos),
+      c.vencimento ? formatarDataOuDataHora(c.vencimento) : '—', escapeHtml(c.status),
+      formatarDataOuDataHora(dataPago), valorPago > 0 ? formatarMoeda(valorPago) : '—',
+      escapeHtml(c.metodo_pagamento) || '—',
+    ];
+  });
+  imprimirRelatorioTabela({
+    titulo: 'Relatório Financeiro — Contas a Receber',
+    subtitulo: ultimoRelatorioFinanceiroFiltros,
+    colunas,
+    linhas,
+    rodape: `${ultimoRelatorioFinanceiro.length} conta(s) — total ${formatarMoeda(totalValor)}, pago ${formatarMoeda(totalPago)}. Gerado em ${new Date().toLocaleString('pt-BR')}.`,
+  });
+});
+
+// ---- Relatório: Matrículas (dados completos, a partir de uma data) ----
+let ultimoRelatorioMatriculas = []; // cache do último resultado buscado, usado pelo botão "Imprimir/Salvar PDF"
+let ultimoRelatorioMatriculasFiltros = '';
+
+async function buscarRelatorioMatriculas() {
+  try {
+    const params = new URLSearchParams();
+    const de = document.getElementById('rel-matriculas-de').value;
+    const ate = document.getElementById('rel-matriculas-ate').value;
+    const mostrarInativos = document.getElementById('rel-matriculas-mostrar-inativos').checked;
+    if (de) params.set('data_inicio_de', de);
+    if (ate) params.set('data_inicio_ate', ate);
+    if (mostrarInativos) params.set('incluir_inativos', 'true');
+
+    const matriculas = await api(`/api/planos/matriculas${params.toString() ? '?' + params.toString() : ''}`);
+    ultimoRelatorioMatriculas = matriculas;
+    ultimoRelatorioMatriculasFiltros = de || ate
+      ? `Início de ${de ? formatarDataOuDataHora(de) : '—'} até ${ate ? formatarDataOuDataHora(ate) : '—'}`
+      : 'Todas as matrículas';
+
+    const tbody = document.getElementById('rel-matriculas-lista');
+    tbody.innerHTML = matriculas.length ? '' : '<tr><td colspan="9">Nenhuma matrícula encontrada.</td></tr>';
+    let totalValor = 0;
+    matriculas.forEach((m) => {
+      totalValor += m.plano_valor_centavos || 0;
+      const tr = el(`
+        <tr>
+          <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${escapeHtml(m.aluno_nome)}</span></td>
+          <td>${escapeHtml(m.aluno_cpf) || '—'}</td>
+          <td>${escapeHtml(m.aluno_telefone) || '—'}</td>
+          <td>${escapeHtml(m.aluno_email) || '—'}</td>
+          <td>${escapeHtml(m.plano_nome)}</td>
+          <td>${formatarMoeda(m.plano_valor_centavos || 0)}</td>
+          <td>${formatarDataOuDataHora(m.data_inicio)}</td>
+          <td>${m.data_fim ? formatarDataOuDataHora(m.data_fim) : '—'}</td>
+          <td><span class="badge ${escapeHtml(m.status)}">${escapeHtml(m.status)}</span></td>
+        </tr>
+      `);
+      tr.querySelector('.nome-clicavel').addEventListener('click', () => abrirPerfilAluno(m.aluno_id));
+      tbody.appendChild(tr);
+    });
+    document.getElementById('rel-matriculas-total').textContent = matriculas.length
+      ? `${matriculas.length} matrícula(s) — soma dos valores dos planos ${formatarMoeda(totalValor)}`
+      : '';
+  } catch (err) { mostrarToast(err.message, true); }
+}
+document.getElementById('btn-rel-matriculas-buscar').addEventListener('click', buscarRelatorioMatriculas);
+document.getElementById('rel-matriculas-mostrar-inativos').addEventListener('change', buscarRelatorioMatriculas);
+
+document.getElementById('btn-rel-matriculas-imprimir').addEventListener('click', () => {
+  const colunas = ['Aluno', 'CPF', 'Telefone', 'E-mail', 'Plano', 'Valor', 'Início', 'Fim', 'Status'];
+  let totalValor = 0;
+  const linhas = ultimoRelatorioMatriculas.map((m) => {
+    totalValor += m.plano_valor_centavos || 0;
+    return [
+      escapeHtml(m.aluno_nome), escapeHtml(m.aluno_cpf) || '—', escapeHtml(m.aluno_telefone) || '—',
+      escapeHtml(m.aluno_email) || '—', escapeHtml(m.plano_nome), formatarMoeda(m.plano_valor_centavos || 0),
+      formatarDataOuDataHora(m.data_inicio), m.data_fim ? formatarDataOuDataHora(m.data_fim) : '—',
+      escapeHtml(m.status),
+    ];
+  });
+  imprimirRelatorioTabela({
+    titulo: 'Relatório de Matrículas',
+    subtitulo: ultimoRelatorioMatriculasFiltros,
+    colunas,
+    linhas,
+    rodape: `${ultimoRelatorioMatriculas.length} matrícula(s) — soma dos valores dos planos ${formatarMoeda(totalValor)}. Gerado em ${new Date().toLocaleString('pt-BR')}.`,
+  });
+});
 
 // ---- Relatório: Acesso Diário (todos os acessos de um dia) ----
 async function buscarRelatorioAcessoDiario() {

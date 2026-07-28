@@ -144,7 +144,8 @@ router.get('/cobrancas', autenticar, async (req, res, next) => {
     const direcao = decrescente === 'true' || decrescente === '1' ? 'DESC' : (ordenarPor ? 'ASC' : 'DESC');
 
     const result = await db.execute({
-      sql: `SELECT c.*, a.nome as aluno_nome,
+      sql: `SELECT c.*, a.nome as aluno_nome, a.cpf as aluno_cpf, a.telefone as aluno_telefone,
+              pl.nome as plano_nome,
               (SELECT COALESCE(SUM(p.valor_centavos), 0) FROM pagamentos_cobranca p WHERE p.cobranca_id = c.id) as valor_pago_centavos,
               (SELECT MAX(p.data) FROM pagamentos_cobranca p WHERE p.cobranca_id = c.id) as data_pago_calc,
               pl.desconto_tipo as plano_desconto_tipo,

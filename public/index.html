@@ -824,6 +824,7 @@
 
         <div class="perfil-tabs">
           <button class="relatorio-tab-btn ativo" data-relatorio="financeiro">Financeiro</button>
+          <button class="relatorio-tab-btn" data-relatorio="matriculas">Matrículas</button>
           <button class="relatorio-tab-btn" data-relatorio="acesso-diario">Acesso Diário</button>
           <button class="relatorio-tab-btn" data-relatorio="acesso-pessoal">Acesso Pessoal</button>
           <button class="relatorio-tab-btn" data-relatorio="ultimo-acesso">Último Acesso</button>
@@ -866,6 +867,7 @@
               <input type="checkbox" id="rel-fin-mostrar-inativos" style="width:auto" /> Mostrar inativos
             </label>
             <button type="button" class="btn-primario" id="btn-rel-fin-buscar">Filtrar</button>
+            <button type="button" class="btn-secundario" id="btn-rel-fin-imprimir">Imprimir / Salvar PDF</button>
           </div>
 
           <table class="tabela">
@@ -875,6 +877,27 @@
             <tbody id="rel-fin-lista"></tbody>
           </table>
           <p id="rel-fin-total" style="font-size:13px;color:#667085;margin-top:8px"></p>
+        </div>
+
+        <!-- Relatório: Matrículas (dados completos, a partir de uma data) -->
+        <div class="relatorio-painel oculto" data-relatorio-painel="matriculas">
+          <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
+            <div><label>A partir de</label><input type="date" id="rel-matriculas-de" /></div>
+            <div><label>até</label><input type="date" id="rel-matriculas-ate" /></div>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#667085;padding-bottom:9px">
+              <input type="checkbox" id="rel-matriculas-mostrar-inativos" style="width:auto" /> Mostrar inativos
+            </label>
+            <button type="button" class="btn-primario" id="btn-rel-matriculas-buscar">Filtrar</button>
+            <button type="button" class="btn-secundario" id="btn-rel-matriculas-imprimir">Imprimir / Salvar PDF</button>
+          </div>
+
+          <table class="tabela">
+            <thead>
+              <tr><th>Aluno</th><th>CPF</th><th>Telefone</th><th>E-mail</th><th>Plano</th><th>Valor</th><th>Início</th><th>Fim</th><th>Status</th></tr>
+            </thead>
+            <tbody id="rel-matriculas-lista"></tbody>
+          </table>
+          <p id="rel-matriculas-total" style="font-size:13px;color:#667085;margin-top:8px"></p>
         </div>
 
         <!-- Relatório: Acesso Diário -->

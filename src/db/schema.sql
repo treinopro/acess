@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS avaliacoes_fisicas (
   id TEXT PRIMARY KEY,
   aluno_id TEXT NOT NULL REFERENCES alunos(id) ON DELETE CASCADE,
   data_avaliacao TEXT NOT NULL,
+  idade INTEGER, -- calculada a partir da data de nascimento do aluno na data desta avaliacao (preenchida pelo front, nao recalculada aqui - guarda a idade de entao mesmo que a data de nascimento seja corrigida depois)
   peso_kg REAL,
   altura_cm REAL,
   percentual_gordura REAL,

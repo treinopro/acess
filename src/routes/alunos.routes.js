@@ -41,6 +41,7 @@ const anamneseSchema = z.object({
 
 const avaliacaoSchema = z.object({
   data_avaliacao: z.string(),
+  idade: z.number().int().positive().optional().nullable(),
   peso_kg: z.number().positive().optional().nullable(),
   altura_cm: z.number().positive().optional().nullable(),
   percentual_gordura: z.number().positive().optional().nullable(),
@@ -750,10 +751,10 @@ router.post('/:id/avaliacoes', async (req, res, next) => {
     const id = uuid();
     await db.execute({
       sql: `INSERT INTO avaliacoes_fisicas
-            (id, aluno_id, data_avaliacao, peso_kg, altura_cm, percentual_gordura,
+            (id, aluno_id, data_avaliacao, idade, peso_kg, altura_cm, percentual_gordura,
              medida_cintura_cm, medida_quadril_cm, medida_peito_cm, medida_braco_cm, medida_coxa_cm, objetivo, observacoes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      args: [id, req.params.id, dados.data_avaliacao, dados.peso_kg || null, dados.altura_cm || null,
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [id, req.params.id, dados.data_avaliacao, dados.idade || null, dados.peso_kg || null, dados.altura_cm || null,
         dados.percentual_gordura || null, dados.medida_cintura_cm || null, dados.medida_quadril_cm || null,
         dados.medida_peito_cm || null, dados.medida_braco_cm || null, dados.medida_coxa_cm || null,
         dados.objetivo || null, dados.observacoes || null],

@@ -101,6 +101,36 @@ function hojeLocalISO() {
   return `${ano}-${mes}-${dia}`;
 }
 
+// Idade em anos completos na data de referência (padrão: hoje), a partir de
+// uma data de nascimento — ambas em 'YYYY-MM-DD'. Faz a conta manualmente
+// nos componentes ano/mês/dia (em vez de subtrair objetos Date) pelo mesmo
+// motivo do resto deste arquivo: evita qualquer confusão de fuso horário
+// (ver comentário de formatarDataOuDataHora/hojeLocalISO acima).
+function calcularIdade(dataNascimentoISO, dataReferenciaISO) {
+  if (!dataNascimentoISO || !/^\d{4}-\d{2}-\d{2}$/.test(dataNascimentoISO)) return null;
+  const referencia = dataReferenciaISO && /^\d{4}-\d{2}-\d{2}$/.test(dataReferenciaISO) ? dataReferenciaISO : hojeLocalISO();
+  const [anoNasc, mesNasc, diaNasc] = dataNascimentoISO.split('-').map(Number);
+  const [anoRef, mesRef, diaRef] = referencia.split('-').map(Number);
+  let idade = anoRef - anoNasc;
+  if (mesRef < mesNasc || (mesRef === mesNasc && diaRef < diaNasc)) idade -= 1;
+  return idade >= 0 ? idade : null;
+}
+
+// Atualiza um campo de idade (readonly) a partir dos ids dos campos de data de
+// nascimento e, opcionalmente, de uma data de referência (ex.: data da
+// avaliação) — usado no cadastro/perfil do aluno e nas avaliações físicas.
+function atualizarCampoIdade(idCampoIdade, idCampoNascimento, idCampoReferencia) {
+  const idade = calcularIdade(
+    document.getElementById(idCampoNascimento).value,
+    idCampoReferencia ? document.getElementById(idCampoReferencia).value : null,
+  );
+  // Valor numérico puro (não "34 anos") — os campos que chamam esta função são
+  // readonly e alimentados só por aqui, e a avaliação física lê este mesmo
+  // valor pra mandar pro servidor (ver form-avaliacao), então precisa
+  // continuar um número direto, sem sufixo de texto.
+  document.getElementById(idCampoIdade).value = idade === null ? '' : idade;
+}
+
 // Rótulos das categorias de pessoa (2026-07 — ver alunos.categoria em
 // schema.sql). Compartilhado entre a listagem de Alunos e a Recuperação de
 // Clientes (aba "Todos os ativos").
@@ -1013,6 +1043,7 @@ async function abrirFormAluno(aluno = null) {
   document.getElementById('aluno-telefone').value = aluno?.telefone || '';
   document.getElementById('aluno-cpf').value = aluno?.cpf || '';
   document.getElementById('aluno-nascimento').value = aluno?.data_nascimento || '';
+  atualizarCampoIdade('aluno-idade', 'aluno-nascimento');
   document.getElementById('aluno-categoria').value = aluno?.categoria || 'aluno';
   document.getElementById('aluno-observacoes').value = aluno?.observacoes || '';
   document.getElementById('aluno-plano-data').value = hojeLocalISO();
@@ -1180,6 +1211,8 @@ async function carregarPerfilAluno() {
     document.getElementById('perfil-telefone').value = aluno.telefone || '';
     document.getElementById('perfil-cpf').value = aluno.cpf || '';
     document.getElementById('perfil-nascimento').value = aluno.data_nascimento || '';
+    atualizarCampoIdade('perfil-idade', 'perfil-nascimento');
+    atualizarCampoIdade('avaliacao-idade', 'perfil-nascimento', 'avaliacao-data');
     document.getElementById('perfil-categoria').value = aluno.categoria || 'aluno';
     document.getElementById('perfil-observacoes').value = aluno.observacoes || '';
     document.getElementById('perfil-biometria-id').value = aluno.biometria_id || '';
@@ -1194,11 +1227,12 @@ async function carregarPerfilAluno() {
     document.getElementById('anamnese-observacoes').value = anamnese?.observacoes_medicas || '';
 
     const tbodyAval = document.getElementById('lista-avaliacoes');
-    tbodyAval.innerHTML = avaliacoes.length ? '' : '<tr><td colspan="5">Nenhuma avaliação registrada.</td></tr>';
+    tbodyAval.innerHTML = avaliacoes.length ? '' : '<tr><td colspan="6">Nenhuma avaliação registrada.</td></tr>';
     avaliacoes.forEach((av) => {
       const tr = el(`
         <tr>
           <td>${formatarDataOuDataHora(av.data_avaliacao)}</td>
+          <td>${av.idade || '—'}</td>
           <td>${av.peso_kg ? av.peso_kg + ' kg' : '—'}</td>
           <td>${av.percentual_gordura ? av.percentual_gordura + '%' : '—'}</td>
           <td>${escapeHtml(av.objetivo) || '—'}</td>
@@ -1809,11 +1843,23 @@ document.getElementById('form-anamnese').addEventListener('submit', async (ev) =
   } catch (err) { mostrarToast(err.message, true); }
 });
 
+// Idade recalculada ao vivo: no cadastro/edição do aluno (a partir da própria
+// data de nascimento) e na nova avaliação (a partir da data de nascimento do
+// aluno já carregado no perfil + a data da avaliação, que pode ser diferente
+// de hoje — registra a idade que a pessoa tinha NAQUELA data, não a de hoje).
+document.getElementById('aluno-nascimento').addEventListener('input', () => atualizarCampoIdade('aluno-idade', 'aluno-nascimento'));
+document.getElementById('perfil-nascimento').addEventListener('input', () => {
+  atualizarCampoIdade('perfil-idade', 'perfil-nascimento');
+  atualizarCampoIdade('avaliacao-idade', 'perfil-nascimento', 'avaliacao-data');
+});
+document.getElementById('avaliacao-data').addEventListener('input', () => atualizarCampoIdade('avaliacao-idade', 'perfil-nascimento', 'avaliacao-data'));
+
 document.getElementById('form-avaliacao').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const numOuNull = (id) => (document.getElementById(id).value ? Number(document.getElementById(id).value) : null);
   const dados = {
     data_avaliacao: document.getElementById('avaliacao-data').value,
+    idade: numOuNull('avaliacao-idade'),
     peso_kg: numOuNull('avaliacao-peso'),
     altura_cm: numOuNull('avaliacao-altura'),
     percentual_gordura: numOuNull('avaliacao-gordura'),

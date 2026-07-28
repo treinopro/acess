@@ -35,6 +35,9 @@ const ALTERACOES_INCREMENTAIS = [
   // Data da primeira liberação do visitante (2026-07-19 — troca do limite de
   // "N acessos" para "N dias corridos"). Ver comentário em schema.sql.
   "ALTER TABLE alunos ADD COLUMN visitante_liberado_em TEXT",
+  // Idade do aluno calculada (front-end) na data da avaliação (2026-07-27) —
+  // ver comentário junto da definição de "avaliacoes_fisicas" em schema.sql.
+  "ALTER TABLE avaliacoes_fisicas ADD COLUMN idade INTEGER",
 ];
 
 // Divide um arquivo .sql em statements individuais (o driver libsql nao aceita

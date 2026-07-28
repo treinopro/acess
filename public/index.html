@@ -83,6 +83,7 @@
             <div><label>Telefone</label><input id="aluno-telefone" /></div>
             <div><label>CPF</label><input id="aluno-cpf" /></div>
             <div><label>Data de nascimento</label><input id="aluno-nascimento" type="date" /></div>
+            <div><label>Idade</label><input id="aluno-idade" readonly placeholder="—" /></div>
             <div>
               <label>Categoria</label>
               <select id="aluno-categoria">
@@ -180,6 +181,7 @@
               <div><label>Telefone</label><input id="perfil-telefone" /></div>
               <div><label>CPF</label><input id="perfil-cpf" /></div>
               <div><label>Data de nascimento</label><input id="perfil-nascimento" type="date" /></div>
+              <div><label>Idade</label><input id="perfil-idade" readonly placeholder="—" /></div>
               <div>
                 <label>Categoria</label>
                 <select id="perfil-categoria">
@@ -286,6 +288,7 @@
             <h3 style="margin-top:0">Nova avaliação</h3>
             <div class="grid-2">
               <div><label>Data *</label><input id="avaliacao-data" type="date" required /></div>
+              <div><label>Idade</label><input id="avaliacao-idade" readonly placeholder="—" /></div>
               <div><label>Peso (kg)</label><input id="avaliacao-peso" type="number" step="0.1" /></div>
               <div><label>Altura (cm)</label><input id="avaliacao-altura" type="number" step="0.1" /></div>
               <div><label>% de gordura</label><input id="avaliacao-gordura" type="number" step="0.1" /></div>
@@ -304,7 +307,7 @@
           </form>
           <h3>Evolução</h3>
           <table class="tabela">
-            <thead><tr><th>Data</th><th>Peso</th><th>% Gordura</th><th>Objetivo</th><th>Ações</th></tr></thead>
+            <thead><tr><th>Data</th><th>Idade</th><th>Peso</th><th>% Gordura</th><th>Objetivo</th><th>Ações</th></tr></thead>
             <tbody id="lista-avaliacoes"></tbody>
           </table>
         </div>

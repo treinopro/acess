@@ -1,6 +1,26 @@
 # Status do projeto — Academia Gestão
 
-Última atualização: 27/07/2026 (reconhecimento facial trocado pro modelo SFace — mecanismo único entre totem/portal/celular/admin, corte seco dos descritores antigos). **Leia só a seção "ESTADO ATUAL" abaixo pra retomar o trabalho** — o resto do arquivo é histórico de sessões passadas, mantido só como referência de "por que as coisas são como são".
+Última atualização: 28/07/2026 (idade preenchida automaticamente no cadastro do aluno e nas avaliações físicas). **Leia só a seção "ESTADO ATUAL" abaixo pra retomar o trabalho** — o resto do arquivo é histórico de sessões passadas, mantido só como referência de "por que as coisas são como são".
+
+## Sessão 28/07/2026 — Idade preenchida automaticamente no cadastro do aluno e nas avaliações físicas
+
+Pedido do dono do sistema: mostrar a idade calculada a partir da data de nascimento, sem precisar calcular de cabeça, tanto no cadastro do aluno quanto nas avaliações físicas.
+
+- **Cadastro/edição do aluno** (`public/index.html`/`app.js`) e **aba "Dados pessoais"** do perfil: campo **Idade** novo, somente leitura, ao lado da Data de nascimento — recalculado ao vivo (`calcularIdade`/`atualizarCampoIdade` em `app.js`) conforme a data é digitada/escolhida.
+- **Nova avaliação física**: campo **Idade** também automático, mas calculado com a data de nascimento do aluno **na data da própria avaliação** (não na data de hoje) — uma avaliação antiga continua mostrando a idade que a pessoa tinha naquela época, mesmo que a data de nascimento seja corrigida depois. Adicionada também como coluna na tabela "Evolução" (histórico de avaliações).
+- **Banco**: coluna nova `avaliacoes_fisicas.idade` (`src/db/schema.sql` + `ALTER TABLE` incremental em `src/db/migrate.js`, mesmo padrão já usado pras outras colunas adicionadas depois do schema inicial). Aceita e gravada em `POST /api/alunos/:id/avaliacoes` (`src/routes/alunos.routes.js`).
+- **Arquivos alterados**: `public/app.js`, `public/index.html`, `src/db/migrate.js`, `src/db/schema.sql`, `src/routes/alunos.routes.js`.
+- **Commit**: `dffd1bb`, já enviado (`git push origin main`). Migração (`node src/db/migrate.js`) **já rodada pelo usuário** — confirmado antes deste registro.
+
+### Aprendizado (mesma causa de antes, mais um sintoma novo)
+
+- O bug do `nvm use` quebrando com espaço no nome de usuário do Windows ("Nova Graf") também afetava o `abrir-sistemas.bat` (que chama `pm2`, que também depende de `node` no PATH) — não só terminais abertos manualmente. **Causa raiz encontrada**: o nvm-windows já tinha a pasta certa (`C:\nvm4w\nodejs`) no PATH do sistema, mas essa pasta deveria ser um link simbólico criado pelo `nvm use` a cada troca de versão — como o `nvm use` nunca consegue terminar (trava no mesmo bug do espaço), o link nunca foi criado, e a pasta ficava vazia. **Conserto definitivo** (em vez do contorno de adicionar ao PATH a cada sessão): criar o link manualmente, uma vez, com PowerShell como Administrador:
+  ```powershell
+  New-Item -ItemType SymbolicLink -Path "C:\nvm4w\nodejs" -Target "C:\Users\Nova Graf\AppData\Local\nvm\v20.20.2" -Force
+  ```
+  Depois disso, `node`/`npm`/`pm2` passam a funcionar em qualquer janela nova (inclusive o `.bat`), sem precisar mexer em PATH manualmente de novo.
+
+---
 
 ## Sessão 27/07/2026 — Reconhecimento facial trocado pro SFace (OpenCV Zoo): mecanismo único totem/portal/celular/admin + corte seco dos descritores antigos
 

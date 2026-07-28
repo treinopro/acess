@@ -8,7 +8,7 @@ const router = express.Router();
 // Chaves válidas de menu, na ordem padrão de fábrica — usada como fallback
 // quando nenhuma ordem customizada foi salva ainda, e para validar que o
 // admin não mande nada estranho (chave inventada, item repetido/faltando).
-const CHAVES_MENU_PADRAO = ['alunos', 'planos', 'agenda', 'pagamentos', 'pagamento-rapido', 'relatorios', 'recuperacao', 'usuarios', 'config', 'catraca'];
+const CHAVES_MENU_PADRAO = ['alunos', 'planos', 'agenda', 'pagamentos', 'contas-pagar', 'pagamento-rapido', 'relatorios', 'recuperacao', 'usuarios', 'config', 'catraca'];
 
 const PADROES = {
   nome_app: 'Academia Gestão',
@@ -164,7 +164,7 @@ router.put('/', autenticar, apenasAdmin, async (req, res, next) => {
 // do servidor continuar existindo entre deploys).
 const TABELAS_BACKUP = [
   'alunos', 'anamneses', 'avaliacoes_fisicas', 'planos', 'matriculas', 'turmas',
-  'agendamentos', 'checkins', 'cobrancas', 'pagamentos_cobranca', 'acessos_catraca', 'configuracoes',
+  'agendamentos', 'checkins', 'cobrancas', 'pagamentos_cobranca', 'contas_pagar', 'acessos_catraca', 'configuracoes',
 ];
 
 async function gerarBackupCompleto() {

@@ -19,7 +19,12 @@ const alunoSchema = z.object({
   telefone: z.string().optional().nullable(),
   cpf: z.string().optional().nullable(),
   data_nascimento: z.string().optional().nullable(),
-  foto_url: z.string().url().optional().nullable(),
+  // 2026-07-28: era z.string().url() — passou a aceitar qualquer string
+  // porque a foto de perfil agora também pode vir como data URL em base64
+  // (capturada no reconhecimento facial ou enviada pelo painel, sem
+  // depender de nenhum serviço de armazenamento de arquivos externo — ver
+  // comentário completo em PATCH /:id/foto abaixo).
+  foto_url: z.string().optional().nullable(),
   observacoes: z.string().optional().nullable(),
   biometria_id: z.string().optional().nullable(),
   // 'nativo' = treino cadastrado neste sistema | 'app_externo' = aluno usa outro app de treino.
@@ -629,12 +634,34 @@ router.delete('/:id/face', async (req, res, next) => {
   }
 });
 
-// PUT /api/alunos/:id/face { descriptor } — cadastra o rosto direto pelo painel
+// PUT /api/alunos/:id/face { descriptor, foto? } — cadastra o rosto direto pelo painel
 // admin (câmera do computador da recepção), sem precisar levar o aluno ao totem.
+// foto (opcional) é a mesma foto de perfil capturada junto no cliente — só
+// preenche foto_url se o aluno ainda não tiver uma (ver salvarFaceDescriptor).
 router.put('/:id/face', async (req, res, next) => {
   try {
-    const { descriptor } = z.object({ descriptor: z.array(z.number()).length(128) }).parse(req.body);
-    await acessoTerminal.salvarFaceDescriptor(req.params.id, descriptor);
+    const { descriptor, foto } = z.object({
+      descriptor: z.array(z.number()).length(128),
+      foto: z.string().max(500000).optional().nullable(),
+    }).parse(req.body);
+    await acessoTerminal.salvarFaceDescriptor(req.params.id, descriptor, foto);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /api/alunos/:id/foto { foto_url } — define/substitui a foto de perfil
+// diretamente (upload manual no painel). Ao contrário do que acontece via
+// cadastro facial (que só preenche se estiver vazio), este endpoint SEMPRE
+// sobrescreve — é uma ação explícita do admin escolhendo a foto. foto_url
+// null/vazio remove a foto (fica sem foto, volta a valer o padrão do
+// reconhecimento facial na próxima vez que o rosto for recadastrado).
+router.patch('/:id/foto', async (req, res, next) => {
+  try {
+    const { foto_url: fotoUrl } = z.object({ foto_url: z.string().max(500000).optional().nullable() }).parse(req.body);
+    const result = await db.execute({ sql: 'UPDATE alunos SET foto_url = ? WHERE id = ?', args: [fotoUrl || null, req.params.id] });
+    if (result.rowsAffected === 0) return res.status(404).json({ erro: 'Aluno não encontrado.' });
     res.json({ ok: true });
   } catch (err) {
     next(err);

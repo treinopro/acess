@@ -18,6 +18,7 @@ const terminalRoutes = require('./routes/terminal.routes');
 const portalRoutes = require('./routes/portal.routes');
 const treinosRoutes = require('./routes/treinos.routes');
 const recuperacaoRoutes = require('./routes/recuperacao.routes');
+const contasPagarRoutes = require('./routes/contasPagar.routes');
 const { router: configRoutes } = require('./routes/config.routes');
 const { rodar: rodarBackup } = require('./jobs/backup');
 const { rodar: rodarMensagensAgendadas } = require('./jobs/mensagensAgendadas');
@@ -110,6 +111,7 @@ app.use('/api/portal', portalRoutes);
 app.use('/api/treinos', treinosRoutes);
 app.use('/api/config', configRoutes);
 app.use('/api/recuperacao', recuperacaoRoutes);
+app.use('/api/contas-pagar', contasPagarRoutes);
 
 app.use(errorHandler);
 

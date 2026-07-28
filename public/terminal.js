@@ -1097,11 +1097,11 @@ async function iniciarCadastroFacial({ video, statusEl, cpf, aoConcluir }) {
     statusEl,
     elementoCameraPronto,
     desenharQuadro: desenharQuadroProcessamento,
-    enviarDescritor: async (descriptor) => {
+    enviarDescritor: async (descriptor, foto) => {
       pararCamera();
       await api('/api/terminal/vincular/facial', {
         method: 'POST',
-        body: JSON.stringify({ cpf, descriptor }),
+        body: JSON.stringify({ cpf, descriptor, foto }),
       });
     },
     aoConcluir,

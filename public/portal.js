@@ -79,11 +79,11 @@ async function iniciarCadastroFacial({ video, statusEl, cpf, senha, aoConcluir }
   await executarCadastroFacialGuiado({
     video,
     statusEl,
-    enviarDescritor: async (descriptor) => {
+    enviarDescritor: async (descriptor, foto) => {
       pararCamera();
       await api('/api/portal/vincular/facial', {
         method: 'POST',
-        body: JSON.stringify({ cpf, senha, descriptor }),
+        body: JSON.stringify({ cpf, senha, descriptor, foto }),
       });
     },
     aoConcluir,

@@ -220,10 +220,13 @@ const limitadorVincularFacial = criarLimitador({
 // aba "Biometria & acesso" -> remover e recadastrar pela câmera do PC).
 router.post('/vincular/facial', limitadorVincularFacial, async (req, res, next) => {
   try {
-    const { cpf, senha, descriptor } = z.object({
+    const { cpf, senha, descriptor, foto } = z.object({
       cpf: z.string().min(1),
       senha: z.string().min(1),
       descriptor: z.array(z.number()).length(128), // 128 = tamanho do embedding do SFace (ver public/facial-sface.js)
+      // Foto de perfil (data URL JPEG, comprimida no cliente). Opcional, e só
+      // preenche foto_url se o aluno ainda não tiver uma (ver salvarFaceDescriptor).
+      foto: z.string().max(500000).optional().nullable(),
     }).parse(req.body);
     const autenticado = await autenticarAlunoPortal(cpf, senha);
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
@@ -241,7 +244,7 @@ router.post('/vincular/facial', limitadorVincularFacial, async (req, res, next) 
       });
     }
 
-    await acessoTerminal.salvarFaceDescriptor(aluno.id, descriptor);
+    await acessoTerminal.salvarFaceDescriptor(aluno.id, descriptor, foto);
     await acessoTerminal.registrarAcesso({
       alunoId: aluno.id,
       metodo: 'vincular_facial_portal',

@@ -253,11 +253,24 @@ async function encontrarMelhorMatchFacialParaAcesso(descriptorRecebido) {
 }
 
 /** Salva/atualiza o descritor facial de um aluno (cadastro ou re-cadastro). */
-async function salvarFaceDescriptor(alunoId, descriptor) {
+// fotoDataUrl (2026-07-28, opcional): foto de perfil capturada JUNTO com o
+// cadastro facial (recorte do próprio rosto detectado, comprimido em JPEG no
+// cliente antes de enviar — ver facial-guiado.js/obterFotoRecorte). Só
+// preenche foto_url se o aluno AINDA NÃO tiver uma foto (nunca sobrescreve
+// uma foto já definida, seja de outro cadastro facial anterior ou de um
+// upload manual direto no painel — ver PATCH /api/alunos/:id/foto, que é o
+// único caminho que sobrescreve de propósito).
+async function salvarFaceDescriptor(alunoId, descriptor, fotoDataUrl) {
   await db.execute({
     sql: 'UPDATE alunos SET face_descriptor = ? WHERE id = ?',
     args: [JSON.stringify(descriptor), alunoId],
   });
+  if (fotoDataUrl) {
+    await db.execute({
+      sql: "UPDATE alunos SET foto_url = ? WHERE id = ? AND (foto_url IS NULL OR foto_url = '')",
+      args: [fotoDataUrl, alunoId],
+    });
+  }
 }
 
 /** Verifica se o aluno tem ao menos uma matrícula com status 'ativa'. */

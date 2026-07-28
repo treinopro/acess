@@ -269,6 +269,7 @@ const LABELS_MENU = {
   planos: 'Planos',
   agenda: 'Turmas & Agenda',
   pagamentos: 'Contas a Receber',
+  'contas-pagar': 'Contas a Pagar',
   'pagamento-rapido': 'Pagamento Rápido',
   relatorios: 'Relatórios',
   recuperacao: 'Recuperação de Clientes',
@@ -276,7 +277,7 @@ const LABELS_MENU = {
   config: 'Configurações',
   catraca: 'Catraca',
 };
-const ORDEM_MENU_PADRAO = ['alunos', 'planos', 'agenda', 'pagamentos', 'pagamento-rapido', 'relatorios', 'recuperacao', 'usuarios', 'config', 'catraca'];
+const ORDEM_MENU_PADRAO = ['alunos', 'planos', 'agenda', 'pagamentos', 'contas-pagar', 'pagamento-rapido', 'relatorios', 'recuperacao', 'usuarios', 'config', 'catraca'];
 let ordemMenuAtual = [...ORDEM_MENU_PADRAO];
 
 // Reordena os botões <nav> de verdade na barra lateral (move os elementos já
@@ -405,6 +406,7 @@ function carregarSecao(nome) {
   if (nome === 'planos') carregarPlanos();
   if (nome === 'agenda') carregarAgenda();
   if (nome === 'pagamentos') carregarPagamentos();
+  if (nome === 'contas-pagar') carregarSecaoContasPagar();
   if (nome === 'pagamento-rapido') iniciarPagamentoRapido();
   if (nome === 'usuarios') carregarUsuarios();
   if (nome === 'config') { carregarConfiguracoesForm(); carregarPendenciasSincronizacao(); }
@@ -1206,6 +1208,7 @@ async function carregarPerfilAluno() {
 
     document.getElementById('perfil-nome-aluno').textContent = `Perfil de ${aluno.nome}`;
     document.getElementById('perfil-aluno-id').value = aluno.id;
+    atualizarFotoPerfilExibida(aluno.foto_url);
     document.getElementById('perfil-nome').value = aluno.nome || '';
     document.getElementById('perfil-email').value = aluno.email || '';
     document.getElementById('perfil-telefone').value = aluno.telefone || '';
@@ -1609,6 +1612,66 @@ document.getElementById('form-perfil-dados').addEventListener('submit', async (e
   } catch (err) { mostrarToast(err.message, true); }
 });
 
+// ---------------- Foto de perfil (2026-07-28) ----------------
+// Padrão: preenchida sozinha no primeiro cadastro de reconhecimento facial
+// do aluno (ver facial-guiado.js/obterFotoRecorte + salvarFaceDescriptor no
+// servidor, que só grava se ainda não houver foto). Aqui é o caminho manual
+// — enviar uma foto direto no painel sempre substitui a atual.
+function atualizarFotoPerfilExibida(fotoUrl) {
+  const img = document.getElementById('perfil-foto-preview');
+  const placeholder = document.getElementById('perfil-foto-placeholder');
+  if (fotoUrl) {
+    img.src = fotoUrl;
+    img.classList.remove('oculto');
+    placeholder.classList.add('oculto');
+  } else {
+    img.src = '';
+    img.classList.add('oculto');
+    placeholder.classList.remove('oculto');
+  }
+}
+
+document.getElementById('btn-perfil-foto-enviar').addEventListener('click', () => {
+  document.getElementById('perfil-foto-input').click();
+});
+
+document.getElementById('perfil-foto-input').addEventListener('change', async (ev) => {
+  const arquivo = ev.target.files[0];
+  ev.target.value = ''; // permite escolher o mesmo arquivo de novo depois, se precisar
+  if (!arquivo) return;
+  if (!arquivo.type.startsWith('image/')) {
+    mostrarToast('Escolha um arquivo de imagem.', true);
+    return;
+  }
+  try {
+    // Redimensiona/comprime no navegador antes de mandar (mesmo padrão da
+    // foto capturada no reconhecimento facial — ver obterFotoRecorte em
+    // facial-guiado.js) — evita gravar fotos gigantes no banco.
+    const bitmap = await createImageBitmap(arquivo);
+    const lado = Math.min(bitmap.width, bitmap.height);
+    const origemX = (bitmap.width - lado) / 2;
+    const origemY = (bitmap.height - lado) / 2;
+    const canvas = document.createElement('canvas');
+    canvas.width = 320;
+    canvas.height = 320;
+    canvas.getContext('2d').drawImage(bitmap, origemX, origemY, lado, lado, 0, 0, 320, 320);
+    const fotoDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+
+    await api(`/api/alunos/${perfilAtualId}/foto`, { method: 'PATCH', body: JSON.stringify({ foto_url: fotoDataUrl }) });
+    atualizarFotoPerfilExibida(fotoDataUrl);
+    mostrarToast('Foto atualizada.');
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+document.getElementById('btn-perfil-foto-remover').addEventListener('click', async () => {
+  if (!confirmar('Remover a foto de perfil deste aluno?')) return;
+  try {
+    await api(`/api/alunos/${perfilAtualId}/foto`, { method: 'PATCH', body: JSON.stringify({ foto_url: null }) });
+    atualizarFotoPerfilExibida(null);
+    mostrarToast('Foto removida.');
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
 document.getElementById('btn-excluir-aluno').addEventListener('click', async () => {
   const nome = document.getElementById('perfil-nome').value;
   if (!confirmar(`Excluir o aluno "${nome}"? Isso também remove matrículas, agendamentos e cobranças dele. Esta ação não pode ser desfeita.`)) return;
@@ -1816,12 +1879,14 @@ document.getElementById('btn-capturar-facial-perfil').addEventListener('click', 
     }
 
     const descriptor = await obterEmbeddingSFace(video, deteccao);
+    const foto = obterFotoRecorte(video, deteccao);
     await api(`/api/alunos/${perfilAtualId}/face`, {
       method: 'PUT',
-      body: JSON.stringify({ descriptor }),
+      body: JSON.stringify({ descriptor, foto }),
     });
     mostrarToast('Rosto cadastrado com sucesso.');
     pararCameraPerfil();
+    if (foto) carregarPerfilAluno(); // atualiza a foto de perfil na tela, se essa captura preencheu uma
   } catch (err) {
     status.textContent = `Erro ao cadastrar rosto: ${err.message}`;
     delete status.dataset.travado;
@@ -1876,6 +1941,194 @@ document.getElementById('form-avaliacao').addEventListener('submit', async (ev) 
     mostrarToast('Avaliação registrada.');
     ev.target.reset();
     carregarPerfilAluno();
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+// ---------------- CONTAS A PAGAR (2026-07-28) ----------------
+// Despesas da própria academia — espelha Contas a Receber, só que do lado de
+// saída do caixa. Ver src/routes/contasPagar.routes.js.
+
+document.querySelectorAll('.cp-tab-btn').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    trocarAbaContasPagar(btn.dataset.cpTab);
+    if (btn.dataset.cpTab === 'balanco') carregarBalanco();
+  });
+});
+
+function trocarAbaContasPagar(nome) {
+  document.querySelectorAll('.cp-tab-btn').forEach((b) => b.classList.toggle('ativo', b.dataset.cpTab === nome));
+  document.querySelectorAll('.cp-tab-painel').forEach((p) => p.classList.toggle('oculto', p.dataset.cpTabPainel !== nome));
+}
+
+async function carregarSecaoContasPagar() {
+  trocarAbaContasPagar('contas');
+  await buscarContasPagar();
+}
+
+async function buscarContasPagar() {
+  try {
+    const params = new URLSearchParams();
+    const vencDe = document.getElementById('cp-vencimento-de').value;
+    const vencAte = document.getElementById('cp-vencimento-ate').value;
+    const busca = document.getElementById('cp-busca').value.trim();
+    const status = document.getElementById('cp-status').value;
+    if (vencDe) params.set('vencimento_de', vencDe);
+    if (vencAte) params.set('vencimento_ate', vencAte);
+    if (busca) params.set('busca', busca);
+    if (status) params.set('status', status);
+
+    const contas = await api(`/api/contas-pagar${params.toString() ? '?' + params.toString() : ''}`);
+    const tbody = document.getElementById('cp-lista');
+    tbody.innerHTML = contas.length ? '' : '<tr><td colspan="8">Nenhuma conta encontrada.</td></tr>';
+    let totalValor = 0;
+    let totalPago = 0;
+    contas.forEach((c) => {
+      totalValor += c.valor_centavos;
+      totalPago += c.valor_pago_centavos || 0;
+      const tr = el(`
+        <tr>
+          <td>${escapeHtml(c.credor)}</td>
+          <td>${escapeHtml(c.descricao) || '—'}</td>
+          <td>${formatarMoeda(c.valor_centavos)}</td>
+          <td>${c.vencimento ? formatarDataOuDataHora(c.vencimento) : '—'}</td>
+          <td><span class="badge ${escapeHtml(c.status)}">${escapeHtml(c.status)}</span></td>
+          <td>${c.pago_em ? formatarDataOuDataHora(c.pago_em) : '—'}</td>
+          <td>${c.valor_pago_centavos ? formatarMoeda(c.valor_pago_centavos) : '—'}</td>
+          <td><button class="btn-linha" data-acao="editar">Alterar</button></td>
+        </tr>
+      `);
+      tr.querySelector('[data-acao="editar"]').addEventListener('click', () => abrirModalContaPagar(c));
+      tbody.appendChild(tr);
+    });
+    document.getElementById('cp-total').textContent = contas.length
+      ? `${contas.length} conta(s) — total ${formatarMoeda(totalValor)}, pago ${formatarMoeda(totalPago)}`
+      : '';
+  } catch (err) { mostrarToast(err.message, true); }
+}
+document.getElementById('btn-cp-buscar').addEventListener('click', buscarContasPagar);
+
+// ---- Modal Conta a Pagar (incluir/editar) ----
+let contaPagarEmEdicaoId = null;
+
+function abrirModalContaPagar(conta = null) {
+  contaPagarEmEdicaoId = conta?.id || null;
+  document.getElementById('mcp-titulo').textContent = conta ? 'Editar conta a pagar' : 'Nova conta a pagar';
+  document.getElementById('mcp-id').value = conta?.id || '';
+  document.getElementById('mcp-credor').value = conta?.credor || '';
+  document.getElementById('mcp-descricao').value = conta?.descricao || '';
+  document.getElementById('mcp-valor').value = conta ? (conta.valor_centavos / 100).toFixed(2) : '';
+  document.getElementById('mcp-vencimento').value = conta?.vencimento || '';
+  document.getElementById('mcp-forma-pagamento').value = conta?.forma_pagamento || '';
+
+  const badge = document.getElementById('mcp-status-badge');
+  const status = conta?.status || 'pendente';
+  badge.textContent = status;
+  badge.className = `badge ${status}`;
+  document.getElementById('btn-mcp-marcar-paga').classList.toggle('oculto', !conta || status === 'pago' || status === 'cancelado');
+  document.getElementById('btn-mcp-marcar-pendente').classList.toggle('oculto', !conta || status !== 'pago');
+  document.getElementById('btn-mcp-excluir').classList.toggle('oculto', !conta);
+
+  document.getElementById('modal-conta-pagar').classList.remove('oculto');
+}
+document.getElementById('btn-nova-conta-pagar').addEventListener('click', () => abrirModalContaPagar(null));
+document.getElementById('btn-fechar-modal-conta-pagar').addEventListener('click', () => {
+  document.getElementById('modal-conta-pagar').classList.add('oculto');
+});
+
+document.getElementById('form-modal-conta-pagar').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const dados = {
+    credor: document.getElementById('mcp-credor').value.trim(),
+    descricao: document.getElementById('mcp-descricao').value.trim() || null,
+    valor_centavos: Math.round(Number(document.getElementById('mcp-valor').value) * 100),
+    vencimento: document.getElementById('mcp-vencimento').value || null,
+    forma_pagamento: document.getElementById('mcp-forma-pagamento').value || null,
+  };
+  try {
+    if (contaPagarEmEdicaoId) {
+      await api(`/api/contas-pagar/${contaPagarEmEdicaoId}`, { method: 'PUT', body: JSON.stringify(dados) });
+      mostrarToast('Conta atualizada.');
+    } else {
+      await api('/api/contas-pagar', { method: 'POST', body: JSON.stringify(dados) });
+      mostrarToast('Conta incluída.');
+    }
+    document.getElementById('modal-conta-pagar').classList.add('oculto');
+    buscarContasPagar();
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+document.getElementById('btn-mcp-marcar-paga').addEventListener('click', async () => {
+  try {
+    await api(`/api/contas-pagar/${contaPagarEmEdicaoId}`, { method: 'PUT', body: JSON.stringify({ status: 'pago', forma_pagamento: document.getElementById('mcp-forma-pagamento').value || null }) });
+    mostrarToast('Conta marcada como paga.');
+    document.getElementById('modal-conta-pagar').classList.add('oculto');
+    buscarContasPagar();
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+document.getElementById('btn-mcp-marcar-pendente').addEventListener('click', async () => {
+  try {
+    await api(`/api/contas-pagar/${contaPagarEmEdicaoId}`, { method: 'PUT', body: JSON.stringify({ status: 'pendente' }) });
+    mostrarToast('Conta marcada como pendente.');
+    document.getElementById('modal-conta-pagar').classList.add('oculto');
+    buscarContasPagar();
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+document.getElementById('btn-mcp-excluir').addEventListener('click', async () => {
+  if (!confirmar('Excluir esta conta a pagar? Esta ação não pode ser desfeita.')) return;
+  try {
+    await api(`/api/contas-pagar/${contaPagarEmEdicaoId}`, { method: 'DELETE' });
+    mostrarToast('Conta excluída.');
+    document.getElementById('modal-conta-pagar').classList.add('oculto');
+    buscarContasPagar();
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+// ---- Balanço ----
+async function carregarBalanco() {
+  try {
+    if (!document.getElementById('bal-de').value) {
+      const hoje = hojeLocalISO();
+      document.getElementById('bal-de').value = `${hoje.slice(0, 7)}-01`;
+      document.getElementById('bal-ate').value = hoje;
+    }
+
+    const saldoInicial = await api('/api/contas-pagar/saldo-inicial');
+    document.getElementById('bal-saldo-inicial').value = (saldoInicial.saldo_inicial_centavos / 100).toFixed(2);
+    document.getElementById('bal-saldo-inicial-data').value = saldoInicial.saldo_inicial_data || hojeLocalISO();
+    document.getElementById('bal-saldo-inicial-exibicao').textContent = formatarMoeda(saldoInicial.saldo_inicial_centavos)
+      + (saldoInicial.saldo_inicial_data ? ` (em ${formatarDataOuDataHora(saldoInicial.saldo_inicial_data)})` : '');
+
+    const de = document.getElementById('bal-de').value;
+    const ate = document.getElementById('bal-ate').value;
+    const params = new URLSearchParams();
+    if (de) params.set('de', de);
+    if (ate) params.set('ate', ate);
+    const bal = await api(`/api/contas-pagar/relatorio/balanco?${params.toString()}`);
+
+    document.getElementById('bal-saldo-atual').textContent = formatarMoeda(bal.saldo_atual_centavos);
+    document.getElementById('bal-recebido-periodo').textContent = formatarMoeda(bal.recebido_periodo_centavos);
+    document.getElementById('bal-pago-periodo').textContent = formatarMoeda(bal.pago_periodo_centavos);
+    document.getElementById('bal-resultado-periodo').textContent = formatarMoeda(bal.resultado_periodo_centavos);
+    document.getElementById('bal-previsto-receber').textContent = formatarMoeda(bal.previsto_receber_centavos);
+    document.getElementById('bal-previsto-pagar').textContent = formatarMoeda(bal.previsto_pagar_centavos);
+    document.getElementById('bal-saldo-projetado').textContent = formatarMoeda(bal.saldo_projetado_centavos);
+  } catch (err) { mostrarToast(err.message, true); }
+}
+document.getElementById('btn-bal-buscar').addEventListener('click', carregarBalanco);
+
+document.getElementById('btn-bal-salvar-saldo-inicial').addEventListener('click', async () => {
+  const valor = document.getElementById('bal-saldo-inicial').value;
+  const data = document.getElementById('bal-saldo-inicial-data').value;
+  if (!data) { mostrarToast('Escolha a data de referência do saldo inicial.', true); return; }
+  try {
+    await api('/api/contas-pagar/saldo-inicial', {
+      method: 'PUT',
+      body: JSON.stringify({ saldo_inicial_centavos: Math.round(Number(valor || 0) * 100), saldo_inicial_data: data }),
+    });
+    mostrarToast('Saldo inicial salvo.');
+    carregarBalanco();
   } catch (err) { mostrarToast(err.message, true); }
 });
 

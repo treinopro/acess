@@ -206,6 +206,25 @@ CREATE TABLE IF NOT EXISTS cobrancas (
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Contas a Pagar (2026-07-28): despesas da própria academia (aluguel, contas
+-- fixas, fornecedores, folha, etc.) — espelha Contas a Receber, só que do
+-- lado de saída do caixa. Usada pelo relatório de Balanço (ver
+-- src/routes/contasPagar.routes.js, GET /relatorio/balanco) junto com
+-- pagamentos_cobranca (entradas) e o saldo inicial configurável (guardado em
+-- configuracoes: saldo_inicial_centavos/saldo_inicial_data).
+CREATE TABLE IF NOT EXISTS contas_pagar (
+  id TEXT PRIMARY KEY,
+  credor TEXT NOT NULL,
+  descricao TEXT,
+  valor_centavos INTEGER NOT NULL,
+  vencimento TEXT,
+  status TEXT NOT NULL DEFAULT 'pendente', -- pendente | pago | atrasado | cancelado
+  forma_pagamento TEXT, -- dinheiro | pix | cartao_credito | cartao_debito | transferencia | boleto | outro
+  pago_em TEXT,
+  valor_pago_centavos INTEGER,
+  criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Log de tentativas de acesso pelo totem/catraca (facial, QR, CPF, biometria da catraca)
 CREATE TABLE IF NOT EXISTS acessos_catraca (
   id TEXT PRIMARY KEY,
@@ -379,6 +398,8 @@ CREATE INDEX IF NOT EXISTS idx_matriculas_aluno ON matriculas(aluno_id);
 CREATE INDEX IF NOT EXISTS idx_agendamentos_turma_data ON agendamentos(turma_id, data_aula);
 CREATE INDEX IF NOT EXISTS idx_cobrancas_status ON cobrancas(status);
 CREATE INDEX IF NOT EXISTS idx_cobrancas_aluno ON cobrancas(aluno_id);
+CREATE INDEX IF NOT EXISTS idx_contas_pagar_status ON contas_pagar(status);
+CREATE INDEX IF NOT EXISTS idx_contas_pagar_vencimento ON contas_pagar(vencimento);
 CREATE INDEX IF NOT EXISTS idx_avaliacoes_aluno ON avaliacoes_fisicas(aluno_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_alunos_codigo_acesso ON alunos(codigo_acesso);
 -- Parcial (so quando preenchido) porque a maioria dos alunos ainda nao tem

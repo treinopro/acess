@@ -212,11 +212,11 @@ document.getElementById('btn-cadastro-facial').addEventListener('click', async (
   await executarCadastroFacialGuiado({
     video,
     statusEl,
-    enviarDescritor: async (descriptor) => {
+    enviarDescritor: async (descriptor, foto) => {
       if (streamAtual) { streamAtual.getTracks().forEach((t) => t.stop()); streamAtual = null; }
       await api('/api/terminal/vincular/facial', {
         method: 'POST',
-        body: JSON.stringify({ cpf: cadastroCpfAtual, descriptor }),
+        body: JSON.stringify({ cpf: cadastroCpfAtual, descriptor, foto }),
       });
     },
     aoConcluir: () => {

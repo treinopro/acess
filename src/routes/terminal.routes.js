@@ -295,7 +295,14 @@ terminal.get('/vincular/codigo', limitadorVinculacao, autenticarTerminal, async 
 // (painel -> perfil do aluno -> aba "Biometria & acesso").
 terminal.post('/vincular/facial', limitadorVinculacao, autenticarTerminalOuCadastroPublico, async (req, res, next) => {
   try {
-    const { cpf, descriptor } = z.object({ cpf: z.string().min(1), descriptor: z.array(z.number()).length(128) }).parse(req.body);
+    const { cpf, descriptor, foto } = z.object({
+      cpf: z.string().min(1),
+      descriptor: z.array(z.number()).length(128),
+      // Foto de perfil (data URL JPEG, comprimida no cliente — ver
+      // facial-guiado.js/obterFotoRecorte). Opcional, e só preenche foto_url
+      // se o aluno ainda não tiver uma (ver salvarFaceDescriptor).
+      foto: z.string().max(500000).optional().nullable(),
+    }).parse(req.body);
     const aluno = await acessoTerminal.buscarAlunoPorCpf(cpf);
     if (!aluno) return res.status(404).json({ erro: 'CPF não encontrado.' });
 
@@ -311,7 +318,7 @@ terminal.post('/vincular/facial', limitadorVinculacao, autenticarTerminalOuCadas
       });
     }
 
-    await acessoTerminal.salvarFaceDescriptor(aluno.id, descriptor);
+    await acessoTerminal.salvarFaceDescriptor(aluno.id, descriptor, foto);
     await acessoTerminal.registrarAcesso({
       alunoId: aluno.id,
       metodo: 'vincular_facial_totem',

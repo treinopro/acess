@@ -219,6 +219,47 @@ function passoFacialCumprido(passoId, poseAtual, poseBase, contexto) {
   }
 }
 
+// ---------------- Foto de perfil (recorte do rosto capturado no cadastro) ----------------
+// 2026-07-28: recorta um quadrado ao redor do rosto detectado (com uma
+// margem, pra não cortar queixo/testa) a partir do MESMO quadro final do
+// cadastro guiado, e comprime em JPEG antes de mandar — vira a foto de
+// perfil padrão do aluno (só preenche se ele ainda não tiver nenhuma, ver
+// salvarFaceDescriptor no servidor). Tamanho generoso o bastante pra não
+// ficar pixelado no perfil (320x320), mas comprimido o bastante (JPEG 0.82)
+// pra não pesar no banco — na prática fica na casa de poucas dezenas de KB.
+const FOTO_PERFIL_LADO_PX = 320;
+const FOTO_PERFIL_MARGEM = 0.6; // 60% de margem ao redor da caixa do rosto detectado
+
+function obterFotoRecorte(fonte, deteccao) {
+  try {
+    const caixa = deteccao.detection ? deteccao.detection.box : deteccao.box;
+    if (!caixa) return null;
+
+    const margemX = caixa.width * FOTO_PERFIL_MARGEM;
+    const margemY = caixa.height * FOTO_PERFIL_MARGEM;
+    const largura = caixa.width + margemX * 2;
+    const altura = caixa.height + margemY * 2;
+    // Recorte quadrado (usa o maior lado) centralizado no rosto, pra foto de
+    // perfil sair sempre com a mesma proporção independente do enquadramento.
+    const lado = Math.max(largura, altura);
+    const centroX = caixa.x + caixa.width / 2;
+    const centroY = caixa.y + caixa.height / 2;
+    const origemX = centroX - lado / 2;
+    const origemY = centroY - lado / 2;
+
+    const destino = document.createElement('canvas');
+    destino.width = FOTO_PERFIL_LADO_PX;
+    destino.height = FOTO_PERFIL_LADO_PX;
+    const ctx = destino.getContext('2d');
+    ctx.drawImage(fonte, origemX, origemY, lado, lado, 0, 0, FOTO_PERFIL_LADO_PX, FOTO_PERFIL_LADO_PX);
+    return destino.toDataURL('image/jpeg', 0.82);
+  } catch {
+    // Recorte é só um "extra" (foto de perfil) — nunca deve travar o
+    // cadastro facial em si (o descritor é o que realmente importa).
+    return null;
+  }
+}
+
 // Conduz a sequência de PASSOS_CAPTURA_GUIADA acima e, ao final, chama
 // `enviarDescritor` (fornecido por quem chamou — totem/portal/cadastro pelo
 // celular postam pra endpoints/payloads diferentes) com o array de 128
@@ -279,7 +320,8 @@ async function executarCadastroFacialGuiado({
       // (OpenCV Zoo), calculado em cima do mesmo rosto/landmarks já
       // detectados aqui. Ver facial-sface.js para o porquê da troca.
       const embedding = await obterEmbeddingSFace(quadroFinal, deteccaoFinal);
-      await enviarDescritor(embedding);
+      const foto = obterFotoRecorte(quadroFinal, deteccaoFinal);
+      await enviarDescritor(embedding, foto);
       statusEl.textContent = 'Rosto cadastrado com sucesso!';
       if (barraProgresso) barraProgresso.style.width = '100%';
       if (aoConcluir) setTimeout(aoConcluir, 2500);

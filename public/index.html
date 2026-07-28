@@ -44,6 +44,7 @@
         <button class="nav-btn" data-secao="planos">Planos</button>
         <button class="nav-btn" data-secao="agenda">Turmas &amp; Agenda</button>
         <button class="nav-btn" data-secao="pagamentos">Contas a Receber</button>
+        <button class="nav-btn" data-secao="contas-pagar">Contas a Pagar</button>
         <button class="nav-btn" data-secao="pagamento-rapido">Pagamento Rápido</button>
         <button class="nav-btn" data-secao="relatorios">Relatórios</button>
         <button class="nav-btn oculto" id="nav-recuperacao" data-secao="recuperacao">Recuperação de Clientes <span class="badge inadimplente oculto" id="recup-notif-badge">0</span></button>
@@ -173,6 +174,16 @@
 
         <!-- ABA: Dados pessoais -->
         <div class="perfil-tab-painel" data-tab-painel="dados">
+          <div style="display:flex;gap:16px;align-items:center;margin-bottom:16px">
+            <img id="perfil-foto-preview" src="" alt="Foto do aluno" class="oculto" style="width:96px;height:96px;border-radius:50%;object-fit:cover;background:#f2f4f7" />
+            <div id="perfil-foto-placeholder" style="width:96px;height:96px;border-radius:50%;background:#f2f4f7;display:flex;align-items:center;justify-content:center;font-size:36px;color:#98a2b3">👤</div>
+            <div>
+              <input type="file" id="perfil-foto-input" accept="image/*" class="oculto" />
+              <button type="button" class="btn-secundario" id="btn-perfil-foto-enviar" style="margin-bottom:6px">Enviar foto</button><br>
+              <button type="button" class="btn-secundario perigo" id="btn-perfil-foto-remover">Remover foto</button>
+              <p style="font-size:12px;color:#667085;margin:6px 0 0">Se o aluno já cadastrou reconhecimento facial, essa foto já pode ter sido preenchida automaticamente — enviar aqui sempre substitui.</p>
+            </div>
+          </div>
           <form id="form-perfil-dados" class="form-painel">
             <input type="hidden" id="perfil-aluno-id" />
             <div class="grid-2">
@@ -814,6 +825,99 @@
           </div>
         </form>
         <div id="cobranca-resultado" class="oculto"></div>
+      </section>
+
+      <!-- CONTAS A PAGAR (2026-07-28) — despesas da academia + balanço de caixa -->
+      <section id="secao-contas-pagar" class="secao oculto">
+        <div class="secao-topo">
+          <h2>Contas a Pagar</h2>
+        </div>
+
+        <div class="perfil-tabs">
+          <button class="cp-tab-btn ativo" data-cp-tab="contas">Contas</button>
+          <button class="cp-tab-btn" data-cp-tab="balanco">Balanço</button>
+        </div>
+
+        <!-- ABA: Contas -->
+        <div class="cp-tab-painel" data-cp-tab-painel="contas">
+          <div class="secao-topo" style="margin-bottom:12px">
+            <div></div>
+            <button class="btn-secundario" id="btn-nova-conta-pagar">+ Incluir conta</button>
+          </div>
+
+          <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
+            <div><label>Vencimento de</label><input type="date" id="cp-vencimento-de" /></div>
+            <div><label>até</label><input type="date" id="cp-vencimento-ate" /></div>
+            <div style="flex:1;min-width:200px">
+              <label>Buscar por credor</label>
+              <span class="campo-busca-wrap" style="display:block">
+                <input type="text" id="cp-busca" placeholder="Nome do credor..." />
+                <button type="button" class="btn-limpar-busca" data-alvo="cp-busca" data-buscar="btn-cp-buscar" title="Limpar busca">&times;</button>
+              </span>
+            </div>
+            <div>
+              <label>Status</label>
+              <select id="cp-status">
+                <option value="">Todos</option>
+                <option value="pendente">Pendente</option>
+                <option value="pago">Pago</option>
+                <option value="atrasado">Atrasado</option>
+                <option value="cancelado">Cancelado</option>
+              </select>
+            </div>
+            <button type="button" class="btn-primario" id="btn-cp-buscar">Filtrar</button>
+          </div>
+
+          <table class="tabela">
+            <thead>
+              <tr><th>Credor</th><th>Descrição</th><th>Valor</th><th>Vencimento</th><th>Status</th><th>Pagamento</th><th>Valor Pago</th><th>Ações</th></tr>
+            </thead>
+            <tbody id="cp-lista"></tbody>
+          </table>
+          <p id="cp-total" style="font-size:13px;color:#667085;margin-top:8px"></p>
+        </div>
+
+        <!-- ABA: Balanço -->
+        <div class="cp-tab-painel oculto" data-cp-tab-painel="balanco">
+          <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
+            <div><label>Período de</label><input type="date" id="bal-de" /></div>
+            <div><label>até</label><input type="date" id="bal-ate" /></div>
+            <button type="button" class="btn-primario" id="btn-bal-buscar">Atualizar</button>
+          </div>
+
+          <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap;background:#f9fafb">
+            <div>
+              <label title="Ponto de partida do caixa — configure uma vez com o saldo que a academia tinha antes de começar a usar este controle.">Saldo inicial (R$)</label>
+              <input type="number" step="0.01" id="bal-saldo-inicial" />
+            </div>
+            <div><label>Referente a</label><input type="date" id="bal-saldo-inicial-data" /></div>
+            <button type="button" class="btn-secundario" id="btn-bal-salvar-saldo-inicial">Salvar saldo inicial</button>
+          </div>
+
+          <div class="grid-2" style="margin-top:16px;gap:16px">
+            <div class="form-painel">
+              <h3>Caixa (real, até hoje)</h3>
+              <p style="display:flex;justify-content:space-between;margin:0 0 8px"><span>Saldo inicial</span><span id="bal-saldo-inicial-exibicao">—</span></p>
+              <p style="display:flex;justify-content:space-between;margin:0;font-weight:700"><span>Saldo atual</span><span id="bal-saldo-atual"></span></p>
+            </div>
+            <div class="form-painel">
+              <h3>No período selecionado</h3>
+              <p style="display:flex;justify-content:space-between;margin:0 0 8px"><span>Recebido</span><span id="bal-recebido-periodo"></span></p>
+              <p style="display:flex;justify-content:space-between;margin:0 0 8px"><span>Pago</span><span id="bal-pago-periodo"></span></p>
+              <p style="display:flex;justify-content:space-between;margin:0;font-weight:700"><span>Resultado do período</span><span id="bal-resultado-periodo"></span></p>
+            </div>
+            <div class="form-painel">
+              <h3>Previsto no período (ainda não aconteceu)</h3>
+              <p style="display:flex;justify-content:space-between;margin:0 0 8px"><span>A receber</span><span id="bal-previsto-receber"></span></p>
+              <p style="display:flex;justify-content:space-between;margin:0"><span>A pagar</span><span id="bal-previsto-pagar"></span></p>
+            </div>
+            <div class="form-painel">
+              <h3>Projeção</h3>
+              <p style="font-size:13px;color:#667085;margin:0 0 8px">Se tudo que está previsto pro período realmente entrar/sair, o caixa deve terminar em:</p>
+              <p style="display:flex;justify-content:space-between;margin:0;font-weight:700"><span>Saldo projetado</span><span id="bal-saldo-projetado"></span></p>
+            </div>
+          </div>
+        </div>
       </section>
 
       <!-- RELATÓRIOS -->
@@ -1628,6 +1732,50 @@
     </div>
   </div>
 
+  <!-- MODAL: Conta a Pagar (incluir/editar) -->
+  <div id="modal-conta-pagar" class="modal-overlay oculto">
+    <div class="modal-card">
+      <div class="modal-topo">
+        <h3 id="mcp-titulo">Conta a Pagar</h3>
+        <button type="button" class="btn-fechar-painel" id="btn-fechar-modal-conta-pagar" title="Fechar">&times;</button>
+      </div>
+      <form id="form-modal-conta-pagar">
+        <input type="hidden" id="mcp-id" />
+        <div class="grid-2">
+          <div><label>Credor *</label><input id="mcp-credor" required /></div>
+          <div><label>Descrição</label><input id="mcp-descricao" /></div>
+          <div><label>Valor (R$) *</label><input id="mcp-valor" type="number" step="0.01" required /></div>
+          <div><label>Vencimento</label><input id="mcp-vencimento" type="date" /></div>
+          <div>
+            <label>Forma de pagamento</label>
+            <select id="mcp-forma-pagamento">
+              <option value="">—</option>
+              <option value="dinheiro">Dinheiro</option>
+              <option value="pix">Pix</option>
+              <option value="cartao_credito">Cartão de crédito</option>
+              <option value="cartao_debito">Cartão de débito</option>
+              <option value="transferencia">Transferência</option>
+              <option value="boleto">Boleto</option>
+              <option value="outro">Outro</option>
+            </select>
+          </div>
+          <div>
+            <label>Status</label>
+            <div style="display:flex;align-items:center;gap:10px;padding-top:9px;flex-wrap:wrap">
+              <span class="badge" id="mcp-status-badge">—</span>
+              <button type="button" class="btn-linha oculto" id="btn-mcp-marcar-paga">Marcar como paga</button>
+              <button type="button" class="btn-linha oculto" id="btn-mcp-marcar-pendente">Marcar como pendente</button>
+            </div>
+          </div>
+        </div>
+        <div class="form-acoes">
+          <button type="submit" class="btn-primario">Salvar</button>
+          <button type="button" class="btn-secundario perigo oculto" id="btn-mcp-excluir">Excluir conta</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- MODAL: Pagamento (lançar um recebimento numa conta) -->
   <div id="modal-pagamento" class="modal-overlay oculto">
     <div class="modal-card modal-card-pequeno">
@@ -1888,6 +2036,7 @@
   <script src="vendor/face-api/face-api.min.js"></script>
   <script src="vendor/onnx/runtime/ort.wasm.min.js"></script>
   <script src="facial-sface.js"></script>
+  <script src="facial-guiado.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

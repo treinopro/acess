@@ -590,6 +590,31 @@ router.delete('/:id/biometria', async (req, res, next) => {
   }
 });
 
+// DELETE /api/alunos/:id/biometria/catraca — diferente do DELETE acima (que só
+// limpa o campo aqui no banco): este exclui o dedo cadastrado DE VERDADE na
+// catraca (todos os templates da matrícula, a catraca não permite excluir só
+// um dedo — ver henryCatracaWeb.js). Útil quando o cadastro deu errado ou o
+// dedo está dando problema de reconhecimento e precisa recomeçar. Também limpa
+// o `biometria_id` daqui (pedido explícito do dono do sistema, 30/07/2026:
+// "ver biometrias pra saber se já tem cadastrado e opção de excluir") — sem
+// isso, o campo continuaria mostrando um ID que não existe mais na catraca.
+router.delete('/:id/biometria/catraca', async (req, res, next) => {
+  try {
+    const aluno = await db.execute({ sql: 'SELECT biometria_id FROM alunos WHERE id = ?', args: [req.params.id] });
+    const biometriaId = aluno.rows[0]?.biometria_id;
+    if (!biometriaId) {
+      return res.status(400).json({ erro: 'Este aluno não tem ID biométrico salvo — nada pra excluir na catraca.' });
+    }
+    const resultado = await catracaGateway.excluirBiometriaCatraca({ matricula: biometriaId });
+    if (resultado.sucesso) {
+      await db.execute({ sql: 'UPDATE alunos SET biometria_id = NULL WHERE id = ?', args: [req.params.id] });
+    }
+    res.json(resultado);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/alunos/biometria/capturar-catraca — usado pelo botão "Capturar pela
 // catraca" na aba Biometria & acesso do cadastro do aluno. Pede pro agente local
 // aguardar a PRÓXIMA leitura de digital na catraca (até ~25s) e devolve o id lido,
@@ -601,6 +626,64 @@ router.post('/biometria/capturar-catraca', async (req, res, next) => {
   try {
     const resultado = await catracaGateway.capturarProximaBiometria({});
     res.json(resultado);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Maior biometria_id numérico já usado em algum aluno (mesmo formato usado
+// pela catraca — ver importar-biometria-catraca.js) + 1. Não consulta a
+// catraca em si (que não tem um endpoint prático pra "maior índice", só
+// listas paginadas de ~10 em ~10, 100+ páginas) — usa o próprio banco do
+// academia-gestao como referência, que fica atualizado a cada vínculo feito
+// por aqui. RISCO CONHECIDO: se existir algum cartão criado direto na
+// catraca (menu físico, Secullum, ou teste manual) sem nunca ter sido
+// vinculado a um aluno aqui, essa conta pode ficar defasada em relação ao
+// índice real mais alto da catraca, arriscando colidir com um cartão
+// existente. Aceitável pelo pedido do dono do sistema ("sempre o próximo
+// número disponível", 30/07/2026) — se colisões acontecerem na prática, vale
+// reconciliar rodando importar-biometria-catraca.js de novo com um cartao.txt
+// atualizado antes de confiar cegamente nesse cálculo.
+async function proximaMatriculaDisponivel() {
+  const resultado = await db.execute(
+    "SELECT MAX(CAST(biometria_id AS INTEGER)) AS maior FROM alunos WHERE biometria_id IS NOT NULL AND biometria_id != ''"
+  );
+  const maior = resultado.rows[0]?.maior;
+  return String((Number(maior) || 0) + 1);
+}
+
+// POST /api/alunos/:id/biometria/cadastrar-nova — botão "Cadastrar biometria
+// na catraca" na aba Biometria & acesso. Manda a CATRACA capturar um dedo
+// novo de verdade (comando HTTP pro painel web dela, ver
+// agente-local/henryCatracaWeb.js), em vez de só ler um ID já existente como
+// o "Capturar pela catraca" acima faz. Cobre os dois cenários (ver
+// STATUS-PROJETO.md, sessão 30/07/2026):
+//   - Aluno já tem `biometria_id` (já existe como Cartão na catraca): só
+//     dispara a captura nessa matrícula (Processo 1).
+//   - Aluno ainda não tem `biometria_id`: calcula a próxima matrícula livre,
+//     cria o Cartão na catraca com essa matrícula, e SÓ ENTÃO dispara a
+//     captura — se a criação do cartão falhar, nem tenta capturar (Processo 2).
+router.post('/:id/biometria/cadastrar-nova', async (req, res, next) => {
+  try {
+    const aluno = await db.execute({ sql: 'SELECT nome, biometria_id FROM alunos WHERE id = ?', args: [req.params.id] });
+    const alunoRow = aluno.rows[0];
+    if (!alunoRow) return res.status(404).json({ erro: 'Aluno não encontrado.' });
+
+    let matricula = alunoRow.biometria_id;
+    if (!matricula) {
+      matricula = await proximaMatriculaDisponivel();
+      const resultadoCartao = await catracaGateway.criarCartaoCatraca({ matricula, nome: alunoRow.nome });
+      if (!resultadoCartao.sucesso) {
+        return res.status(502).json({ erro: `Não foi possível criar o cadastro na catraca (matrícula ${matricula}): ${resultadoCartao.mensagem}` });
+      }
+    }
+
+    const resultado = await catracaGateway.cadastrarBiometriaCatraca({ matricula });
+    if (resultado.sucesso) {
+      await db.execute({ sql: 'UPDATE alunos SET biometria_id = ? WHERE id = ?', args: [matricula, req.params.id] });
+      acessoTerminal.notificarAgenteAtualizacaoAluno(req.params.id);
+    }
+    res.json({ ...resultado, biometria_id: matricula });
   } catch (err) {
     next(err);
   }

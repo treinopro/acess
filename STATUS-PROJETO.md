@@ -1,6 +1,140 @@
 # Status do projeto — Academia Gestão
 
-Última atualização: 28/07/2026 (idade preenchida automaticamente no cadastro do aluno e nas avaliações físicas). **Leia só a seção "ESTADO ATUAL" abaixo pra retomar o trabalho** — o resto do arquivo é histórico de sessões passadas, mantido só como referência de "por que as coisas são como são".
+Última atualização: 30/07/2026 (cadastro de biometria direto pelo academia-gestao — Processo 1, Processo 2 e exclusão de biometria pela catraca, todos implementados e **confirmados funcionando de ponta a ponta com dedo real** contra a catraca de produção. Enviado ao GitHub/Northflank nesta sessão). **Leia só a seção "ESTADO ATUAL" abaixo pra retomar o trabalho** — o resto do arquivo é histórico de sessões passadas, mantido só como referência de "por que as coisas são como são".
+
+## Sessão 30/07/2026 — Investigação: cadastro de biometria direto pelo novo sistema (protocolo HTTP da catraca)
+
+**Pendência real por trás disso:** hoje, cadastrar uma digital nova só é possível fazendo isso no sistema antigo (Secullum) ou direto no menu físico da catraca, e depois rodando `scripts/importar-biometria-catraca.js` pra casar por nome contra um arquivo exportado (`cartao.txt`) — processo manual, indireto, e sujeito a desatualização (já causou aluno sem `biometria_id` numa sessão anterior, ver 09/07/2026). O dono do sistema quer poder cadastrar a digital de um aluno **direto pelo academia-gestao**, sem depender do Secullum nem de exportar/importar arquivo.
+
+**Método usado nesta sessão:** em vez de tentar descobrir o protocolo TCP bruto da Henry (arriscado — não documentado no código, e um comando já testado antes, `permitirEntrada`, se mostrou incompatível com o firmware real desta catraca), a IA usou a extensão **Claude in Chrome** pra observar ao vivo, via aba de rede do navegador, o dono do sistema repetindo o processo de cadastro **direto na interface web embutida da própria catraca** (`http://192.168.0.79`, a mesma que aparece como `HENRY_CATRACA_IP` no `.env`). Essa interface não usa XHR/JSON — cada tela é uma navegação `GET` com querystring pra `rep.html`, então dava pra capturar o comando real olhando a URL de cada ação.
+
+### Achados confirmados
+
+A catraca tem duas listas relacionadas mas **separadas**: "Cartões" (matrícula + regras de acesso — nível de controle, horário, relés) e "Biometrias" (índice + templates do dedo). Um cadastro funcional de acesso por digital precisa das duas partes — a tela "Editar Cartão" mostra um link "Editar biometrias para o cartão" com a contagem de templates.
+
+Mapeamento de páginas descoberto (`pgCode` identifica a tela, `opType` a ação):
+
+| pgCode | Tela | opType relevante |
+|---|---|---|
+| 3 | Lista de Cartões | `0` = lista |
+| 6 | Editar Cartão existente | `3` = carrega formulário (pré-preenchido) |
+| 27 | Inserir Cartão novo | `0` = carrega formulário vazio, `1` = Salvar (campos confirmados via inspeção do DOM, ver abaixo) |
+| 12 | Busca de Cartão | `3` = form vazio, `1` = busca (`lblRegistration=<matricula>&lblName=<nome>`) |
+| 14 | Biometrias (índice + templates) | `3` = carrega formulário / **`1` = dispara a captura de digital de verdade** |
+
+**O comando que faltava (núcleo da descoberta desta sessão):**
+```
+GET /rep.html?pgCode=14&opType=1&lblId=0&lblRegistration1=<matricula>&<random>
+```
+Essa requisição fica pendurada (**long-poll** — o browser mostra `status: pending` até o dedo ser lido de verdade no leitor físico) e só resolve quando a captura termina, devolvendo a página "Resultado: Sucesso ao executar operacao" (ou presumivelmente uma variante de erro/timeout, não testada). **Confirmado nos dois cenários que o dono do sistema pediu pra distinguir** — aluno que já tem cartão recebendo uma digital nova, e cadastro novo do zero — usam exatamente essa mesma requisição; a única diferença é se a `matricula` em `lblRegistration1` já existe como Cartão ou é nova.
+
+Teste real feito nesta sessão: dono do sistema criou o cartão de matrícula `1551` (próximo número livre depois do `1550`, escolhido manualmente) e capturou a digital nele com sucesso através dessa URL, confirmado ao vivo pela extensão do navegador.
+
+Teste adicional (cartão `9999`, "teste9999", **excluído logo em seguida**) confirmou que o cadastro mínimo de um Cartão novo só exige **Mensagem ao usuário** (nome) e **Matrícula** — todo o resto (Tipo de usuário, Nível de controle, Verificar digital, etc.) fica no padrão do formulário (`Comum`, `Sempre bloqueado`, digital ligada) se não for alterado.
+
+### Campos do formulário "Inserir Cartão" (`pgCode=27`) — confirmados por inspeção do DOM
+
+Depois da captura de rede não conseguir pegar o `Salvar` (limitação da ferramenta com o iframe do site da catraca), o dono do sistema inspecionou o elemento no DevTools e achou `onclick="subComp(1,6,-1)"` no Salvar de "Editar Cartão" — a função JS lê os campos pelo atributo `name`, não manda tudo pronto na URL. A partir disso, os nomes reais foram extraídos direto do DOM (`document.getElementById('frmREP')`) via `javascript_tool`:
+
+| Campo | `name` | Observação |
+|---|---|---|
+| Mensagem ao usuário | `lb01` | |
+| Matrícula | `lb02` | |
+| Referência 1 / 2 | `lb03` / `lb04` | |
+| Tipo de usuário | `cb00` | select: `1`=Comum, `2`=Terceiro, `3`=Parceiro, `4`=Visitante, `5`=Provisório, `6`=Master, `7`=Outros, `8`=Administrador |
+| Nível de controle | `cb01` | select: `0`=Sempre bloqueado, `1`=Sempre liberado, `2`=Segundo cadastro |
+| Verificar Validade / Horário | `ck00` / `ck01` | checkbox, valor `on` quando marcado, **omitido da URL quando desmarcado** (padrão HTML) |
+| Horários 1-12 | `chkH001`...`chkH012` | idem |
+| Relê 1-5 | `ck02`...`ck06` | idem |
+| Senha de liberação / pânico | `lb07` / `lb08` | |
+| Verificar digital | `chkVerDig` | checkbox, `on` |
+| Dedo de pânico 0-7 | `chkTemp0`...`chkTemp7` | checkbox |
+
+Salvar chama `subComp(1, 27, -1)` — por analogia direta com `subComp(1, 6, -1)` (Salvar de Editar Cartão, confirmado), o padrão de URL deveria ser `pgCode=27&opType=1&lblId=-1&lb01=<nome>&lb02=<matricula>&cb00=1&cb01=0&chkVerDig=on&<random>`. **Ainda não testado ao vivo contra o equipamento** — é inferência forte (mesmo padrão do Editar, mapeamento de campo confirmado por inspeção real do DOM), não captura de rede direta como o comando de biometria. Implementado em `agente-local/henryCatracaWeb.js` (`criarCartaoWeb`) já com esse aviso no comentário do código.
+
+### Autenticação da catraca — mapeada e resolvida (atualização, mesma sessão)
+
+A tentativa inicial com HTTP Basic Auth foi **testada e rejeitada explicitamente** pela catraca ("Usuario ou senha incorretos" na resposta) — não é o mecanismo certo. Testando com o agente de produção temporariamente fora do caminho (chamada HTTP isolada, direto do PowerShell, sem passar pelo WebSocket nem afetar o `catraca-agente` que estava rodando ao vivo), o mecanismo real foi encontrado por engenharia reversa do próprio formulário de login (`menu.html`, campos `lblLogin`/`lblPass`):
+
+```
+GET /rep.html?pgCode=7&opType=1&lblId=0&lblLogin=<usuario>&lblPass=<senha>&<random>
+```
+
+**Achado importante**: a resposta não tem `Set-Cookie` nenhum — a catraca mantém **uma única sessão global pro equipamento inteiro**, não por cliente/cookie (comum em dispositivo embarcado simples, sem multi-sessão de verdade). Ou seja: uma vez autenticado por qualquer chamada, QUALQUER outra chamada HTTP subsequente (de qualquer origem) já conta como autenticada, até a sessão expirar/deslogar. Efeito colateral a ter em mente: alguém navegando na interface web ao mesmo tempo que o agente tenta autenticar pode interferir um no outro — aceitável pro uso esperado (ação pontual, poucos segundos), mas não é multi-usuário de verdade.
+
+**Página de erro/timeout confirmada** (pendência que faltava): quando ninguém toca o dedo a tempo (~12-14s, tempo decidido pelo próprio equipamento, não pelo timeout do cliente), a resposta contém `"Erro na manipulacao de biometrias"` — diferente do sucesso (`"Sucesso ao executar operacao"`).
+
+**Teste completo feito nesta sessão** (função `cadastrarBiometriaWeb` já corrigida, chamada isolada direto do PowerShell, sem tocar no agente de produção que seguia rodando normal): login automático + comando de captura pra matrícula `1551` (real) → resolveu em ~12s com a mensagem de erro esperada (ninguém tocou o dedo, o que é o resultado correto já que ninguém estava na academia). **Confirma toda a cadeia HTTP funcionando de ponta a ponta** — só falta o teste com dedo de verdade pra ver o caminho de sucesso.
+
+`agente-local/henryCatracaWeb.js` foi reescrito com login automático (`autenticar()`) antes de cada ação, e `catraca-agente` (PM2, produção) foi reiniciado pra carregar essa correção — confirmado reconectado normalmente ao painel depois do restart, sem interromper o funcionamento normal da catraca.
+
+### O que ainda falta pra fechar o Processo 2 (cadastro novo do zero)
+
+1. ~~Nomes exatos dos campos do Salvar de "Inserir Cartão"~~ — **resolvido**.
+2. ~~Autenticação/sessão~~ — **resolvido** (ver acima). `criarCartaoWeb` já usa o mesmo `autenticar()`, mas nunca foi chamada de verdade (só o comando de biometria foi testado ao vivo).
+3. ~~Página de resultado em caso de falha/timeout~~ — **resolvido** para biometria (ver acima). Ainda não sabido para "Salvar Cartão" especificamente (mensagem de erro pode ser diferente).
+4. **Cálculo automático do "próximo índice livre"** — nesta sessão o número (`1551`) foi escolhido manualmente pelo dono do sistema olhando o último cadastrado. A automação real precisa de uma forma confiável de calcular isso (ex.: ler o maior índice/matrícula existente via as listas de Cartões/Biometrias e somar 1) sem colidir com o `cartao.txt`/Secullum enquanto os dois sistemas convivem. **Única pendência de verdade que sobrou** antes de testar `criarCartaoWeb` com um cartão de teste.
+5. Wiring completo: `criarCartaoWeb` existe em `henryCatracaWeb.js` mas **ainda não está ligada** ao comando WebSocket do agente, nem à rota do servidor, nem à UI — só o Processo 1 (aluno que já tem cartão) está com o caminho inteiro pronto (ver abaixo).
+
+### Processo 1 (aluno já tem cartão, só falta a digital) — IMPLEMENTADO e validado por HTTP, falta só o teste com dedo real
+
+Ponta a ponta, código escrito, passando em `node --check`, e **a cadeia HTTP completa (login + comando de captura) já foi chamada de verdade contra o equipamento de produção** (dono do sistema fora da academia, sem dedo real disponível — testado isolado via PowerShell, sem passar pelo agente/WebSocket, pra não arriscar o `catraca-agente` que seguia rodando ao vivo). Resultado: autenticou, entrou em modo de captura, esperou ~12s e devolveu corretamente "ninguém tocou o dedo". **Só falta confirmar o caminho de SUCESSO** (com dedo real) — isso só dá pra fazer com alguém fisicamente na academia. `catraca-agente` (produção) já foi reiniciado com o código corrigido.
+
+- `agente-local/henryCatracaWeb.js` (novo) — `autenticar()` (login na sessão global da catraca) + `cadastrarBiometriaWeb({ ip, matricula, usuario, senha, timeoutMs })`, chama o comando confirmado contra hardware real (`GET rep.html?pgCode=14&opType=1&lblId=0&lblRegistration1=<matricula>`), long-poll com timeout (padrão 45s).
+- `agente-local/agente.js` — novo comando WebSocket `cadastrar_biometria_web` (`executarComando`), independente do flag `BIOMETRIA_CATRACA_ATIVA` (esse é só do `loopBiometria`, escuta passiva — não tem relação com este comando ativo). Novas env vars lidas: `HENRY_CATRACA_WEB_USUARIO`/`HENRY_CATRACA_WEB_SENHA`.
+- `agente-local/.env` e `.env.example` — credenciais da interface web da catraca adicionadas (valor real só no `.env`, nunca no `.example`).
+- `academia-gestao/src/services/catracaGateway.service.js` — `cadastrarBiometriaCatraca({ matricula, timeoutMs })`, mesmo padrão de `capturarProximaBiometria` (só funciona no modo "agente").
+- `academia-gestao/src/routes/alunos.routes.js` — `POST /api/alunos/:id/biometria/cadastrar-nova`: busca o `biometria_id` já salvo do aluno, erro 400 claro se não tiver nenhum ainda, chama o gateway.
+- `academia-gestao/public/index.html`/`app.js` — botão novo "🖐️ Cadastrar nova biometria na catraca" na aba Biometria & acesso do perfil do aluno, ao lado do "📡 Capturar pela catraca" já existente, com texto explicando a diferença entre os dois. Mostra "peça pro aluno aproximar o dedo... (até 45s)" enquanto espera.
+
+**Antes de usar de verdade**: testar com supervisão direta na academia — abrir o perfil de um aluno de teste que já tenha `biometria_id` preenchido, clicar no botão novo, confirmar que a catraca realmente entra em modo de leitura e que o resultado bate. **Não liberar pro uso normal sem esse teste ao vivo.**
+
+### Processo 2 (cadastro novo do zero) — IMPLEMENTADO (atualização, mesma sessão)
+
+A pedido do dono do sistema ("é simples, coloca sempre o próximo número disponível"), o Processo 2 foi implementado e **unificado no mesmo botão do Processo 1** — o admin não precisa escolher qual processo usar, o backend decide sozinho:
+
+- `POST /api/alunos/:id/biometria/cadastrar-nova` (`alunos.routes.js`) agora: se o aluno já tem `biometria_id`, só dispara a captura (Processo 1, como antes); se **não tem**, calcula a próxima matrícula livre, cria o Cartão na catraca (`criarCartaoCatraca` → `criar_cartao_web` no agente → `criarCartaoWeb`), e só então dispara a captura — se a criação do cartão falhar, nem tenta capturar. Em caso de sucesso, salva o `biometria_id` novo no aluno automaticamente (sem precisar do botão "Salvar ID biométrico" separado).
+- **Próxima matrícula livre** (`proximaMatriculaDisponivel()`, novo helper em `alunos.routes.js`): `MAX(CAST(biometria_id AS INTEGER)) + 1` direto no banco do academia-gestao — não consulta a catraca (que não tem endpoint prático pra isso, só listas paginadas de ~10 em ~10, 100+ páginas). **Risco conhecido, aceito conscientemente**: se existir algum cartão criado direto na catraca (menu físico, Secullum, teste manual) nunca vinculado a um aluno aqui, esse cálculo pode ficar defasado em relação ao índice real mais alto da catraca, arriscando colidir com um cartão já existente. Testado contra `local.db`: `MAX(biometria_id) = 1551` (bate exatamente com o índice real que foi criado na catraca nesta mesma sessão) — os dois lados estão coerentes por enquanto, mas vale reconciliar com `importar-biometria-catraca.js` de vez em quando pra não deixar essa defasagem crescer.
+- `agente-local/agente.js` — novo comando WebSocket `criar_cartao_web`.
+- `academia-gestao/src/services/catracaGateway.service.js` — nova função `criarCartaoCatraca({ matricula, nome, timeoutMs })`.
+- `public/app.js`/`index.html` — botão renomeado pra "🖐️ Cadastrar biometria na catraca" (tira o "nova", já que agora cobre os dois casos), texto explicativo atualizado, preenche o campo ID biométrico sozinho quando cria um cadastro novo.
+
+### `criarCartaoWeb` — quebrado, diagnosticado e CORRIGIDO na mesma sessão
+
+Primeira tentativa (`pgCode=27&opType=1&lblId=-1`) falhava sempre — testada três vezes contra o equipamento real (painel local com matrícula calculada automaticamente `1550`; isolado via PowerShell com `9997`; chamada direta com os campos já confirmados), sempre devolvendo a página genérica de "Biometrias" em vez de processar o pedido. **Nota de segurança**: antes de investigar, foi confirmado que a matrícula `1550` **não existia** como Cartão na catraca ("Cartao nao cadastrado") — nenhuma falha chegou a sobrescrever ou colidir com nada real; `1550` saiu desse valor porque o painel local usa o Turso de **produção** como banco, que ainda não sabia do `1551` criado manualmente nesta mesma sessão.
+
+**Causa raiz encontrada** (não por captura de rede — que se mostrou pouco confiável nesse site inteiro, com ou sem iframe — e sim **interceptando a função `window.subComp` do próprio navegador**, injetada via `javascript_tool`, registrando os argumentos reais de cada clique antes de deixá-los seguir):
+1. **`pgCode` errado**: o link "Inserir" da lista de Cartões chama `subComp(3, 6, -1)`, e o Salvar chama `subComp(1, 6, -1)` — ou seja, **"Inserir" e "Editar Cartão" usam a MESMA tela (`pgCode=6`)**, diferenciados só pelo `lblId` (`-1`=novo, índice real=edição). `pgCode=27` nunca foi o certo — era só a página de entrada da lista, não a tela de fato.
+2. Mesmo com `pgCode=6` certo, a catraca ainda respondia `"Parametros informados sao invalidos"` (dessa vez um erro real, não mais o fallback genérico — sinal de progresso) até os campos de texto vazios (`lb03` a `lb08` — Referência 1/2, Validade inicial/final, Senha de liberação/pânico) serem incluídos explicitamente na URL, mesmo vazios. Um formulário de navegador de verdade manda todo `<input type="text">` (mesmo em branco) e só omite checkbox desmarcado — a implementação anterior só mandava os campos "preenchidos", o que a catraca rejeitava.
+
+**Confirmado funcionando de verdade** (matrículas de teste `9992` e `9991`, via chamada isolada e via a função `criarCartaoWeb` já corrigida): `"Sucesso ao executar operacao"` nas duas. `catraca-agente` (produção) já foi reiniciado com a correção. **Processo 2 (cadastro do zero) agora funciona ponta a ponta** — criação do Cartão confirmada, captura de biometria já confirmada antes (ver acima); só falta o teste combinado dos dois em sequência com dedo real.
+
+**Cartões de teste criados nesta sessão que precisam ser excluídos manualmente**: `9996`, `9995` (criados pela tela de verdade), `9992`, `9991` (criados por chamada isolada). `9997`, `9994` e `1550` **não** foram criados (tentativas que falharam antes da correção) — não precisam de limpeza.
+
+**Segurança/cautela:** essa automação escreve direto no único ponto de acesso físico da academia (mesmo hardware que a "PLANO — colocar a biometria da catraca pra funcionar em produção", ver seção mais abaixo, já trata com o mesmo cuidado) — **nenhum teste roda contra a catraca de produção sem decisão e presença explícita do dono do sistema** (todos os testes desta sessão foram feitos com autorização explícita, pontual, pra cada ação de escrita).
+
+### Confirmado com dedo real, ponta a ponta (atualização final da sessão)
+
+Testado pelo botão de verdade no painel, com aluno de teste sem `biometria_id`: criou o Cartão sozinho (próxima matrícula livre), capturou a digital com dedo real, salvou o `biometria_id` — tudo automático, um clique. **Processo 1 e Processo 2 funcionando de ponta a ponta, confirmado.**
+
+**Achado extra (comportamento a ter em mente)**: excluir o aluno no academia-gestao **não** exclui o Cartão/Biometria correspondente na catraca — eles ficam órfãos lá. Como criar um Cartão novo com a mesma matrícula sobrescreve o antigo (confirmado), e a Biometria associada **não** é limpa automaticamente nesse processo, um dedo antigo pode continuar linkado a um índice que depois vira de outra pessoa. Mitigado na prática pela política já adotada pelo dono do sistema: **nunca excluir cadastros de verdade, só desativar.**
+
+### Excluir biometria da catraca — nova função, implementada e confirmada
+
+A pedido do dono do sistema (ver tela do Secullum antigo, que tinha uma visão detalhada de biometrias por dedo — não replicável 1:1 porque a interface web da Henry só expõe a *quantidade* de templates, não detalhe por dedo/qualidade/data): botão novo "🗑️ Excluir biometria da catraca" no perfil do aluno, que apaga de verdade o(s) dedo(s) cadastrados no equipamento (todos de uma vez — a catraca não permite excluir um dedo específico, só a matrícula inteira) e limpa o `biometria_id` daqui.
+
+- **Comando descoberto** (mesma técnica de interceptar `window.subComp`): clique em "Excluir" na tela de biometria chama `subComp(1, 15, 0)` → `pgCode=15&opType=1&lblId=0`. Implementado em `henryCatracaWeb.js` (`excluirBiometriaWeb`) usando o mesmo padrão de `lblRegistration1=<matricula>` do comando de captura — **testado e confirmado funcionando** pelo botão de verdade no painel.
+- `agente-local/agente.js` — novo comando WebSocket `excluir_biometria_web`.
+- `academia-gestao/src/services/catracaGateway.service.js` — nova função `excluirBiometriaCatraca`.
+- `academia-gestao/src/routes/alunos.routes.js` — nova rota `DELETE /api/alunos/:id/biometria/catraca` (diferente da `DELETE /api/alunos/:id/biometria` já existente, que só limpa o campo aqui — essa nova mexe na catraca de verdade).
+- `public/index.html`/`app.js` — botão novo, com confirmação antes de excluir (ação irreversível no equipamento).
+
+**Decisão sobre "Capturar pela catraca" (botão mais antigo, já existia antes desta sessão)**: mantido — não é redundante com as funções novas. "Capturar" só LÊ uma digital já cadastrada por outro caminho (menu físico da catraca, ou o Secullum antigo — mesmo cenário do `importar-biometria-catraca.js` quando o nome não bate automaticamente); "Cadastrar" sempre cria uma digital NOVA. São complementares.
+
+### Arquivos alterados nesta sessão
+`agente-local/henryCatracaWeb.js` (novo), `agente-local/agente.js`, `agente-local/.env`, `agente-local/.env.example`, `academia-gestao/src/services/catracaGateway.service.js`, `academia-gestao/src/routes/alunos.routes.js`, `academia-gestao/public/index.html`, `academia-gestao/public/app.js`. `catraca-agente` e `academia-gestao-totem` (PM2) rodaram e validaram tudo isso ao vivo durante a sessão; `catraca-agente` devolvido pra produção ao final. **Enviado ao GitHub/Northflank ao final desta sessão** (ver commit). Cartões de teste (`9996`, `9995`, `9992`, `9991`) — dono do sistema já está limpando os cadastros de teste no próprio sistema durante a sessão.
+
+---
 
 ## Sessão 28/07/2026 — Idade preenchida automaticamente no cadastro do aluno e nas avaliações físicas
 
@@ -165,6 +299,7 @@ Pedido do dono do sistema: avaliar uma lista de ~19 pontos de segurança (injeç
 
 ## ESTADO ATUAL (comece por aqui)
 
+- **RESOLVIDO (30/07/2026): cadastro de biometria direto pelo novo sistema.** Ver seção "Sessão 30/07/2026" no topo do arquivo. Processo 1 (aluno que já tem cartão), Processo 2 (cadastro novo do zero, matrícula calculada automaticamente) e exclusão de biometria pela catraca — **os três confirmados funcionando de ponta a ponta com dedo real**, testados pelo botão de verdade no painel. Enviado ao GitHub/Northflank. Achado a ter em mente: excluir aluno no academia-gestao não limpa o Cartão/Biometria na catraca (mitigado pela política de nunca excluir, só desativar).
 - **IMPORTANTE — leia a seção "Ambiente local vs produção (mudança de 08/07/2026)" logo abaixo antes de rodar qualquer coisa neste PC.** O `.env` mudou de padrão: `npm start`/`npm run dev` direto agora caem no `local.db` (arquivo de teste), não mais na produção. Isso veio de um incidente real (cobrança fantasma em produção) coberto em detalhe naquela seção.
 - **Deploy é por `git push origin main`** (não é mais upload manual de arquivo por arquivo no GitHub). O Northflank redeploya sozinho a cada push na branch `main`. **O site publicado NÃO é afetado pela mudança de `.env` acima** — a hospedagem usa variáveis configuradas direto no painel dela, nunca lê o `.env` deste PC (está no `.gitignore`, nunca vai pro GitHub).
 - **Migração do Secullum, v2**: refeita do zero no `local.db` (não na produção) com idempotência (`secullum_id`/`secullum_numero`) e um mecanismo de "adoção" de cobrança `legado` já existente em vez de criar cobrança nova pro primeiro ciclo — evita o padrão de cobrança fantasma que a v1 causava. Validação ainda em andamento (ver pendências abaixo). **A produção NÃO foi migrada com essa lógica ainda** — continua com os dados antigos, só limpos das 29 cobranças fantasma do incidente (ver seção nova abaixo).

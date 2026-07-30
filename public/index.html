@@ -228,12 +228,26 @@
             </div>
             <div class="form-acoes">
               <button type="button" class="btn-secundario" id="btn-capturar-biometria-catraca">📡 Capturar pela catraca</button>
+              <button type="button" class="btn-secundario" id="btn-cadastrar-nova-biometria">🖐️ Cadastrar biometria na catraca</button>
             </div>
             <p id="status-captura-biometria" style="font-size:12.5px;color:#667085;margin:6px 0 0;min-height:16px"></p>
+            <p style="font-size:12.5px;color:#667085;margin:0">
+              A diferença: "Capturar pela catraca" só LÊ um dedo já cadastrado fisicamente antes (pelo menu da
+              catraca ou pelo sistema antigo). "Cadastrar biometria na catraca" manda a catraca aprender um dedo
+              NOVO agora mesmo — se este aluno ainda não tiver ID biométrico, o cadastro na catraca é criado
+              sozinho (próxima matrícula livre) antes de capturar.
+            </p>
             <div class="form-acoes">
               <button type="submit" class="btn-primario">Salvar ID biométrico</button>
-              <button type="button" class="btn-secundario perigo" id="btn-remover-biometria">Remover cadastro</button>
+              <button type="button" class="btn-secundario perigo" id="btn-remover-biometria">Remover cadastro (só aqui no sistema)</button>
+              <button type="button" class="btn-secundario perigo" id="btn-excluir-biometria-catraca">🗑️ Excluir biometria da catraca</button>
             </div>
+            <p style="font-size:12.5px;color:#667085;margin:6px 0 0">
+              "Remover cadastro" só apaga o ID biométrico aqui no painel (a digital continua na catraca). "Excluir
+              biometria da catraca" apaga o(s) dedo(s) cadastrado(s) de verdade no equipamento (todos, não dá pra
+              escolher um só) — use se o cadastro deu errado ou o dedo parou de ser reconhecido, pra poder cadastrar
+              de novo do zero.
+            </p>
           </form>
 
           <h3>Acesso pelo totem (QR pessoal / reconhecimento facial)</h3>
@@ -896,9 +910,10 @@
 
           <div class="grid-2" style="margin-top:16px;gap:16px">
             <div class="form-painel">
-              <h3>Caixa (real, até hoje)</h3>
+              <h3>Caixa (real, até o fim do período selecionado)</h3>
+              <p style="font-size:12px;color:#667085;margin:-8px 0 10px">Conta a partir do saldo inicial (se configurado) — sem saldo inicial, começa do zero no início do período escolhido acima, pra nunca somar histórico que você não pediu pra incluir.</p>
               <p style="display:flex;justify-content:space-between;margin:0 0 8px"><span>Saldo inicial</span><span id="bal-saldo-inicial-exibicao">—</span></p>
-              <p style="display:flex;justify-content:space-between;margin:0;font-weight:700"><span>Saldo atual</span><span id="bal-saldo-atual"></span></p>
+              <p style="display:flex;justify-content:space-between;margin:0;font-weight:700"><span id="bal-saldo-atual-label">Saldo atual</span><span id="bal-saldo-atual"></span></p>
             </div>
             <div class="form-painel">
               <h3>No período selecionado</h3>

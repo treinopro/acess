@@ -1700,6 +1700,31 @@ document.getElementById('btn-remover-biometria').addEventListener('click', async
   } catch (err) { mostrarToast(err.message, true); }
 });
 
+// "Excluir biometria da catraca": diferente do botão acima — manda a catraca
+// apagar o(s) dedo(s) cadastrado(s) de verdade (comando ativo pro painel web
+// dela), não só o campo aqui no sistema. Útil pra recomeçar um cadastro que
+// deu errado ou parou de reconhecer o dedo.
+document.getElementById('btn-excluir-biometria-catraca').addEventListener('click', async () => {
+  const biometriaId = document.getElementById('perfil-biometria-id').value.trim();
+  if (!biometriaId) return mostrarToast('Este aluno não tem ID biométrico salvo.', true);
+  if (!confirmar(`Excluir a biometria cadastrada na catraca (matrícula ${biometriaId})? Isso apaga o(s) dedo(s) de verdade no equipamento — não dá pra desfazer, só cadastrar de novo depois.`)) return;
+  const btn = document.getElementById('btn-excluir-biometria-catraca');
+  const status = document.getElementById('status-captura-biometria');
+  btn.disabled = true;
+  status.textContent = 'Excluindo biometria na catraca...';
+  try {
+    const resultado = await api(`/api/alunos/${perfilAtualId}/biometria/catraca`, { method: 'DELETE' });
+    if (resultado.sucesso) document.getElementById('perfil-biometria-id').value = '';
+    status.textContent = resultado.mensagem || (resultado.sucesso ? 'Biometria excluída.' : 'Não foi possível excluir.');
+    mostrarToast(resultado.sucesso ? 'Biometria excluída da catraca.' : (resultado.mensagem || 'Falha ao excluir.'), !resultado.sucesso);
+  } catch (err) {
+    status.textContent = '';
+    mostrarToast(err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 // "Capturar pela catraca": pede pro agente local aguardar a próxima leitura de
 // digital na catraca (só funciona se BIOMETRIA_CATRACA_ATIVA=true no agente-local
 // e ele estiver conectado) e preenche o campo com o id lido — não salva sozinho,
@@ -1713,6 +1738,34 @@ document.getElementById('btn-capturar-biometria-catraca').addEventListener('clic
     const resultado = await api('/api/alunos/biometria/capturar-catraca', { method: 'POST', body: JSON.stringify({}) });
     document.getElementById('perfil-biometria-id').value = resultado.biometria_id;
     status.textContent = `Leitura capturada: ${resultado.biometria_id}. Confira e clique em "Salvar ID biométrico".`;
+  } catch (err) {
+    status.textContent = '';
+    mostrarToast(err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// "Cadastrar biometria na catraca": diferente do botão acima, manda a
+// catraca aprender um dedo NOVO agora (comando ativo pro painel web dela) —
+// não precisa que a digital já exista fisicamente cadastrada em lugar
+// nenhum antes. Cobre os dois casos sozinho, sem o admin precisar escolher:
+// se o aluno já tem um ID biométrico salvo, só captura nele; se não tem, o
+// backend cria o cadastro na catraca automaticamente (próxima matrícula
+// livre) antes de capturar, e preenche o campo sozinho no final.
+document.getElementById('btn-cadastrar-nova-biometria').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-cadastrar-nova-biometria');
+  const status = document.getElementById('status-captura-biometria');
+  const jaTinhaId = Boolean(document.getElementById('perfil-biometria-id').value.trim());
+  btn.disabled = true;
+  status.textContent = jaTinhaId
+    ? 'Comando enviado pra catraca... peça pro aluno aproximar o dedo do leitor agora (até 45s).'
+    : 'Criando cadastro novo na catraca e enviando comando de captura... peça pro aluno aproximar o dedo do leitor agora (até 45s).';
+  try {
+    const resultado = await api(`/api/alunos/${perfilAtualId}/biometria/cadastrar-nova`, { method: 'POST', body: JSON.stringify({}) });
+    if (resultado.biometria_id) document.getElementById('perfil-biometria-id').value = resultado.biometria_id;
+    status.textContent = resultado.mensagem || (resultado.sucesso ? 'Digital cadastrada com sucesso.' : 'Não foi possível confirmar o cadastro.');
+    mostrarToast(resultado.sucesso ? 'Biometria cadastrada na catraca.' : (resultado.mensagem || 'Falha ao cadastrar.'), !resultado.sucesso);
   } catch (err) {
     status.textContent = '';
     mostrarToast(err.message, true);
@@ -2108,6 +2161,7 @@ async function carregarBalanco() {
     const bal = await api(`/api/contas-pagar/relatorio/balanco?${params.toString()}`);
 
     document.getElementById('bal-saldo-atual').textContent = formatarMoeda(bal.saldo_atual_centavos);
+    document.getElementById('bal-saldo-atual-label').textContent = `Saldo em ${formatarDataOuDataHora(bal.periodo.ate)}`;
     document.getElementById('bal-recebido-periodo').textContent = formatarMoeda(bal.recebido_periodo_centavos);
     document.getElementById('bal-pago-periodo').textContent = formatarMoeda(bal.pago_periodo_centavos);
     document.getElementById('bal-resultado-periodo').textContent = formatarMoeda(bal.resultado_periodo_centavos);

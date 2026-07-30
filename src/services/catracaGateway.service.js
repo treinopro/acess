@@ -94,6 +94,51 @@ async function capturarProximaBiometria({ timeoutMs = 25000 } = {}) {
   return resultado;
 }
 
+/**
+ * Cadastra uma digital NOVA direto na catraca, pra uma matrícula que já existe
+ * como Cartão lá (aluno que já tem cadastro/`biometria_id`, só faltava a
+ * biometria em si) — ver `POST /api/alunos/:id/biometria/cadastrar-nova` e
+ * academia-gestao/STATUS-PROJETO.md, sessão 30/07/2026. Igual
+ * `capturarProximaBiometria`, só existe no modo "agente": a chamada HTTP pro
+ * painel web da catraca só está implementada do lado do agente-local
+ * (henryCatracaWeb.js), não aqui no modo "direto".
+ */
+async function cadastrarBiometriaCatraca({ matricula, timeoutMs = 45000 }) {
+  if (!agenteGateway.estaConectado()) {
+    throw new Error('Agente local não está conectado — não é possível cadastrar biometria pela catraca agora.');
+  }
+  const resultado = await agenteGateway.enviarComando('cadastrar_biometria_web', { matricula, timeoutMs }, { timeoutMs: timeoutMs + 5000 });
+  return resultado;
+}
+
+/**
+ * Cria um Cartão novo na catraca pra uma matrícula que ainda não existe lá —
+ * passo 1 do Processo 2 (aluno sem cadastro na catraca ainda). Depois disso
+ * ainda precisa chamar `cadastrarBiometriaCatraca` pra essa mesma matrícula
+ * pra capturar a digital em si — são duas ações separadas na catraca.
+ */
+async function criarCartaoCatraca({ matricula, nome, timeoutMs = 15000 }) {
+  if (!agenteGateway.estaConectado()) {
+    throw new Error('Agente local não está conectado — não é possível criar cartão pela catraca agora.');
+  }
+  const resultado = await agenteGateway.enviarComando('criar_cartao_web', { matricula, nome, timeoutMs }, { timeoutMs: timeoutMs + 5000 });
+  return resultado;
+}
+
+/**
+ * Exclui a biometria (todos os templates/dedos, não seleciona por dedo — a
+ * catraca não expõe isso) de uma matrícula. Não mexe no Cartão em si (regras
+ * de acesso continuam lá) nem no `biometria_id` salvo no aluno — quem chama
+ * decide se também limpa isso (ver rota).
+ */
+async function excluirBiometriaCatraca({ matricula, timeoutMs = 15000 }) {
+  if (!agenteGateway.estaConectado()) {
+    throw new Error('Agente local não está conectado — não é possível excluir biometria pela catraca agora.');
+  }
+  const resultado = await agenteGateway.enviarComando('excluir_biometria_web', { matricula, timeoutMs }, { timeoutMs: timeoutMs + 5000 });
+  return resultado;
+}
+
 module.exports = {
   modoAtual,
   liberarAcesso,
@@ -102,4 +147,7 @@ module.exports = {
   impedirEntrada,
   statusAgente,
   capturarProximaBiometria,
+  cadastrarBiometriaCatraca,
+  criarCartaoCatraca,
+  excluirBiometriaCatraca,
 };

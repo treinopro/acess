@@ -65,7 +65,10 @@
     <!-- Painel flutuante de status/confirmação do comando de voz — some sozinho
          quando não há nada acontecendo (ver iniciarComandoVoz em app.js). -->
     <div id="comando-voz-status" class="oculto" style="position:fixed;left:16px;bottom:16px;z-index:500;background:#1f2937;color:#fff;padding:12px 16px;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.25);max-width:320px;font-size:14px">
-      <p id="comando-voz-texto" style="margin:0"></p>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+        <p id="comando-voz-texto" style="margin:0"></p>
+        <button type="button" id="btn-fechar-comando-voz" aria-label="Fechar" style="background:none;border:none;color:#fff;font-size:18px;line-height:1;cursor:pointer;padding:0">✕</button>
+      </div>
       <div id="comando-voz-confirmacao" class="oculto" style="margin-top:10px;display:flex;gap:8px">
         <button type="button" class="btn-primario" id="btn-confirmar-comando-voz">Confirmar</button>
         <button type="button" class="btn-secundario" id="btn-cancelar-comando-voz">Cancelar</button>

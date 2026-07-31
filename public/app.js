@@ -521,6 +521,8 @@ window.__reconhecimentoVozSuportado = Boolean(ReconhecimentoVozAPI);
 
 if (ReconhecimentoVozAPI) {
   let comandoVozPendente = null;
+  let reconhecimentoAtivo = null;
+  let timeoutSegurancaVoz = null;
   const painelVoz = document.getElementById('comando-voz-status');
   const textoVoz = document.getElementById('comando-voz-texto');
   const confirmacaoVoz = document.getElementById('comando-voz-confirmacao');
@@ -529,10 +531,22 @@ if (ReconhecimentoVozAPI) {
     textoVoz.textContent = mensagem;
     painelVoz.classList.remove('oculto');
   }
+  // Sempre limpa TUDO: esconde o painel, cancela o timeout de segurança e
+  // para o reconhecimento em andamento (se houver) — chamada tanto quando
+  // termina normal quanto quando o usuário força o fechamento. Sem isso, um
+  // celular que nunca dispara onresult/onerror (visto na prática — "fica
+  // ouvindo e trava, sem jeito de sair") deixava a tela presa pra sempre,
+  // já que o botão fechar nem existia antes.
   function esconderStatusVoz() {
     painelVoz.classList.add('oculto');
     confirmacaoVoz.classList.add('oculto');
     comandoVozPendente = null;
+    if (timeoutSegurancaVoz) { clearTimeout(timeoutSegurancaVoz); timeoutSegurancaVoz = null; }
+    if (reconhecimentoAtivo) {
+      const r = reconhecimentoAtivo;
+      reconhecimentoAtivo = null;
+      try { r.abort(); } catch { /* já pode ter parado sozinho */ }
+    }
   }
   async function executarComandoVoz(cmd) {
     mostrarStatusVoz(`Executando: ${cmd.rotulo}...`);
@@ -547,13 +561,23 @@ if (ReconhecimentoVozAPI) {
 
   document.getElementById('btn-comando-voz').addEventListener('click', () => {
     const reconhecimento = new ReconhecimentoVozAPI();
+    reconhecimentoAtivo = reconhecimento;
     reconhecimento.lang = 'pt-BR';
     reconhecimento.interimResults = false;
     reconhecimento.maxAlternatives = 1;
 
     mostrarStatusVoz('🎤 Ouvindo... fale o comando (ex: "liberar catraca")');
+    // Rede de segurança: se o navegador nunca disparar onresult/onerror/onend
+    // (visto no celular — tela ficava "ouvindo" pra sempre), força o
+    // fechamento sozinho depois de 10s em vez de deixar preso.
+    timeoutSegurancaVoz = setTimeout(() => {
+      mostrarStatusVoz('Tempo esgotado esperando o comando. Tente de novo.');
+      setTimeout(esconderStatusVoz, 2500);
+    }, 10000);
 
     reconhecimento.onresult = (ev) => {
+      reconhecimentoAtivo = null;
+      if (timeoutSegurancaVoz) { clearTimeout(timeoutSegurancaVoz); timeoutSegurancaVoz = null; }
       const textoReconhecido = ev.results[0][0].transcript;
       const cmd = encontrarComandoVoz(textoReconhecido);
       if (!cmd) {
@@ -570,11 +594,15 @@ if (ReconhecimentoVozAPI) {
       }
     };
     reconhecimento.onerror = (ev) => {
+      reconhecimentoAtivo = null;
+      if (timeoutSegurancaVoz) { clearTimeout(timeoutSegurancaVoz); timeoutSegurancaVoz = null; }
       // 'no-speech' é o caso comum de "clicou e não falou nada" — sem
       // precisar tratar como erro de verdade, só some sozinho.
       if (ev.error === 'no-speech' || ev.error === 'aborted') { esconderStatusVoz(); return; }
-      mostrarStatusVoz(`Erro no reconhecimento de voz: ${ev.error}`);
-      setTimeout(esconderStatusVoz, 4000);
+      mostrarStatusVoz(`Erro no reconhecimento de voz: ${ev.error}. Toque em ✕ e tente de novo.`);
+    };
+    reconhecimento.onend = () => {
+      reconhecimentoAtivo = null;
     };
 
     reconhecimento.start();
@@ -587,6 +615,7 @@ if (ReconhecimentoVozAPI) {
     executarComandoVoz(cmd);
   });
   document.getElementById('btn-cancelar-comando-voz').addEventListener('click', esconderStatusVoz);
+  document.getElementById('btn-fechar-comando-voz').addEventListener('click', esconderStatusVoz);
 }
 
 // Torna uma janela flutuante arrastável a partir de uma "alça" (ex.: a barra do topo).

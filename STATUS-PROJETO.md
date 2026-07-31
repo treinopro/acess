@@ -1,6 +1,28 @@
 # Status do projeto — Academia Gestão
 
-Última atualização: 31/07/2026 (comando de voz no painel admin — ver seção "Sessão 31/07/2026" no topo). **Leia só a seção "ESTADO ATUAL" abaixo pra retomar o trabalho** — o resto do arquivo é histórico de sessões passadas, mantido só como referência de "por que as coisas são como são".
+Última atualização: 31/07/2026 (reconhecimento facial demorando a detectar quem chega no totem — ver seção logo abaixo). **Leia só a seção "ESTADO ATUAL" abaixo pra retomar o trabalho** — o resto do arquivo é histórico de sessões passadas, mantido só como referência de "por que as coisas são como são".
+
+## Sessão 31/07/2026 (2) — Reconhecimento facial demorando a detectar quem chega no totem
+
+**Relato do dono do sistema**: reconhecimento facial demorando muito pra detectar quem chega na frente do tablet. Confirmado por perguntas de diagnóstico: motor do TensorFlow.js é **webgl** (GPU disponível, não é o caso de fallback pra CPU já documentado na sessão 27/07/2026), e o círculo-guia fica **cinza por um tempo, demora a ficar amarelo, e depois demora a ficar verde** — ou seja, a lentidão está na detecção em si (achar o rosto), não só na etapa de reconhecimento/qualidade.
+
+### Hipótese (não validada com o totem físico ainda)
+
+`iniciarCamera` (`public/terminal.js`) pede `width: {ideal: 1920}` sem `frameRate` explícito — mudança da sessão 20-22/07/2026 pra evitar o zoom digital que várias câmeras de tablet aplicam em resoluções baixas. Só que pedir uma resolução alta sem travar um fps mínimo deixa o driver da câmera livre pra entregar poucos quadros por segundo nesse modo (comum em câmera de tablet mais fraco) — menos quadros novos por segundo atrasa perceptivelmente a detecção de quem acabou de chegar, mesmo com o motor de IA (webgl) rápido. Não foi possível confirmar isso no hardware real nesta sessão (sem acesso remoto ao totem físico) — só a partir da leitura do código e do relato do dono do sistema.
+
+### O que foi feito
+
+1. `INTERVALO_ESCANEAMENTO_MS` (intervalo entre tentativas da detecção BARATA — achar só a caixa do rosto) reduzido de 600ms pra 350ms. Não mexe no cooldown separado da etapa PESADA (`INTERVALO_MINIMO_RECONHECIMENTO_PESADO_MS`, 1200ms — esse continua intacto, é o que evita o travamento do navegador documentado na sessão 27/07/2026).
+2. Adicionado `frameRate: {ideal: 30}` na constraint do `getUserMedia`, junto do `width: {ideal: 1920}` já existente — pede explicitamente que a câmera não caia pra poucos fps só porque a resolução pedida é alta (continua "ideal", não obrigatório — não quebra em câmera que não suporte).
+3. Diagnóstico de resolução/fps reais entregues pela câmera (já existia só no console, `[camera] resolução/zoom/fps entregues pela câmera`) agora também aparece no texto da tela de espera do totem, junto do "(motor: ...)" que já existia — ex.: `(motor: webgl, câmera: 1920x1080@15fps)`. Serve pra próxima vez que alguém estiver na frente do totem físico confirmar se o fps real está baixo, sem precisar abrir o console do navegador.
+
+### Pendências desta sessão
+
+1. **Testar com o totem físico** e ler o novo texto "(motor: ..., câmera: ...)" — se o fps mostrado for baixo (bem abaixo de ~24-30fps), essa é a causa provável e confirmada; se já vier alto mesmo assim, a lentidão vem de outro lugar (ângulo/distância da câmera em relação ao `inputSize: 160` do detector, calibração de `qualidadeDeteccaoParaReconhecimento` em `facial-guiado.js`, ou algo físico como autofoco).
+2. Nenhum teste rodou contra hardware real nesta sessão (mesma limitação já registrada em sessões anteriores de reconhecimento facial) — mudanças são baseadas em leitura do código, não validadas em campo.
+3. **Arquivos alterados**: `public/terminal.js` (`INTERVALO_ESCANEAMENTO_MS`, `iniciarCamera`, texto de status). **Ainda não commitado/enviado ao GitHub.**
+
+---
 
 ## Sessão 31/07/2026 — Comando de voz no painel admin
 

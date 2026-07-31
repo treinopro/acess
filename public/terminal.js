@@ -30,7 +30,16 @@ const DURACAO_RESULTADO_MS = 3000;
 const DURACAO_RESULTADO_LIBERADO_MS = 8000;
 
 // Intervalo (ms) entre tentativas de detecção no loop contínuo da tela inicial.
-const INTERVALO_ESCANEAMENTO_MS = 600;
+// 2026-07-31 (relato: reconhecimento demorando a detectar quem chega):
+// reduzido de 600 pra 350 — a etapa cara que motivou o valor mais alto
+// (landmarks + embedding) já tem seu próprio cooldown separado, bem mais
+// longo (ver INTERVALO_MINIMO_RECONHECIMENTO_PESADO_MS, mais abaixo); este
+// intervalo aqui só controla a etapa BARATA (achar a caixa do rosto), que é
+// rápida mesmo sem GPU — não há motivo pra esperar 600ms entre tentativas
+// dela. Reduzir isso faz o círculo-guia reagir mais rápido assim que alguém
+// aparece na frente da câmera, sem reintroduzir o travamento que motivou o
+// cooldown da etapa pesada (esse continua intacto).
+const INTERVALO_ESCANEAMENTO_MS = 350;
 
 // ---------------- Aviso sonoro no totem (2026-07) ----------------
 // Toca automaticamente a cada identificação (CPF, QR ou facial): frase falada
@@ -426,6 +435,14 @@ function mostrarTela(id) {
 
 let streamAtual = null;
 let elementoWebcamUsbAtual = null;
+// 2026-07-31: guarda a resolução/fps REAL entregues pela câmera (ver
+// iniciarCamera abaixo), pra mostrar junto do diagnóstico "(motor: ...)" na
+// tela de espera — sem isso, só dava pra ver essa informação abrindo o
+// console do navegador (nada prático num tablet físico na academia). Um
+// tablet fraco pode entregar bem menos fps do que o "ideal" pedido quando a
+// resolução é alta (ver width:{ideal:1920} abaixo), o que atrasa a detecção
+// mesmo com o motor (webgl) certo.
+let diagnosticoCameraAtual = null;
 
 async function iniciarCamera(videoEl) {
   pararCamera();
@@ -491,21 +508,32 @@ async function iniciarCamera(videoEl) {
   // vier. também loga a resolução/zoom real entregues pela câmera no
   // console — se o zoom persistir, dá pra confirmar pelo log se é essa
   // câmera específica que não respeita nem isso.
+  // 2026-07-31: frameRate:{ideal:30} — pedir uma largura grande (1920, ver
+  // acima) sem pedir também um fps mínimo deixa o driver da câmera livre pra
+  // escolher poucos quadros por segundo nesse modo de resolução alta (comum
+  // em câmera de tablet mais fraco); menos quadros novos por segundo atrasa
+  // percebidamente a detecção de quem acabou de chegar na frente da câmera,
+  // mesmo com o motor de IA (webgl) rápido. Continua "ideal" (não obrigatório)
+  // — se a câmera não suportar 30fpx nessa resolução, o navegador cai pro
+  // melhor que conseguir, sem quebrar a captura.
   streamAtual = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: 'user', width: { ideal: 1920 } },
+    video: { facingMode: 'user', width: { ideal: 1920 }, frameRate: { ideal: 30 } },
   });
   videoEl.srcObject = streamAtual;
   await videoEl.play();
   await afastarZoomDaCamera(streamAtual);
 
   const [trilhaAtual] = streamAtual.getVideoTracks();
+  diagnosticoCameraAtual = null;
   if (trilhaAtual && typeof trilhaAtual.getSettings === 'function') {
     try {
       const config = trilhaAtual.getSettings();
-      console.log('[camera] resolução/zoom entregues pela câmera:', {
+      diagnosticoCameraAtual = { width: config.width, height: config.height, frameRate: config.frameRate };
+      console.log('[camera] resolução/zoom/fps entregues pela câmera:', {
         width: config.width,
         height: config.height,
         zoom: config.zoom,
+        frameRate: config.frameRate,
       });
     } catch {
       // diagnóstico best-effort — não deve impedir a câmera de funcionar
@@ -677,7 +705,15 @@ async function iniciarEscaneamentoContinuo() {
   // "webgl", é sinal de que o navegador do aparelho não tem aceleração por
   // GPU disponível pro TensorFlow.js, e é isso que causa a travada durante
   // cada tentativa de reconhecimento facial.
-  statusEl.textContent = `Aproxime-se para reconhecimento facial, ou mostre o QR do seu celular... (motor: ${motorTensorflowAtivo})`;
+  // 2026-07-31: fps real da câmera (ver diagnosticoCameraAtual em
+  // iniciarCamera) somado ao mesmo diagnóstico — mesmo com "webgl" certo, uma
+  // câmera entregando poucos quadros por segundo (comum ao pedir resolução
+  // alta pra evitar o zoom, ver width:{ideal:1920}) atrasa a detecção de quem
+  // acabou de chegar na frente do totem.
+  const infoCamera = diagnosticoCameraAtual
+    ? `, câmera: ${diagnosticoCameraAtual.width}x${diagnosticoCameraAtual.height}@${Math.round(diagnosticoCameraAtual.frameRate || 0)}fps`
+    : '';
+  statusEl.textContent = `Aproxime-se para reconhecimento facial, ou mostre o QR do seu celular... (motor: ${motorTensorflowAtivo}${infoCamera})`;
   agendarProximoTick();
 }
 

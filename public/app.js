@@ -231,6 +231,9 @@ function mostrarApp() {
   document.getElementById('btn-acessos-recentes').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
   document.getElementById('btn-liberar-rapido').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
   document.getElementById('link-liberacao-rapida').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
+  // btn-comando-voz também some se o navegador não suportar Web Speech API —
+  // ver checagem de suporte perto da implementação, mais abaixo neste arquivo.
+  document.getElementById('btn-comando-voz').classList.toggle('oculto', estado.usuario?.papel !== 'admin' || !window.__reconhecimentoVozSuportado);
   document.getElementById('grupo-gerar-recorrentes').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
   carregarSecao('alunos');
   // Aviso de aniversariantes de hoje (feature de Recuperação de Clientes) —
@@ -452,6 +455,139 @@ document.getElementById('btn-liberar-rapido').addEventListener('click', async ()
     botao.disabled = false;
   }
 });
+
+// ---------------- Comando de voz (atalho pra admin, pedido 30/07/2026) ----------------
+// Usa a Web Speech API nativa do navegador (só Chrome/Edge têm suporte de
+// verdade hoje — Firefox/Safari não implementam SpeechRecognition; nesse caso
+// o botão fica escondido sozinho, ver toggle de visibilidade admin acima).
+// Conjunto pequeno de comandos DE PROPÓSITO (em vez de linguagem livre) —
+// reconhecimento de voz solto erra muito em ambiente de academia (barulho,
+// sotaque, gente falando perto do computador), então cada comando casa por
+// palavras-chave (não frase exata) contra o texto reconhecido, sem exigir
+// dizer a frase perfeita. Comandos que fazem algo irreversível/físico
+// (liberar a catraca) pedem confirmação visual antes de executar; comandos
+// de navegação (abrir uma seção) executam direto, por serem inofensivos.
+const MAPA_ACENTOS_VOZ = { á: 'a', à: 'a', â: 'a', ã: 'a', é: 'e', ê: 'e', í: 'i', ó: 'o', ô: 'o', õ: 'o', ú: 'u', ç: 'c' };
+function normalizarTextoVoz(texto) {
+  return (texto || '')
+    .toLowerCase()
+    .split('')
+    .map((c) => MAPA_ACENTOS_VOZ[c] || c)
+    .join('')
+    .trim();
+}
+
+const COMANDOS_VOZ = [
+  {
+    id: 'liberar_catraca',
+    palavrasChave: ['liberar', 'catraca'],
+    rotulo: 'Liberar catraca',
+    pedirConfirmacao: true,
+    executar: async () => {
+      await api('/api/terminal/catraca/liberar', {
+        method: 'POST',
+        body: JSON.stringify({ mensagem: 'Liberação por comando de voz' }),
+      });
+      mostrarToast('Catraca liberada por comando de voz.');
+    },
+  },
+  {
+    id: 'abrir_contas_pagar',
+    palavrasChave: ['contas', 'pagar'],
+    rotulo: 'Abrir Contas a Pagar',
+    pedirConfirmacao: false,
+    executar: async () => {
+      document.querySelector('.nav-btn[data-secao="contas-pagar"]')?.click();
+    },
+  },
+  {
+    id: 'abrir_relatorios',
+    palavrasChave: ['relatorio'],
+    rotulo: 'Abrir Relatórios',
+    pedirConfirmacao: false,
+    executar: async () => {
+      document.querySelector('.nav-btn[data-secao="relatorios"]')?.click();
+    },
+  },
+];
+
+function encontrarComandoVoz(textoReconhecido) {
+  const normalizado = normalizarTextoVoz(textoReconhecido);
+  return COMANDOS_VOZ.find((cmd) => cmd.palavrasChave.every((palavra) => normalizado.includes(palavra)));
+}
+
+const ReconhecimentoVozAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+window.__reconhecimentoVozSuportado = Boolean(ReconhecimentoVozAPI);
+
+if (ReconhecimentoVozAPI) {
+  let comandoVozPendente = null;
+  const painelVoz = document.getElementById('comando-voz-status');
+  const textoVoz = document.getElementById('comando-voz-texto');
+  const confirmacaoVoz = document.getElementById('comando-voz-confirmacao');
+
+  function mostrarStatusVoz(mensagem) {
+    textoVoz.textContent = mensagem;
+    painelVoz.classList.remove('oculto');
+  }
+  function esconderStatusVoz() {
+    painelVoz.classList.add('oculto');
+    confirmacaoVoz.classList.add('oculto');
+    comandoVozPendente = null;
+  }
+  async function executarComandoVoz(cmd) {
+    mostrarStatusVoz(`Executando: ${cmd.rotulo}...`);
+    try {
+      await cmd.executar();
+    } catch (err) {
+      mostrarToast(err.message, true);
+    } finally {
+      setTimeout(esconderStatusVoz, 1500);
+    }
+  }
+
+  document.getElementById('btn-comando-voz').addEventListener('click', () => {
+    const reconhecimento = new ReconhecimentoVozAPI();
+    reconhecimento.lang = 'pt-BR';
+    reconhecimento.interimResults = false;
+    reconhecimento.maxAlternatives = 1;
+
+    mostrarStatusVoz('🎤 Ouvindo... fale o comando (ex: "liberar catraca")');
+
+    reconhecimento.onresult = (ev) => {
+      const textoReconhecido = ev.results[0][0].transcript;
+      const cmd = encontrarComandoVoz(textoReconhecido);
+      if (!cmd) {
+        mostrarStatusVoz(`Não entendi: "${textoReconhecido}". Tente de novo.`);
+        setTimeout(esconderStatusVoz, 4000);
+        return;
+      }
+      if (cmd.pedirConfirmacao) {
+        comandoVozPendente = cmd;
+        mostrarStatusVoz(`Comando reconhecido: "${cmd.rotulo}". Confirma?`);
+        confirmacaoVoz.classList.remove('oculto');
+      } else {
+        executarComandoVoz(cmd);
+      }
+    };
+    reconhecimento.onerror = (ev) => {
+      // 'no-speech' é o caso comum de "clicou e não falou nada" — sem
+      // precisar tratar como erro de verdade, só some sozinho.
+      if (ev.error === 'no-speech' || ev.error === 'aborted') { esconderStatusVoz(); return; }
+      mostrarStatusVoz(`Erro no reconhecimento de voz: ${ev.error}`);
+      setTimeout(esconderStatusVoz, 4000);
+    };
+
+    reconhecimento.start();
+  });
+
+  document.getElementById('btn-confirmar-comando-voz').addEventListener('click', () => {
+    if (!comandoVozPendente) return;
+    const cmd = comandoVozPendente;
+    confirmacaoVoz.classList.add('oculto');
+    executarComandoVoz(cmd);
+  });
+  document.getElementById('btn-cancelar-comando-voz').addEventListener('click', esconderStatusVoz);
+}
 
 // Torna uma janela flutuante arrastável a partir de uma "alça" (ex.: a barra do topo).
 // Reaproveitável para outras janelas flutuantes que venham a existir no futuro.

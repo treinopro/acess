@@ -55,11 +55,22 @@
       <div class="sidebar-rodape">
         <button class="btn-liberar-rapido oculto" id="btn-liberar-rapido" title="Libera a catraca imediatamente, sem abrir a janela completa da catraca">⚡ Liberar rápido</button>
         <a class="btn-liberar-rapido oculto" id="link-liberacao-rapida" href="liberacao-rapida.html" target="_blank" rel="noopener" style="text-decoration:none;display:inline-block" title="Abre uma tela cheia, só com o botão de liberar — ideal pra deixar num tablet/computador da recepção">⚡ Tela de liberação rápida</a>
+        <button class="btn-liberar-rapido oculto" id="btn-comando-voz" title='Fale um comando, ex: "liberar catraca", "abrir contas a pagar", "abrir relatórios"'>🎤 Comando de voz</button>
         <button class="btn-acessos-recentes oculto" id="btn-acessos-recentes">🕓 Acessos recentes</button>
         <span id="usuario-nome"></span>
         <button id="btn-sair">Sair</button>
       </div>
     </aside>
+
+    <!-- Painel flutuante de status/confirmação do comando de voz — some sozinho
+         quando não há nada acontecendo (ver iniciarComandoVoz em app.js). -->
+    <div id="comando-voz-status" class="oculto" style="position:fixed;left:16px;bottom:16px;z-index:500;background:#1f2937;color:#fff;padding:12px 16px;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.25);max-width:320px;font-size:14px">
+      <p id="comando-voz-texto" style="margin:0"></p>
+      <div id="comando-voz-confirmacao" class="oculto" style="margin-top:10px;display:flex;gap:8px">
+        <button type="button" class="btn-primario" id="btn-confirmar-comando-voz">Confirmar</button>
+        <button type="button" class="btn-secundario" id="btn-cancelar-comando-voz">Cancelar</button>
+      </div>
+    </div>
 
     <main class="conteudo">
 

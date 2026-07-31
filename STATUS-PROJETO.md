@@ -1,6 +1,22 @@
 # Status do projeto — Academia Gestão
 
-Última atualização: 30/07/2026 (cadastro de biometria direto pelo academia-gestao — Processo 1, Processo 2 e exclusão de biometria pela catraca, todos implementados e **confirmados funcionando de ponta a ponta com dedo real** contra a catraca de produção. Enviado ao GitHub/Northflank nesta sessão). **Leia só a seção "ESTADO ATUAL" abaixo pra retomar o trabalho** — o resto do arquivo é histórico de sessões passadas, mantido só como referência de "por que as coisas são como são".
+Última atualização: 31/07/2026 (comando de voz no painel admin — ver seção "Sessão 31/07/2026" no topo). **Leia só a seção "ESTADO ATUAL" abaixo pra retomar o trabalho** — o resto do arquivo é histórico de sessões passadas, mantido só como referência de "por que as coisas são como são".
+
+## Sessão 31/07/2026 — Comando de voz no painel admin
+
+Pedido do dono do sistema: comandos de voz pra agilizar o uso do painel (ex.: "liberar catraca", "abrir contas a pagar"). Implementado com a **Web Speech API nativa do navegador** (Chrome/Edge/Safari — sem servidor externo, sem custo). Botão "🎤 Comando de voz" na barra lateral, admin-only, some sozinho em navegadores sem suporte.
+
+**Comandos implementados** (casam por palavra-chave contida no texto reconhecido, não frase exata — `public/app.js`, `COMANDOS_VOZ`):
+- **"liberar catraca"** — executa DIRETO, sem confirmação (decisão consciente do dono do sistema, depois de testar: queria mais rápido que clicar em botão; risco aceito de um reconhecimento errado abrir a catraca sem chance de cancelar).
+- **"contas a pagar"** / **"relatórios"** — navegação, sem confirmação (ações sem risco).
+
+**Bug real encontrado e corrigido em produção** (reportado em teste pelo celular): a tela "Ouvindo..." podia ficar travada pra sempre, sem nenhum jeito de fechar, se o reconhecimento nunca disparasse `onresult`/`onerror` (aconteceu de verdade num navegador de celular). Corrigido com botão **✕** sempre visível (aborta o reconhecimento e fecha) + timeout de segurança de 10s que fecha sozinho.
+
+**Troubleshooting de microfone no PC de testes** (não resolvido, mas não bloqueou o feature): no PC usado pra testar (`Nova Graf`), `getUserMedia`/`SpeechRecognition` sempre falhavam com `NotAllowedError`/`permissionState: denied`, mesmo com todas as configurações conferidas certas (permissão do site no Chrome allow, todas as permissões de microfone do Windows ativadas, sem antivírus terceiro, não é área de trabalho remota, sem outro app usando o microfone, Bluetooth não era a causa, Chrome e Edge falhavam igual, reinício completo do PC não resolveu). Causa raiz não encontrada — decidiu-se testar por celular/tablet em vez de continuar investigando (**confirmado funcionando no iPhone, com o popup de permissão nativo aparecendo normal**). Se algum dia for revisitado: próximo passo seria comparar com um perfil de usuário do Windows diferente nesse mesmo PC, pra isolar se é algo da conta de usuário específica.
+
+**Arquivos alterados**: `public/index.html`, `public/app.js`. Commits: `d00191d` (feature), `8dad72a` (fix do travamento), `7db2c01` (remove confirmação do liberar catraca). **Todos enviados ao GitHub/Northflank.**
+
+---
 
 ## Sessão 30/07/2026 — Investigação: cadastro de biometria direto pelo novo sistema (protocolo HTTP da catraca)
 

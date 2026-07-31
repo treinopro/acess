@@ -482,7 +482,12 @@ const COMANDOS_VOZ = [
     id: 'liberar_catraca',
     palavrasChave: ['liberar', 'catraca'],
     rotulo: 'Liberar catraca',
-    pedirConfirmacao: true,
+    // 2026-07-31: sem confirmação de propósito, a pedido do dono do sistema —
+    // ele quer o comando de voz mais rápido que clicar em botões pra esse
+    // caso específico (liberação da catraca), mesmo sabendo que isso
+    // significa que um reconhecimento errado libera a catraca na hora, sem
+    // chance de cancelar.
+    pedirConfirmacao: false,
     executar: async () => {
       await api('/api/terminal/catraca/liberar', {
         method: 'POST',

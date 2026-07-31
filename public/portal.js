@@ -110,6 +110,7 @@ let alunoHubTreinoModo = 'nativo';
 let contasSelecionadasHub = {};
 let pixHubPollTimer = null;
 let infoHubPendentePrimeiroAcesso = null; // guarda os dados do dashboard enquanto a tela de "guarde sua senha" está aberta
+let dadosPessoaisHubAtual = null; // { nome, telefone, email, data_nascimento } — ver GET /api/portal/aluno
 
 function resetHub() {
   pararPollPixHub();
@@ -117,13 +118,14 @@ function resetHub() {
   cpfHubAtual = null;
   senhaHubAtual = null;
   infoHubPendentePrimeiroAcesso = null;
+  dadosPessoaisHubAtual = null;
   contasSelecionadasHub = {};
   document.getElementById('input-cpf-hub').value = '';
   document.getElementById('input-senha-hub').value = '';
   document.getElementById('input-senha-hub').classList.add('oculto');
   document.getElementById('hub-cpf-erro').textContent = '';
   document.getElementById('painel-hub-cpf').classList.remove('oculto');
-  ['painel-hub-primeiro-acesso', 'painel-hub-dashboard', 'painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-comprovante', 'painel-hub-facial']
+  ['painel-hub-primeiro-acesso', 'painel-hub-dashboard', 'painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-comprovante', 'painel-hub-completar-cadastro', 'painel-hub-facial']
     .forEach((id) => document.getElementById(id).classList.add('oculto'));
   const avisoVencimento = document.getElementById('aviso-vencimento-hub');
   avisoVencimento.classList.add('oculto');
@@ -138,7 +140,7 @@ function resetHub() {
 // dashboard); só faz o reset completo pro início quando já está no menu
 // principal (ou na tela de CPF).
 document.getElementById('btn-voltar-hub').addEventListener('click', () => {
-  const SUBPAINEIS_HUB = ['painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-facial'];
+  const SUBPAINEIS_HUB = ['painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-completar-cadastro', 'painel-hub-facial'];
   const painelAberto = SUBPAINEIS_HUB.find((id) => !document.getElementById(id).classList.contains('oculto'));
   if (painelAberto) {
     if (painelAberto === 'painel-hub-pix') pararPollPixHub();
@@ -153,6 +155,7 @@ document.getElementById('btn-voltar-hub').addEventListener('click', () => {
 
 function preencherDashboardHub(info) {
   alunoHubTreinoModo = info.treino_modo || 'nativo';
+  dadosPessoaisHubAtual = info.dados_pessoais || null;
 
   document.getElementById('hub-saudacao').textContent = `Olá, ${info.aluno_nome}!`;
   document.getElementById('painel-hub-cpf').classList.add('oculto');
@@ -308,7 +311,7 @@ function atualizarAvisoVencimento(contas) {
 }
 
 function ocultarPaineisHub() {
-  ['painel-hub-dashboard', 'painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-comprovante', 'painel-hub-facial']
+  ['painel-hub-dashboard', 'painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-comprovante', 'painel-hub-completar-cadastro', 'painel-hub-facial']
     .forEach((id) => document.getElementById(id).classList.add('oculto'));
 }
 
@@ -546,12 +549,64 @@ document.getElementById('btn-comprovante-hub-ok').addEventListener('click', () =
   mostrarPagina('pagina-inicio');
 });
 
+// ---- Completar cadastro antes do 1o cadastro facial (2026-07-31) ----
+// Pedido do dono do sistema, ao mandar o link do portal pra todos os alunos
+// via WhatsApp pra fazerem o cadastro facial: muitos alunos antigos
+// (importados do Secullum antes de telefone/e-mail/data de nascimento serem
+// obrigatórios, ver terminal.routes.js/portal.routes.js) não têm esses dados
+// no sistema. Antes de liberar a câmera do cadastro facial, checa se algum
+// desses 4 campos está vazio — se estiver, mostra um formulário pré-preenchido
+// com o que já existe (ver dadosPessoaisHubAtual, vindo de GET /aluno) e só
+// libera a câmera depois de salvo.
+const CAMPOS_OBRIGATORIOS_HUB = ['nome', 'telefone', 'email', 'data_nascimento'];
+
+function camposFaltandoHub() {
+  if (!dadosPessoaisHubAtual) return [];
+  return CAMPOS_OBRIGATORIOS_HUB.filter((chave) => !String(dadosPessoaisHubAtual[chave] || '').trim());
+}
+
+function abrirCompletarCadastroHub() {
+  ocultarPaineisHub();
+  document.getElementById('painel-hub-completar-cadastro').classList.remove('oculto');
+  document.getElementById('completar-cadastro-nome').value = dadosPessoaisHubAtual?.nome || '';
+  document.getElementById('completar-cadastro-telefone').value = dadosPessoaisHubAtual?.telefone || '';
+  document.getElementById('completar-cadastro-email').value = dadosPessoaisHubAtual?.email || '';
+  document.getElementById('completar-cadastro-nascimento').value = dadosPessoaisHubAtual?.data_nascimento || '';
+  document.getElementById('completar-cadastro-erro').textContent = '';
+}
+
+document.getElementById('btn-completar-cadastro-continuar').addEventListener('click', async () => {
+  const nome = document.getElementById('completar-cadastro-nome').value.trim();
+  const telefone = document.getElementById('completar-cadastro-telefone').value.trim();
+  const email = document.getElementById('completar-cadastro-email').value.trim();
+  const dataNascimento = document.getElementById('completar-cadastro-nascimento').value;
+  const erroEl = document.getElementById('completar-cadastro-erro');
+  erroEl.textContent = '';
+
+  if (!nome || !telefone || !email || !dataNascimento) {
+    erroEl.textContent = 'Preencha nome completo, telefone, e-mail e data de nascimento para continuar.';
+    return;
+  }
+
+  try {
+    await api('/api/portal/completar-cadastro', {
+      method: 'POST',
+      body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, nome, telefone, email, data_nascimento: dataNascimento }),
+    });
+    dadosPessoaisHubAtual = { nome, telefone, email, data_nascimento: dataNascimento };
+    document.getElementById('hub-saudacao').textContent = `Olá, ${nome}!`;
+    abrirCadastroFacialHub();
+  } catch (err) {
+    erroEl.textContent = err.message;
+  }
+});
+
 // ---- Cadastro facial pelo hub (aluno já existente) ----
 
-document.getElementById('btn-abrir-facial-hub').addEventListener('click', async () => {
+function abrirCadastroFacialHub() {
   ocultarPaineisHub();
   document.getElementById('painel-hub-facial').classList.remove('oculto');
-  await iniciarCadastroFacial({
+  iniciarCadastroFacial({
     video: document.getElementById('video-facial-hub'),
     statusEl: document.getElementById('status-facial-hub'),
     cpf: cpfHubAtual,
@@ -562,6 +617,14 @@ document.getElementById('btn-abrir-facial-hub').addEventListener('click', async 
       document.getElementById('card-facial').classList.add('oculto');
     },
   });
+}
+
+document.getElementById('btn-abrir-facial-hub').addEventListener('click', () => {
+  if (camposFaltandoHub().length) {
+    abrirCompletarCadastroHub();
+    return;
+  }
+  abrirCadastroFacialHub();
 });
 
 // ---------------- Cadastro novo ----------------

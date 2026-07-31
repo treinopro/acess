@@ -1,6 +1,33 @@
 # Status do projeto — Academia Gestão
 
-Última atualização: 31/07/2026 (reconhecimento facial demorando a detectar quem chega no totem — ver seção logo abaixo). **Leia só a seção "ESTADO ATUAL" abaixo pra retomar o trabalho** — o resto do arquivo é histórico de sessões passadas, mantido só como referência de "por que as coisas são como são".
+Última atualização: 31/07/2026 (portal do aluno pede dados faltando antes do 1o cadastro facial — ver seção logo abaixo). **Leia só a seção "ESTADO ATUAL" abaixo pra retomar o trabalho** — o resto do arquivo é histórico de sessões passadas, mantido só como referência de "por que as coisas são como são".
+
+## Sessão 31/07/2026 (3) — Portal do aluno: completar dados faltando antes do 1o cadastro facial
+
+**Pedido do dono do sistema**: vai mandar o link do Portal do Aluno pra todos os alunos pelo grupo do WhatsApp, pra fazerem o cadastro facial remotamente. Muitos alunos antigos (importados do Secullum antes de telefone/e-mail/data de nascimento serem obrigatórios — ver sessão de 2026-07 sobre isso) não têm esses dados no sistema. Pediu que, no momento do 1o cadastro facial pelo portal, o sistema identifique pelo CPF quais desses campos estão faltando, peça só esses (deixando os que já existem preenchidos), e só libere a câmera depois.
+
+### O que foi feito
+
+1. **`GET /api/portal/aluno`** (`src/routes/portal.routes.js`) agora devolve também `dados_pessoais: { nome, telefone, email, data_nascimento }` (strings vazias para o que estiver faltando) — antes só devolvia `aluno_nome`.
+2. **`POST /api/portal/completar-cadastro`** (novo, mesma autenticação CPF+senha das outras rotas do hub) — recebe os 4 campos, valida (mesmas regras do cadastro novo: nome min 2, telefone min 8, e-mail válido, nascimento obrigatório) e faz `UPDATE alunos`. Usa o mesmo limitador por CPF das outras rotas autenticadas (`limitadorSenhaPortal`).
+3. **Front (`public/portal.js` + `portal.html`)**: novo painel `painel-hub-completar-cadastro`, com os 4 campos pré-preenchidos a partir de `dados_pessoais`. O clique em "Cadastrar meu rosto" (`btn-abrir-facial-hub`) agora checa `camposFaltandoHub()` primeiro — se algum dos 4 campos estiver vazio, mostra esse painel em vez de ir direto pra câmera; salvo com sucesso, aí sim abre o cadastro facial normalmente (mesmo fluxo de antes). Se nada estiver faltando, pula direto pra câmera como sempre foi.
+4. Escopo **só do portal remoto** — o totem físico não foi alterado (o pedido foi especificamente sobre o link mandado por WhatsApp).
+
+### Testado nesta sessão (ambiente local, banco de produção)
+
+Criado um aluno de teste (`cpf 00000000191`, categoria visitante, nome "TESTE APAGAR CLAUDE") direto no banco de produção via o próprio fluxo de cadastro, com telefone/e-mail zerados via SQL direto pra simular um cadastro antigo incompleto. Testado ponta a ponta (API via curl + fluxo real no navegador, `http://localhost:3000/portal.html`, processo local `academia-gestao-totem` reiniciado pra carregar as rotas novas):
+- Com telefone/e-mail faltando: o painel "Complete seu cadastro" apareceu com nome e data de nascimento já preenchidos, telefone/e-mail vazios; salvar funcionou e levou direto pro cadastro facial.
+- Com tudo já preenchido: clicar em "Cadastrar meu rosto" pulou o painel de completar cadastro e foi direto pra câmera.
+- Validação de campo inválido (telefone curto, e-mail malformado) retornou erro corretamente.
+
+**Aluno de teste apagado do banco ao final** (`DELETE FROM alunos WHERE cpf = '00000000191'`) — não sobrou nada de teste em produção.
+
+### Pendências desta sessão
+
+1. Cadastro facial em si (captura de rosto pela câmera) não foi testado ponta a ponta nesta sessão — o ambiente de teste usado (Browser pane) bloqueia acesso à câmera. Esse mecanismo já existia antes (não foi alterado) e continua sendo o mesmo `executarCadastroFacialGuiado` de `facial-guiado.js`.
+2. **Arquivos alterados**: `src/routes/portal.routes.js`, `public/portal.js`, `public/portal.html`. Ainda não commitado/enviado ao GitHub — pendente de aprovação do dono do sistema antes do push (mesmo padrão de outras sessões: mudança em produção só depois de aprovada).
+
+---
 
 ## Sessão 31/07/2026 (2) — Reconhecimento facial demorando a detectar quem chega no totem
 

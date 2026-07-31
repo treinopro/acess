@@ -158,7 +158,56 @@ router.get('/aluno', limitadorSenhaPortal, async (req, res, next) => {
       plano_atual: matricula.rows[0] || null,
       primeiro_acesso: primeiroAcesso,
       senha_gerada: senhaGerada,
+      // 2026-07-31: dados pessoais crus (não só o nome) — o front usa isso pra
+      // saber quais campos faltam preencher antes do 1o cadastro facial (ver
+      // POST /completar-cadastro logo abaixo). Muitos alunos antigos vieram
+      // de importação (Secullum) sem telefone/e-mail/data de nascimento, que
+      // só passaram a ser obrigatórios pra cadastros NOVOS em 2026-07.
+      dados_pessoais: {
+        nome: aluno.nome || '',
+        telefone: aluno.telefone || '',
+        email: aluno.email || '',
+        data_nascimento: aluno.data_nascimento || '',
+      },
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/portal/completar-cadastro { cpf, senha, nome, telefone, email,
+// data_nascimento } — 2026-07-31: pedido do dono do sistema, ao mandar o link
+// do portal pra todos os alunos via WhatsApp pra fazerem o cadastro facial:
+// muitos alunos antigos (importados do Secullum antes de telefone/e-mail/data
+// de nascimento serem obrigatórios) não têm esses dados no sistema. Antes de
+// deixar o aluno cadastrar o rosto pela primeira vez, o front (ver
+// camposFaltandoHub em portal.js) checa esses 4 campos e, se algum estiver
+// vazio, mostra este formulário (pré-preenchido com o que já existe) antes de
+// liberar a câmera — assim o cadastro completo do aluno fica em dia no mesmo
+// momento em que ele mexe no portal pela primeira vez, sem precisar de uma
+// campanha separada.
+const completarCadastroSchema = z.object({
+  cpf: z.string().min(1),
+  senha: z.string().min(1),
+  nome: z.string().min(2, 'Nome completo é obrigatório.'),
+  telefone: z.string().min(8, 'Telefone é obrigatório.'),
+  email: z.string().email('E-mail é obrigatório e precisa ser válido.'),
+  data_nascimento: z.string().min(1, 'Data de nascimento é obrigatória.'),
+});
+
+router.post('/completar-cadastro', limitadorSenhaPortal, async (req, res, next) => {
+  try {
+    const dados = completarCadastroSchema.parse(req.body);
+    const autenticado = await autenticarAlunoPortal(dados.cpf, dados.senha);
+    if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
+    const aluno = autenticado.aluno;
+
+    await db.execute({
+      sql: 'UPDATE alunos SET nome = ?, telefone = ?, email = ?, data_nascimento = ? WHERE id = ?',
+      args: [dados.nome, dados.telefone, dados.email, dados.data_nascimento, aluno.id],
+    });
+
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }

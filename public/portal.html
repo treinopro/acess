@@ -204,6 +204,23 @@
       <button class="botao-grande primario" id="btn-comprovante-hub-ok" style="margin-top:16px;margin-bottom:0">Voltar ao início</button>
     </div>
 
+    <!-- Completar cadastro (2026-07-31): mostrado só quando falta algum dado
+         obrigatório (telefone/e-mail/data de nascimento/nome — comum em
+         aluno antigo importado do Secullum), antes de liberar a câmera do
+         cadastro facial. Campos já preenchidos vêm prontos (ver
+         abrirCompletarCadastroHub em portal.js); só falta digitar o que
+         estiver faltando. -->
+    <div class="cartao oculto" id="painel-hub-completar-cadastro" style="text-align:left">
+      <h3>Complete seu cadastro</h3>
+      <p style="font-size:13px;color:#94a3b8;margin-bottom:12px">Antes de cadastrar seu rosto, confirme (ou preencha) seus dados abaixo.</p>
+      <input class="campo" id="completar-cadastro-nome" placeholder="Nome completo" />
+      <input class="campo" id="completar-cadastro-telefone" placeholder="Telefone" inputmode="tel" />
+      <input class="campo" id="completar-cadastro-email" placeholder="E-mail" inputmode="email" />
+      <input class="campo" id="completar-cadastro-nascimento" placeholder="Data de nascimento" type="date" />
+      <div class="erro-msg" id="completar-cadastro-erro"></div>
+      <button class="botao-grande primario" id="btn-completar-cadastro-continuar" style="margin:0">Continuar para o cadastro facial</button>
+    </div>
+
     <!-- Cadastro facial -->
     <div class="cartao oculto" id="painel-hub-facial">
       <h3>Cadastrar reconhecimento facial</h3>

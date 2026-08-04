@@ -75,6 +75,8 @@ if ('serviceWorker' in navigator) {
   .aviso-vencimento.hoje { background: #431407; color: #fb923c; border: 1px solid #c2410c; }
   .aviso-vencimento.vencido { background: #450a0a; color: #fca5a5; border: 1px solid #b91c1c; }
   video { border-radius: 16px; width: 280px; height: 210px; object-fit: cover; background: #000; transform: scaleX(-1); }
+  /* Traseira não deve vir espelhada — ver alternarCamera em portal.js. */
+  video.camera-traseira { transform: none; }
   .status-scan { color: #94a3b8; font-size: 14px; margin-top: 8px; min-height: 20px; }
 
   /* Cadastro facial guiado (liveness) — mesmo visual usado no totem (ver
@@ -90,6 +92,14 @@ if ('serviceWorker' in navigator) {
   }
   .guia-facial-circulo.guia-ativo { border-color: #fbbf24; }
   .guia-facial-circulo.guia-ok { border-color: #10b981; box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.2); }
+  .btn-trocar-camera {
+    position: absolute; top: 8px; right: 8px; z-index: 2;
+    width: 42px; height: 42px; border-radius: 50%; border: none;
+    background: rgba(15, 23, 42, 0.65); color: #fff; font-size: 20px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; line-height: 1;
+  }
+  .btn-trocar-camera:active { background: rgba(15, 23, 42, 0.9); }
   .guia-facial-progresso {
     width: 100%; max-width: 260px; height: 6px; border-radius: 999px;
     background: #0f172a; margin: 10px auto 0; overflow: hidden;
@@ -242,6 +252,7 @@ if ('serviceWorker' in navigator) {
       <div class="video-wrap">
         <video id="video-facial-hub" autoplay muted playsinline></video>
         <div class="guia-facial-circulo"></div>
+        <button type="button" class="btn-trocar-camera" id="btn-trocar-camera-hub" title="Trocar câmera (frontal/traseira)">🔄</button>
       </div>
       <div class="status-scan" id="status-facial-hub">Posicione seu rosto no centro da câmera...</div>
       <div class="guia-facial-progresso"><div class="guia-facial-progresso-barra"></div></div>
@@ -293,6 +304,7 @@ if ('serviceWorker' in navigator) {
       <div class="video-wrap">
         <video id="video-cadastro-portal-facial" autoplay muted playsinline></video>
         <div class="guia-facial-circulo"></div>
+        <button type="button" class="btn-trocar-camera" id="btn-trocar-camera-cadastro-portal" title="Trocar câmera (frontal/traseira)">🔄</button>
       </div>
       <div class="status-scan" id="status-cadastro-portal-facial">Posicione seu rosto no centro da câmera...</div>
       <div class="guia-facial-progresso"><div class="guia-facial-progresso-barra"></div></div>

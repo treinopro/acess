@@ -44,11 +44,18 @@ async function carregarConfigPublica() {
 // ---------------- Câmera (compartilhada entre cadastro facial do hub e do cadastro novo) ----------------
 
 let streamAtual = null;
+// 2026-08-04: frontal/traseira — ver alternarCamera abaixo (pedido explícito
+// pra poder cadastrar o rosto de outra pessoa usando a câmera traseira do
+// celular, mais fácil de mirar do que virar a tela pra frontal).
+let facingModeAtual = 'user';
 
 async function iniciarCamera(videoEl) {
   pararCamera();
-  streamAtual = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+  streamAtual = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facingModeAtual } });
   videoEl.srcObject = streamAtual;
+  // Traseira não deve vir espelhada (ver CSS .camera-traseira) — só a
+  // frontal tem o efeito "espelho" esperado.
+  videoEl.classList.toggle('camera-traseira', facingModeAtual === 'environment');
   await videoEl.play();
 }
 
@@ -56,6 +63,18 @@ function pararCamera() {
   if (streamAtual) {
     streamAtual.getTracks().forEach((t) => t.stop());
     streamAtual = null;
+  }
+}
+
+async function alternarCamera(videoEl) {
+  facingModeAtual = facingModeAtual === 'user' ? 'environment' : 'user';
+  try {
+    await iniciarCamera(videoEl);
+  } catch (err) {
+    // Sem a câmera pedida (ex.: PC sem traseira) — volta pra frontal em vez
+    // de deixar a tela sem imagem nenhuma.
+    facingModeAtual = 'user';
+    await iniciarCamera(videoEl);
   }
 }
 
@@ -619,6 +638,10 @@ function abrirCadastroFacialHub() {
   });
 }
 
+document.getElementById('btn-trocar-camera-hub')?.addEventListener('click', () => {
+  alternarCamera(document.getElementById('video-facial-hub'));
+});
+
 document.getElementById('btn-abrir-facial-hub').addEventListener('click', () => {
   if (camposFaltandoHub().length) {
     abrirCompletarCadastroHub();
@@ -789,6 +812,10 @@ document.getElementById('btn-portal-cadastro-facial').addEventListener('click', 
     senha: cadastroPortalSenhaAtual,
     aoConcluir: () => { resetCadastroPortal(); mostrarPagina('pagina-inicio'); },
   });
+});
+
+document.getElementById('btn-trocar-camera-cadastro-portal')?.addEventListener('click', () => {
+  alternarCamera(document.getElementById('video-cadastro-portal-facial'));
 });
 
 document.getElementById('btn-portal-cadastro-concluir').addEventListener('click', () => {

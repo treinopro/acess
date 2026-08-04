@@ -100,7 +100,12 @@ if ('serviceWorker' in navigator) {
   /* Efeito espelho só na exibição (UX natural, como uma câmera de selfie) —
      não afeta a leitura de QR nem o reconhecimento facial, que processam o
      quadro bruto da câmera via canvas/vídeo/imagem, não a versão espelhada na tela. */
+  /* Espelha por padrão (câmera frontal — efeito "espelho" esperado). A
+     traseira não deve vir espelhada (ver alternarCamera em terminal.js, que
+     alterna esta classe): mostrar o rosto de outra pessoa invertido
+     confundiria quem está enquadrando. */
   video, img.camera-feed { transform: scaleX(-1); }
+  video.camera-traseira, img.camera-feed.camera-traseira { transform: none; }
   .video-wrap { position: relative; margin-bottom: 16px; }
   .status-scan { color: #94a3b8; font-size: 14px; margin-top: 8px; min-height: 20px; }
 

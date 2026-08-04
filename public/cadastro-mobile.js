@@ -192,6 +192,35 @@ function mostrarSucesso(resp) {
 // 2026-07-27.
 
 let streamAtual = null;
+// 2026-08-04: frontal/traseira — ver alternarCamera abaixo (pedido explícito
+// pra poder cadastrar o rosto de outra pessoa usando a câmera traseira do
+// celular, mais fácil de mirar do que virar a tela pra frontal).
+let facingModeAtual = 'user';
+
+async function iniciarCameraCadastroFacial(video) {
+  streamAtual = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facingModeAtual } });
+  video.srcObject = streamAtual;
+  // Traseira não deve vir espelhada — só a frontal tem o efeito "espelho" esperado.
+  video.classList.toggle('camera-traseira', facingModeAtual === 'environment');
+  await video.play();
+}
+
+async function alternarCamera(video) {
+  if (streamAtual) { streamAtual.getTracks().forEach((t) => t.stop()); streamAtual = null; }
+  facingModeAtual = facingModeAtual === 'user' ? 'environment' : 'user';
+  try {
+    await iniciarCameraCadastroFacial(video);
+  } catch (err) {
+    // Sem a câmera pedida (ex.: PC sem traseira) — volta pra frontal em vez
+    // de deixar a tela sem imagem nenhuma.
+    facingModeAtual = 'user';
+    await iniciarCameraCadastroFacial(video);
+  }
+}
+
+document.getElementById('btn-trocar-camera-cadastro')?.addEventListener('click', () => {
+  alternarCamera(document.getElementById('video-cadastro-facial'));
+});
 
 document.getElementById('btn-cadastro-facial').addEventListener('click', async () => {
   mostrarTela('tela-facial');
@@ -201,9 +230,7 @@ document.getElementById('btn-cadastro-facial').addEventListener('click', async (
   try {
     statusEl.textContent = 'Carregando...';
     await carregarModelosFaciais();
-    streamAtual = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
-    video.srcObject = streamAtual;
-    await video.play();
+    await iniciarCameraCadastroFacial(video);
   } catch (err) {
     statusEl.textContent = `Erro: ${err.message}`;
     return;

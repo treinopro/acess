@@ -1987,6 +1987,10 @@ let faceModelsCarregados = false;
 let streamCameraPerfil = null;
 let intervaloDeteccaoLivePerfil = null;
 let rostoDetectadoAgoraPerfil = false;
+// 2026-08-04: frontal/traseira — ver alternarCameraPerfil abaixo (pedido
+// explícito pra poder cadastrar o rosto do aluno usando a câmera traseira do
+// celular/tablet, mais fácil de mirar do que virar a tela pra frontal).
+let facingModePerfilAtual = 'user';
 
 async function garantirModelosFaciais() {
   if (faceModelsCarregados) return;
@@ -2045,14 +2049,17 @@ function pararCameraPerfil() {
     streamCameraPerfil.getTracks().forEach((t) => t.stop());
     streamCameraPerfil = null;
   }
+  facingModePerfilAtual = 'user';
   const video = document.getElementById('video-facial-perfil');
   video.style.display = 'none';
   video.style.borderColor = 'transparent';
+  video.style.transform = 'scaleX(-1)';
   video.srcObject = null;
   document.getElementById('dica-facial-perfil').classList.add('oculto');
   document.getElementById('btn-abrir-camera-perfil').classList.remove('oculto');
   document.getElementById('btn-capturar-facial-perfil').classList.add('oculto');
   document.getElementById('btn-cancelar-camera-perfil').classList.add('oculto');
+  document.getElementById('btn-trocar-camera-perfil').classList.add('oculto');
   const status = document.getElementById('status-facial-perfil');
   status.textContent = '';
   delete status.dataset.travado;
@@ -2067,15 +2074,18 @@ document.getElementById('btn-abrir-camera-perfil').addEventListener('click', asy
     // baixa/instável (mesma classe de problema já visto na câmera do
     // totem) — pede um mínimo razoável, sem forçar proporção exata (ver
     // comentário equivalente em terminal.js/iniciarCamera).
-    streamCameraPerfil = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 } } });
+    streamCameraPerfil = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facingModePerfilAtual, width: { ideal: 1280 } } });
     const video = document.getElementById('video-facial-perfil');
     video.srcObject = streamCameraPerfil;
     video.style.display = 'block';
+    // Traseira não deve vir espelhada — só a frontal tem o efeito "espelho" esperado.
+    video.style.transform = facingModePerfilAtual === 'environment' ? 'none' : 'scaleX(-1)';
     await video.play().catch(() => {}); // autoplay já cobre a maioria dos casos; isso só garante antes de liberar o botão
     document.getElementById('dica-facial-perfil').classList.remove('oculto');
     document.getElementById('btn-abrir-camera-perfil').classList.add('oculto');
     document.getElementById('btn-capturar-facial-perfil').classList.remove('oculto');
     document.getElementById('btn-cancelar-camera-perfil').classList.remove('oculto');
+    document.getElementById('btn-trocar-camera-perfil').classList.remove('oculto');
     status.textContent = 'Posicione o rosto do aluno no centro do quadro...';
     iniciarDeteccaoLivePerfil(video, status);
   } catch (err) {
@@ -2084,6 +2094,26 @@ document.getElementById('btn-abrir-camera-perfil').addEventListener('click', asy
 });
 
 document.getElementById('btn-cancelar-camera-perfil').addEventListener('click', pararCameraPerfil);
+
+document.getElementById('btn-trocar-camera-perfil').addEventListener('click', async () => {
+  const status = document.getElementById('status-facial-perfil');
+  const video = document.getElementById('video-facial-perfil');
+  pararDeteccaoLivePerfil();
+  if (streamCameraPerfil) { streamCameraPerfil.getTracks().forEach((t) => t.stop()); streamCameraPerfil = null; }
+  facingModePerfilAtual = facingModePerfilAtual === 'user' ? 'environment' : 'user';
+  try {
+    streamCameraPerfil = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facingModePerfilAtual, width: { ideal: 1280 } } });
+  } catch (err) {
+    // Sem a câmera pedida (ex.: PC sem traseira) — volta pra frontal em vez
+    // de deixar a tela sem imagem nenhuma.
+    facingModePerfilAtual = 'user';
+    streamCameraPerfil = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facingModePerfilAtual, width: { ideal: 1280 } } });
+  }
+  video.srcObject = streamCameraPerfil;
+  video.style.transform = facingModePerfilAtual === 'environment' ? 'none' : 'scaleX(-1)';
+  await video.play().catch(() => {});
+  iniciarDeteccaoLivePerfil(video, status);
+});
 
 document.getElementById('btn-capturar-facial-perfil').addEventListener('click', async () => {
   const status = document.getElementById('status-facial-perfil');

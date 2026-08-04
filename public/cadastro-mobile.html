@@ -50,7 +50,17 @@
   .resultado-icone { font-size: 56px; margin-bottom: 8px; }
 
   video { border-radius: 16px; width: 280px; height: 210px; object-fit: cover; background: #000; transform: scaleX(-1); }
+  /* Traseira não deve vir espelhada — ver alternarCamera em cadastro-mobile.js. */
+  video.camera-traseira { transform: none; }
   .video-wrap { position: relative; margin-bottom: 14px; }
+  .btn-trocar-camera {
+    position: absolute; top: 8px; right: 8px; z-index: 2;
+    width: 42px; height: 42px; border-radius: 50%; border: none;
+    background: rgba(15, 23, 42, 0.65); color: #fff; font-size: 20px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; line-height: 1;
+  }
+  .btn-trocar-camera:active { background: rgba(15, 23, 42, 0.9); }
 
   /* Cadastro facial guiado (liveness) — mesmo visual usado no totem (ver
      terminal.html): círculo sobre o vídeo que muda de cor conforme o passo
@@ -116,6 +126,7 @@
     <div class="video-wrap">
       <video id="video-cadastro-facial" autoplay muted playsinline></video>
       <div class="guia-facial-circulo"></div>
+      <button type="button" class="btn-trocar-camera" id="btn-trocar-camera-cadastro" title="Trocar câmera (frontal/traseira)">🔄</button>
     </div>
     <div class="status-scan" id="status-cadastro-facial">Posicione seu rosto no centro da câmera...</div>
     <div class="guia-facial-progresso"><div class="guia-facial-progresso-barra"></div></div>

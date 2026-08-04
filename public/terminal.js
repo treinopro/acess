@@ -528,6 +528,11 @@ async function iniciarCamera(videoEl) {
     video: { facingMode: facingModeAtual, width: { ideal: 1920 }, frameRate: { ideal: 30 } },
   });
   videoEl.srcObject = streamAtual;
+  // A traseira não deve vir espelhada (ver CSS .camera-traseira) — só a
+  // frontal tem o efeito "espelho" esperado. Sempre reflete facingModeAtual
+  // aqui (não só no botão de trocar), pra nunca dessincronizar entre uma
+  // troca anterior e um cadastro novo que reinicia na frontal.
+  videoEl.classList.toggle('camera-traseira', facingModeAtual === 'environment');
   await videoEl.play();
   await afastarZoomDaCamera(streamAtual);
 

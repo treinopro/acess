@@ -1,10 +1,10 @@
 {
-  "name": "Totem - Academia Gestão",
-  "short_name": "Totem",
-  "description": "Totem de auto atendimento da academia (identificação por rosto, QR ou CPF).",
-  "start_url": "/terminal.html",
-  "display": "fullscreen",
-  "orientation": "portrait",
+  "name": "Painel - Academia Gestão",
+  "short_name": "Painel",
+  "description": "Painel administrativo da academia (alunos, matrículas, cobranças, relatórios).",
+  "start_url": "/index.html",
+  "display": "standalone",
+  "orientation": "any",
   "background_color": "#0f172a",
   "theme_color": "#0f172a",
   "icons": [

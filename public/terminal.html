@@ -9,10 +9,21 @@
      (vira um atalho que abre sem barra de endereço nem UI do navegador),
      usando este manifest só do totem (não afeta portal.html/index.html). -->
 <link rel="manifest" href="manifest-totem.json">
+<link rel="icon" href="icons/icon-512.png">
+<link rel="apple-touch-icon" href="icons/icon-512.png">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="theme-color" content="#0f172a">
+<script>
+// Registro do service worker (público, ver public/sw.js) — junto com o
+// manifest acima (agora com ícones) é o que faltava pro Chrome/Samsung
+// Internet no Android oferecerem "Instalar app" de verdade, em vez de só um
+// atalho comum na tela inicial.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+}
+</script>
 
 <!-- Bibliotecas client-side hospedadas localmente (public/vendor/) — o totem
      roda numa rede sem saída para internet, então não pode depender de CDN
@@ -107,6 +118,19 @@
   }
   .guia-facial-circulo.guia-ativo { border-color: #fbbf24; }
   .guia-facial-circulo.guia-ok { border-color: #10b981; box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.2); }
+
+  /* 2026-08-04: botão de trocar câmera (frontal/traseira) sobre o vídeo,
+     só nas telas de cadastro facial — útil sobretudo em celular, pra
+     cadastrar o rosto de outra pessoa usando a câmera traseira (melhor
+     qualidade/mais fácil de mirar do que virar a tela pra frontal). */
+  .btn-trocar-camera {
+    position: absolute; top: 8px; right: 8px; z-index: 2;
+    width: 42px; height: 42px; border-radius: 50%; border: none;
+    background: rgba(15, 23, 42, 0.65); color: #fff; font-size: 20px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; line-height: 1;
+  }
+  .btn-trocar-camera:active { background: rgba(15, 23, 42, 0.9); }
 
   .guia-facial-progresso {
     width: 100%; max-width: 260px; height: 6px; border-radius: 999px;
@@ -236,6 +260,7 @@
       <div class="video-wrap">
         <video id="video-vincular-facial" class="camera-feed" autoplay muted playsinline></video>
         <div class="guia-facial-circulo"></div>
+        <button type="button" class="btn-trocar-camera" id="btn-trocar-camera-vincular" title="Trocar câmera (frontal/traseira)">🔄</button>
       </div>
       <div class="status-scan" id="status-vincular-facial">Posicione seu rosto no centro da câmera...</div>
       <div class="guia-facial-progresso"><div class="guia-facial-progresso-barra" id="progresso-vincular-facial"></div></div>
@@ -312,6 +337,7 @@
       <div class="video-wrap">
         <video id="video-cadastro-facial" class="camera-feed" autoplay muted playsinline></video>
         <div class="guia-facial-circulo"></div>
+        <button type="button" class="btn-trocar-camera" id="btn-trocar-camera-cadastro" title="Trocar câmera (frontal/traseira)">🔄</button>
       </div>
       <div class="status-scan" id="status-cadastro-facial">Posicione seu rosto no centro da câmera...</div>
       <div class="guia-facial-progresso"><div class="guia-facial-progresso-barra" id="progresso-cadastro-facial"></div></div>

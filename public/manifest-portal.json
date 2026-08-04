@@ -1,10 +1,10 @@
 {
-  "name": "Totem - Academia Gestão",
-  "short_name": "Totem",
-  "description": "Totem de auto atendimento da academia (identificação por rosto, QR ou CPF).",
-  "start_url": "/terminal.html",
-  "display": "fullscreen",
-  "orientation": "portrait",
+  "name": "Portal do Aluno - Academia Gestão",
+  "short_name": "Portal do Aluno",
+  "description": "Portal do aluno: cadastro, matrícula, pagamento, cadastro facial e consulta de treino.",
+  "start_url": "/portal.html",
+  "display": "standalone",
+  "orientation": "any",
   "background_color": "#0f172a",
   "theme_color": "#0f172a",
   "icons": [

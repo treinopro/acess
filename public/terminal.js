@@ -435,6 +435,14 @@ function mostrarTela(id) {
 
 let streamAtual = null;
 let elementoWebcamUsbAtual = null;
+// 2026-08-04: qual câmera usar quando o dispositivo tem mais de uma
+// (celular, principalmente) — 'user' = frontal, 'environment' = traseira.
+// Só é relevante fora do modo webcam USB (essa é uma câmera fixa só, sem
+// frente/trás). Alternável pelo botão de trocar câmera nas telas de
+// cadastro facial (ver alternarCamera abaixo) — pedido explícito do dono do
+// sistema pra poder cadastrar rostos usando a câmera traseira do próprio
+// smartphone (melhor qualidade/mais fácil de mirar do que a frontal).
+let facingModeAtual = 'user';
 // 2026-07-31: guarda a resolução/fps REAL entregues pela câmera (ver
 // iniciarCamera abaixo), pra mostrar junto do diagnóstico "(motor: ...)" na
 // tela de espera — sem isso, só dava pra ver essa informação abrindo o
@@ -517,7 +525,7 @@ async function iniciarCamera(videoEl) {
   // — se a câmera não suportar 30fpx nessa resolução, o navegador cai pro
   // melhor que conseguir, sem quebrar a captura.
   streamAtual = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: 'user', width: { ideal: 1920 }, frameRate: { ideal: 30 } },
+    video: { facingMode: facingModeAtual, width: { ideal: 1920 }, frameRate: { ideal: 30 } },
   });
   videoEl.srcObject = streamAtual;
   await videoEl.play();
@@ -600,6 +608,22 @@ function pararCamera() {
   }
   if (window.NativeUsbWebcam && window.NativeUsbWebcam.disponivel()) {
     window.NativeUsbWebcam.parar().catch(() => {});
+  }
+}
+
+// Alterna frontal/traseira e reinicia a câmera já no novo lado — usado pelo
+// botão de trocar câmera nas telas de cadastro facial (ver terminal.html).
+// Sem efeito no modo webcam USB (câmera fixa, sem essa noção).
+async function alternarCamera(videoEl) {
+  if (USAR_WEBCAM_USB) return;
+  facingModeAtual = facingModeAtual === 'user' ? 'environment' : 'user';
+  try {
+    await iniciarCamera(videoEl);
+  } catch (err) {
+    // Dispositivo sem a câmera pedida (ex.: tablet sem traseira) — volta pra
+    // frontal em vez de deixar a tela sem imagem nenhuma.
+    facingModeAtual = 'user';
+    await iniciarCamera(videoEl);
   }
 }
 
@@ -688,6 +712,11 @@ async function iniciarEscaneamentoContinuo() {
   const video = document.getElementById('video-inicio');
   const statusEl = document.getElementById('status-inicio');
 
+  // A tela pública de escaneamento sempre começa na frontal, independente de
+  // um cadastro facial anterior ter deixado a traseira selecionada (ver
+  // alternarCamera) — quem chega pra ser identificado espera ver o próprio
+  // rosto na câmera, não a traseira.
+  facingModeAtual = 'user';
   escaneamentoAtivo = true;
   statusEl.textContent = 'Carregando reconhecimento facial...';
 
@@ -1155,6 +1184,10 @@ document.getElementById('btn-cadastrar-facial-vincular').addEventListener('click
   });
 });
 
+document.getElementById('btn-trocar-camera-vincular')?.addEventListener('click', () => {
+  alternarCamera(document.getElementById('video-vincular-facial'));
+});
+
 // ---------------- Auto cadastro (aluno novo): dados+plano -> pagamento -> sucesso ----------------
 
 let cadastroPollTimer = null;
@@ -1379,6 +1412,10 @@ document.getElementById('btn-cadastro-facial').addEventListener('click', async (
     cpf: cadastroCpfAtual,
     aoConcluir: () => { mostrarTela('tela-inicio'); iniciarEscaneamentoContinuo(); },
   });
+});
+
+document.getElementById('btn-trocar-camera-cadastro')?.addEventListener('click', () => {
+  alternarCamera(document.getElementById('video-cadastro-facial'));
 });
 
 document.getElementById('btn-cadastro-concluir').addEventListener('click', () => {

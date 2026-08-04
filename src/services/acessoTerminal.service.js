@@ -14,6 +14,7 @@ const agenteGateway = require('./agenteGateway.service');
 const dbResiliente = require('./dbResiliente.service');
 const filaAcessosOffline = require('./filaAcessosOffline.service');
 const { formatarDataSqliteUtc } = require('../utils/data');
+const { normalizarCpf } = require('../utils/cpf');
 const totemEventos = require('./totemEventos.service');
 
 // 2026-07-27: reconhecimento facial trocado de face-api.js pro SFace
@@ -114,7 +115,11 @@ async function atribuirCodigoAluno(alunoId, tentativasRestantes = 5) {
 }
 
 async function buscarAlunoPorCpfEm(cliente, cpf) {
-  const result = await cliente.execute({ sql: 'SELECT * FROM alunos WHERE cpf = ?', args: [cpf] });
+  // Normaliza aqui (ponto único, usado por toda busca por CPF do sistema —
+  // ver buscarAlunoPorCpf/buscarAlunoPorCpfParaAcesso abaixo) pra achar o
+  // aluno independente de o CPF ter sido digitado/colado com ou sem
+  // pontos/traço em qualquer tela.
+  const result = await cliente.execute({ sql: 'SELECT * FROM alunos WHERE cpf = ?', args: [normalizarCpf(cpf)] });
   return result.rows[0] || null;
 }
 
@@ -173,13 +178,14 @@ async function buscarAlunoPorCpf(cpf) {
 const cpfsEmCadastro = new Set();
 
 function reservarCpfParaCadastro(cpf) {
-  if (cpfsEmCadastro.has(cpf)) return false;
-  cpfsEmCadastro.add(cpf);
+  const cpfNormalizado = normalizarCpf(cpf);
+  if (cpfsEmCadastro.has(cpfNormalizado)) return false;
+  cpfsEmCadastro.add(cpfNormalizado);
   return true;
 }
 
 function liberarCpfDoCadastro(cpf) {
-  cpfsEmCadastro.delete(cpf);
+  cpfsEmCadastro.delete(normalizarCpf(cpf));
 }
 
 async function buscarAlunoPorCodigoAcesso(codigo) {

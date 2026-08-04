@@ -34,6 +34,7 @@ const pagamentoContas = require('../services/pagamentoContas.service');
 const mercadopago = require('../services/payment/mercadopago.service');
 const emailBoasVindas = require('../services/emailBoasVindas.service');
 const { criarLimitador } = require('../middleware/rateLimit');
+const { normalizarCpf } = require('../utils/cpf');
 
 const router = express.Router();
 
@@ -364,7 +365,7 @@ router.get('/contas/status/:pagamentoId', async (req, res, next) => {
 // terminal.routes.js) — antes só nome e CPF eram exigidos.
 const cadastroSchema = z.object({
   nome: z.string().min(2),
-  cpf: z.string().min(1),
+  cpf: z.string().min(1).transform(normalizarCpf),
   telefone: z.string().min(8, 'Telefone é obrigatório.'),
   email: z.string().email('E-mail é obrigatório e precisa ser válido.'),
   data_nascimento: z.string().min(1, 'Data de nascimento é obrigatória.'),

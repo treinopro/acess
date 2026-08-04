@@ -4,6 +4,7 @@ const { z } = require('zod');
 const db = require('../db/client');
 const dbOffline = require('../db/clientOffline');
 const { autenticar } = require('../middleware/auth');
+const { normalizarCpf } = require('../utils/cpf');
 const acessoTerminal = require('../services/acessoTerminal.service');
 const catracaGateway = require('../services/catracaGateway.service');
 const dbResiliente = require('../services/dbResiliente.service');
@@ -17,7 +18,7 @@ const alunoSchema = z.object({
   nome: z.string().min(2),
   email: z.string().email().optional().nullable(),
   telefone: z.string().optional().nullable(),
-  cpf: z.string().optional().nullable(),
+  cpf: z.string().optional().nullable().transform((v) => (v ? normalizarCpf(v) : v)),
   data_nascimento: z.string().optional().nullable(),
   // 2026-07-28: era z.string().url() — passou a aceitar qualquer string
   // porque a foto de perfil agora também pode vir como data URL em base64
@@ -154,7 +155,7 @@ router.post('/importar', async (req, res, next) => {
       const nome = (linha.nome || '').trim();
       if (!nome) { erros.push(`Linha ${i + 2}: sem nome, ignorada.`); continue; }
 
-      const cpf = (linha.cpf || '').trim() || null;
+      const cpf = normalizarCpf(linha.cpf);
       const email = (linha.email || '').trim() || null;
 
       let existente = null;

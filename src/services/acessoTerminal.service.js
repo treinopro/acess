@@ -159,6 +159,29 @@ async function buscarAlunoPorCpf(cpf) {
   return buscarAlunoPorCpfEm(db, cpf);
 }
 
+// 2026-08-04: trava contra cadastro duplicado do mesmo CPF em requisições
+// simultâneas (portal do aluno e "usar seu cel" do totem podiam criar dois
+// alunos com o mesmo CPF quando duas abas/tentativas caíam nos poucos
+// milissegundos entre o SELECT de checagem e o INSERT). Um índice único no
+// banco seria o ideal, mas não dá pra criar agora: existem pares antigos de
+// CPF duplicado vindos da migração do Secullum que ainda não foram
+// resolvidos manualmente (podem ser pessoas diferentes, exige revisão).
+// Como o processo Node roda em instância única (sem cluster), um Set em
+// memória com o CPF "reservado" durante o cadastro fecha a corrida por
+// completo: reservar/liberar é síncrono, então duas requisições concorrentes
+// nunca conseguem passar pela checagem ao mesmo tempo.
+const cpfsEmCadastro = new Set();
+
+function reservarCpfParaCadastro(cpf) {
+  if (cpfsEmCadastro.has(cpf)) return false;
+  cpfsEmCadastro.add(cpf);
+  return true;
+}
+
+function liberarCpfDoCadastro(cpf) {
+  cpfsEmCadastro.delete(cpf);
+}
+
 async function buscarAlunoPorCodigoAcesso(codigo) {
   return buscarAlunoPorCodigoAcessoEm(db, codigo);
 }
@@ -895,6 +918,8 @@ module.exports = {
   calcularProximoCodigoAluno,
   atribuirCodigoAluno,
   buscarAlunoPorCpf,
+  reservarCpfParaCadastro,
+  liberarCpfDoCadastro,
   buscarAlunoPorCodigoAcesso,
   buscarAlunoPorBiometriaId,
   encontrarMelhorMatchFacial,

@@ -222,6 +222,10 @@ CREATE TABLE IF NOT EXISTS contas_pagar (
   forma_pagamento TEXT, -- dinheiro | pix | cartao_credito | cartao_debito | transferencia | boleto | outro
   pago_em TEXT,
   valor_pago_centavos INTEGER,
+  -- Id da conta_pagar no Secullum (tabela contas_pagar.id lá). NULL para
+  -- contas lançadas direto aqui. Chave usada por scripts/migrar-contas-
+  -- pagar-secullum.js pra nunca duplicar a mesma conta em duas tentativas.
+  secullum_id TEXT,
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -400,12 +404,19 @@ CREATE INDEX IF NOT EXISTS idx_cobrancas_status ON cobrancas(status);
 CREATE INDEX IF NOT EXISTS idx_cobrancas_aluno ON cobrancas(aluno_id);
 CREATE INDEX IF NOT EXISTS idx_contas_pagar_status ON contas_pagar(status);
 CREATE INDEX IF NOT EXISTS idx_contas_pagar_vencimento ON contas_pagar(vencimento);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_contas_pagar_secullum_id ON contas_pagar(secullum_id) WHERE secullum_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_avaliacoes_aluno ON avaliacoes_fisicas(aluno_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_alunos_codigo_acesso ON alunos(codigo_acesso);
 -- Parcial (so quando preenchido) porque a maioria dos alunos ainda nao tem
 -- biometria_id - e agora que ele tambem serve de senha do portal, precisa
 -- ser unico de verdade pra nunca duas pessoas caírem no mesmo login/cartao.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_alunos_biometria_id ON alunos(biometria_id) WHERE biometria_id IS NOT NULL;
+-- 2026-08-04: barreira definitiva contra cadastro duplicado do mesmo CPF
+-- (complementa a trava em memória de acessoTerminal.service.js, que só
+-- cobre o processo do servidor de aplicação — esta aqui vale pra qualquer
+-- caminho de escrita, incluindo scripts/migrações futuras). Parcial (só
+-- quando preenchido) porque cadastros antigos podem estar sem CPF.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_alunos_cpf ON alunos(cpf) WHERE cpf IS NOT NULL AND cpf != '';
 CREATE INDEX IF NOT EXISTS idx_acessos_catraca_aluno ON acessos_catraca(aluno_id);
 CREATE INDEX IF NOT EXISTS idx_mensagens_agendadas_status_data ON mensagens_agendadas(status, agendado_para);
 CREATE INDEX IF NOT EXISTS idx_pagamentos_cobranca_cobranca ON pagamentos_cobranca(cobranca_id);

@@ -398,6 +398,15 @@ terminal.post('/auto-cadastro', limitadorCadastro, autenticarTerminalOuCadastroP
   try {
     const dados = autoCadastroSchema.parse(req.body);
 
+    // 2026-08-04: trava em memória contra duas requisições simultâneas com o
+    // mesmo CPF (ver comentário completo em acessoTerminal.service.js, junto
+    // de reservarCpfParaCadastro/liberarCpfDoCadastro) — fecha por completo a
+    // corrida que a reordenação abaixo só reduzia.
+    if (!acessoTerminal.reservarCpfParaCadastro(dados.cpf)) {
+      return res.status(409).json({ erro: 'Este CPF já está sendo cadastrado agora. Aguarde um instante e tente novamente.' });
+    }
+
+    try {
     const existente = await acessoTerminal.buscarAlunoPorCpf(dados.cpf);
     if (existente) {
       return res.status(409).json({
@@ -455,14 +464,36 @@ terminal.post('/auto-cadastro', limitadorCadastro, autenticarTerminalOuCadastroP
     const p = plano.rows[0];
     if (!p) return res.status(404).json({ erro: 'Plano não encontrado ou inativo.' });
 
+    // 2026-08-04 (bug real: cadastros duplicados relatado pelo dono do
+    // sistema — várias pessoas com 2-3 cadastros idênticos, criados 1-2s um
+    // do outro): antes, o aluno só era gravado DEPOIS de chamar a API do
+    // Mercado Pago (criarOrderPix logo abaixo) — uma chamada externa que
+    // pode demorar segundos. Nesse intervalo, se a pessoa confirmasse o
+    // cadastro mais de uma vez, AMBAS as tentativas passavam pela checagem
+    // de CPF lá em cima (nenhuma tinha gravado ainda) e criavam cadastros
+    // duplicados. Agora o aluno é criado JÁ AQUI, antes de chamar o
+    // Mercado Pago — fecha quase toda a janela da corrida. Se o Mercado
+    // Pago falhar depois, o cadastro é desfeito (ver catch abaixo) pra
+    // pessoa poder tentar de novo com o mesmo CPF.
+    const alunoId = uuid();
+    try {
+      await db.execute({
+        sql: `INSERT INTO alunos (id, nome, email, telefone, cpf, data_nascimento, status)
+              VALUES (?, ?, ?, ?, ?, ?, 'ativo')`,
+        args: [alunoId, dados.nome, dados.email, dados.telefone, dados.cpf, dados.data_nascimento],
+      });
+    } catch (err) {
+      // Corrida apertadíssima (as duas tentativas chegaram entre a checagem
+      // acima e esta gravação) — mesma mensagem amigável de sempre.
+      return res.status(409).json({
+        erro: 'Este CPF já tem cadastro. Use "Primeira vez no totem" para vincular seu acesso, ou procure a recepção.',
+      });
+    }
+
     const cobrancaId = uuid();
     const descricao = `Matrícula - ${p.nome}`;
     const provedor = 'mercadopago'; // único provedor suportado (InfinitePay foi removido)
 
-    // Gera o pagamento ANTES de escrever qualquer coisa no banco — se o
-    // gateway falhar, a requisição falha inteira e nenhum registro órfão fica
-    // para trás (mesmo padrão usado em POST /api/pagamentos/cobrar).
-    //
     // Pix direto via API de Orders (Checkout Transparente) — sem
     // redirecionar pra nenhuma tela externa, o QR já sai pronto pra
     // mostrar no totem. A API exige um e-mail do pagador; como o totem não
@@ -481,13 +512,21 @@ terminal.post('/auto-cadastro', limitadorCadastro, autenticarTerminalOuCadastroP
     const emailPagador = emailTeste || dados.email || `aluno-${dados.cpf.replace(/\D/g, '')}@academia-gestao.com`;
     const firstNamePagador = emailTeste ? 'APRO' : undefined;
 
-    const order = await mercadopago.criarOrderPix({
-      descricao,
-      valorCentavos: p.valor_centavos,
-      referenciaExterna: cobrancaId,
-      email: emailPagador,
-      firstName: firstNamePagador,
-    });
+    let order;
+    try {
+      order = await mercadopago.criarOrderPix({
+        descricao,
+        valorCentavos: p.valor_centavos,
+        referenciaExterna: cobrancaId,
+        email: emailPagador,
+        firstName: firstNamePagador,
+      });
+    } catch (err) {
+      // Desfaz o cadastro pra não deixar o CPF "preso" (cadastrado, mas sem
+      // nenhuma cobrança pra pagar) — a pessoa tenta de novo do zero.
+      await db.execute({ sql: 'DELETE FROM alunos WHERE id = ?', args: [alunoId] }).catch(() => {});
+      throw err;
+    }
     const metodoPix = order.transactions?.payments?.[0]?.payment_method || {};
     const qrCodePix = metodoPix.qr_code || null; // copia-e-cola (texto)
     const qrCodePixImagem = metodoPix.qr_code_base64 || null; // base64 (imagem pronta)
@@ -498,12 +537,6 @@ terminal.post('/auto-cadastro', limitadorCadastro, autenticarTerminalOuCadastroP
     // então o polling do totem confere os dois.
     const provedorReferencia = String(order.id);
 
-    const alunoId = uuid();
-    await db.execute({
-      sql: `INSERT INTO alunos (id, nome, email, telefone, cpf, data_nascimento, status)
-            VALUES (?, ?, ?, ?, ?, ?, 'ativo')`,
-      args: [alunoId, dados.nome, dados.email, dados.telefone, dados.cpf, dados.data_nascimento],
-    });
     // E-mail de boas-vindas automático (2026-07) — best-effort, nunca atrasa
     // nem quebra o cadastro/pagamento em si (ver emailBoasVindas.service.js).
     emailBoasVindas.enviarBoasVindasSeguro({ id: alunoId, nome: dados.nome, email: dados.email }).catch(() => {});
@@ -531,6 +564,9 @@ terminal.post('/auto-cadastro', limitadorCadastro, autenticarTerminalOuCadastroP
       valor_centavos: p.valor_centavos,
       aluno_nome: dados.nome,
     });
+    } finally {
+      acessoTerminal.liberarCpfDoCadastro(dados.cpf);
+    }
   } catch (err) {
     next(err);
   }

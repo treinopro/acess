@@ -120,12 +120,12 @@ function mostrarConfirmacaoLiberacaoExterna() {
   if (btnPagarContas) btnPagarContas.classList.add('oculto');
   const vencEl = document.getElementById('overlay-vencimento');
   if (vencEl) vencEl.classList.add('oculto');
-  tocarAvisoSonoro(configSomTotem.acessoLiberado);
+  const promessaSom = tocarAvisoSonoro(configSomTotem.acessoLiberado);
 
-  setTimeout(() => {
+  aguardarDuracaoResultado(promessaSom).then(() => {
     overlay.classList.remove('visivel');
     document.body.classList.remove('tela-flash-liberado');
-  }, DURACAO_RESULTADO_LIBERADO_MS);
+  });
 }
 
 function iniciarEscutaLiberacoesExternas() {
@@ -171,22 +171,57 @@ function tocarBeep(vezes = 1) {
   }
 }
 
+// 2026-08-04: retorna uma Promise que só resolve quando a fala TERMINA de
+// tocar (evento 'onend' da própria Web Speech API) — usado pra tela de
+// resultado (liberado/negado) ficar visível só pelo tempo que a frase
+// realmente dura, em vez de um tempo fixo arbitrário (ver
+// aguardarDuracaoResultado/processarResultado abaixo). Pedido explícito do
+// dono do sistema: a tela ficava tempo demais parada depois que a frase já
+// tinha terminado de ser dita.
 function falarTexto(texto) {
-  try {
-    if (!('speechSynthesis' in window) || !texto) return;
-    speechSynthesis.cancel(); // corta qualquer fala anterior ainda tocando, evita acumular fila
-    const fala = new SpeechSynthesisUtterance(texto);
-    fala.lang = 'pt-BR';
-    speechSynthesis.speak(fala);
-  } catch {
-    // idem — nunca deve travar o totem por causa do aviso sonoro
-  }
+  return new Promise((resolve) => {
+    try {
+      if (!('speechSynthesis' in window) || !texto) { resolve(); return; }
+      speechSynthesis.cancel(); // corta qualquer fala anterior ainda tocando, evita acumular fila
+      const fala = new SpeechSynthesisUtterance(texto);
+      fala.lang = 'pt-BR';
+      fala.onend = () => resolve();
+      fala.onerror = () => resolve();
+      speechSynthesis.speak(fala);
+    } catch {
+      // idem — nunca deve travar o totem por causa do aviso sonoro
+      resolve();
+    }
+  });
 }
 
+// Retorna uma Promise (nunca throw) que resolve quando o aviso sonoro
+// termina — fala inteira (onend), ou "logo em seguida" pro beep/nenhum som
+// (não têm duração pra esperar, ver DURACAO_MINIMA_RESULTADO_MS aplicada por
+// quem chama, em aguardarDuracaoResultado).
 function tocarAvisoSonoro(situacao) {
-  if (!situacao || situacao.tipo === 'nenhum') return;
-  if (situacao.tipo === 'voz') falarTexto(situacao.texto);
-  else if (situacao.tipo === 'beep') tocarBeep(situacao.beeps || 1);
+  if (!situacao || situacao.tipo === 'nenhum') return Promise.resolve();
+  if (situacao.tipo === 'voz') return falarTexto(situacao.texto);
+  if (situacao.tipo === 'beep') { tocarBeep(situacao.beeps || 1); return Promise.resolve(); }
+  return Promise.resolve();
+}
+
+// Tempo mínimo (som muito curto/beep/nenhum som) e máximo (rede de segurança
+// caso a Web Speech API trave e nunca dispare onend em algum
+// navegador/tablet) que a tela de resultado fica visível — entre esses dois
+// limites, quem manda é a duração real do aviso sonoro (ver
+// tocarAvisoSonoro).
+const DURACAO_MINIMA_RESULTADO_MS = 1200;
+const DURACAO_MAXIMA_RESULTADO_MS = 6000;
+
+async function aguardarDuracaoResultado(promessaSom) {
+  const inicio = Date.now();
+  await Promise.race([
+    promessaSom,
+    new Promise((resolve) => setTimeout(resolve, DURACAO_MAXIMA_RESULTADO_MS)),
+  ]);
+  const faltam = DURACAO_MINIMA_RESULTADO_MS - (Date.now() - inicio);
+  if (faltam > 0) await new Promise((resolve) => setTimeout(resolve, faltam));
 }
 
 // ---------------- Fonte da câmera: webcam USB (via app "USB Camera" no tablet) ----------------
@@ -1012,6 +1047,10 @@ async function processarResultado(chamada, { aoVoltar } = {}) {
   let cpfParaContas = null;
   let labelBotaoContas = 'Pagar contas em atraso';
   let acessoFoiLiberado = false;
+  // Duração real do aviso sonoro desta tentativa (ver aguardarDuracaoResultado
+  // logo abaixo) — quem manda quanto tempo a tela de resultado fica visível,
+  // no lugar de um tempo fixo arbitrário.
+  let promessaSom = Promise.resolve();
 
   try {
     const r = await chamada();
@@ -1026,14 +1065,14 @@ async function processarResultado(chamada, { aoVoltar } = {}) {
       // dia (calculado no servidor, ver acessoTerminal.service.js); nos
       // seguintes, o aviso normal de "acesso liberado" (voz ou beep, conforme
       // configurado em Configurações > Aviso sonoro no totem).
-      tocarAvisoSonoro(r.primeiro_acesso_hoje ? configSomTotem.primeiroAcesso : configSomTotem.acessoLiberado);
+      promessaSom = tocarAvisoSonoro(r.primeiro_acesso_hoje ? configSomTotem.primeiroAcesso : configSomTotem.acessoLiberado);
     } else {
       overlay.classList.add('negado');
       document.body.classList.add('tela-flash-negado');
       document.getElementById('overlay-icone').textContent = '⛔';
       document.getElementById('overlay-titulo').textContent = 'Acesso negado';
       document.getElementById('overlay-msg').textContent = r.motivo || 'Procure a recepção.';
-      tocarAvisoSonoro(configSomTotem.acessoNegado);
+      promessaSom = tocarAvisoSonoro(configSomTotem.acessoNegado);
       if (r.cpf && /atraso/i.test(r.motivo || '')) {
         cpfParaContas = r.cpf;
       }
@@ -1059,7 +1098,7 @@ async function processarResultado(chamada, { aoVoltar } = {}) {
     document.getElementById('overlay-icone').textContent = '⚠️';
     document.getElementById('overlay-titulo').textContent = 'Não foi possível verificar';
     document.getElementById('overlay-msg').textContent = err.message;
-    tocarAvisoSonoro(configSomTotem.acessoNegado);
+    promessaSom = tocarAvisoSonoro(configSomTotem.acessoNegado);
   }
 
   const fecharOverlay = () => {
@@ -1091,11 +1130,12 @@ async function processarResultado(chamada, { aoVoltar } = {}) {
     return;
   }
 
-  // Acesso liberado: fica visível pelo tempo que a pessoa realmente tem pra
-  // girar a catraca (ver DURACAO_RESULTADO_LIBERADO_MS) antes da mensagem
-  // sumir do painel e o totem voltar ao estado normal de espera. Acesso
-  // negado (sem ação de pagar disponível): some rápido, ninguém precisa girar nada.
-  setTimeout(fecharOverlay, acessoFoiLiberado ? DURACAO_RESULTADO_LIBERADO_MS : DURACAO_RESULTADO_MS);
+  // 2026-08-04 (pedido explícito: a tela ficava tempo demais parada): fecha
+  // assim que o aviso sonoro termina de tocar (a frase falada, ou logo após
+  // o beep), não um tempo fixo. A catraca em si não depende disso — o
+  // destrave físico tem seu próprio tempo, independente do que está na tela
+  // (ver HENRY_RELEASE_TIME_DECIMOS em henryCatraca.service.js).
+  aguardarDuracaoResultado(promessaSom).then(fecharOverlay);
 }
 
 // ---------------- QR fixo pro Portal do Aluno (tela inicial) ----------------

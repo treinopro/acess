@@ -138,6 +138,36 @@ if (criarModuloAvaliaPro) {
     return autenticar(req, res, next);
   });
   app.use('/avaliacoes', avaliapro.router);
+} else {
+  // Sem a pasta completa do AvaliaPro (caso da nuvem hoje), /avaliacoes
+  // cairia no 404 padrão do Express ("Cannot GET /avaliacoes/") — uma
+  // tela sem contexto nenhum pra quem clicou no link "Avaliação física"
+  // do menu sem saber que essa parte só existe no computador da
+  // recepção. Esta rota troca isso por uma explicação e por onde ir.
+  app.get(['/avaliacoes', '/avaliacoes/*'], (req, res) => {
+    res.status(404).send(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Avaliação física completa</title>
+<style>
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+    background:#0f172a;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;padding:20px}
+  .caixa{background:#1e293b;border-radius:16px;padding:28px;max-width:420px;text-align:center}
+  h1{font-size:18px;margin:0 0 12px}
+  p{color:#cbd5e1;font-size:14px;line-height:1.6;margin:0 0 16px}
+  a{color:#10b981;font-weight:600;text-decoration:none}
+  a:hover{text-decoration:underline}
+</style></head><body>
+  <div class="caixa">
+    <h1>📏 Avaliação física completa</h1>
+    <p>Fotos posturais, análise funcional por vídeo e leitura de anotações
+    por foto ficam disponíveis apenas no computador da recepção
+    (é lá que essa parte roda hoje).</p>
+    <p>Peso, % de gordura, IMC e as demais medidas já funcionam
+    normalmente aqui — no <a href="/">perfil de cada aluno</a> e no
+    <a href="/portal.html">portal do aluno</a>.</p>
+  </div>
+</body></html>`);
+  });
 }
 
 app.use(morgan('dev'));

@@ -302,16 +302,19 @@
               Ou cadastre o rosto agora mesmo, usando a câmera deste computador (não precisa levar o aluno até o totem):
             </p>
             <div id="captura-facial-perfil">
-              <video id="video-facial-perfil" autoplay muted playsinline style="width:280px;height:210px;border-radius:10px;background:#000;object-fit:cover;display:none;transform:scaleX(-1);border:3px solid transparent"></video>
+              <div class="video-wrap oculto" id="video-wrap-facial-perfil" style="width:280px">
+                <video id="video-facial-perfil" autoplay muted playsinline style="width:280px;height:210px;border-radius:10px;background:#000;object-fit:cover;transform:scaleX(-1)"></video>
+                <div class="guia-facial-circulo"></div>
+                <button type="button" class="btn-trocar-camera" id="btn-trocar-camera-perfil" title="Trocar câmera (frontal/traseira)">🔄</button>
+              </div>
               <div id="dica-facial-perfil" class="oculto" style="color:#667085;font-size:12px;max-width:280px;margin-top:6px">
-                Peça para o aluno olhar de frente para a câmera, com boa iluminação e sem óculos escuros/boné cobrindo o rosto.
-                Aguarde a borda ficar <strong style="color:#12b76a">verde</strong> (rosto detectado) antes de clicar em "Capturar rosto".
+                Para melhor reconhecimento: sem boné, chapéu ou óculos escuros. Siga as instruções na tela — o cadastro é
+                automático ao final da sequência, não precisa clicar em nada.
               </div>
               <div id="status-facial-perfil" style="color:#667085;font-size:13px;margin:6px 0"></div>
+              <div class="guia-facial-progresso oculto" id="progresso-wrap-facial-perfil"><div class="guia-facial-progresso-barra" id="progresso-facial-perfil"></div></div>
               <div class="form-acoes">
-                <button type="button" class="btn-secundario" id="btn-abrir-camera-perfil">Abrir câmera</button>
-                <button type="button" class="btn-primario oculto" id="btn-capturar-facial-perfil">Capturar rosto</button>
-                <button type="button" class="btn-secundario oculto" id="btn-trocar-camera-perfil" title="Trocar câmera (frontal/traseira)">🔄 Trocar câmera</button>
+                <button type="button" class="btn-secundario" id="btn-abrir-camera-perfil">Cadastrar rosto agora</button>
                 <button type="button" class="btn-secundario oculto" id="btn-cancelar-camera-perfil">Cancelar</button>
               </div>
             </div>

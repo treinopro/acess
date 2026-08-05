@@ -128,7 +128,11 @@ terminal.post('/acesso/facial', limitadorIdentificacao, autenticarTerminal, asyn
       return res.json({ autorizado: false, motivo: process.env.NODE_ENV === 'production' ? 'Rosto não reconhecido.' : motivo, ...detalheDiagnostico });
     }
 
-    const resultado = await acessoTerminal.tentarLiberar({ aluno: match.aluno, metodo: 'facial' });
+    // 2026-08-04: guarda a similaridade/margem no log mesmo quando LIBERADO
+    // (antes só era logado no caso negado) — dado concreto pra investigar um
+    // relato de reconhecimento errado (ex.: confusão entre alunos de boné).
+    const mensagemDiagnostico = `Reconhecido por rosto (similaridade ${match.similaridade.toFixed(3)}, 2º colocado ${match.similaridadeSegundoMelhor != null ? match.similaridadeSegundoMelhor.toFixed(3) : 'n/a'}, limite ${match.limite}).`;
+    const resultado = await acessoTerminal.tentarLiberar({ aluno: match.aluno, metodo: 'facial', mensagemDiagnostico });
     const detalheSimilaridade = process.env.NODE_ENV === 'production' ? {} : { similaridade: match.similaridade };
     res.json({ ...resultado, ...detalheSimilaridade });
   } catch (err) {

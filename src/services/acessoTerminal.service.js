@@ -854,7 +854,7 @@ let ultimaLiberacaoFacialEm = 0;
  * Fluxo completo: checa status, tenta abrir a catraca se autorizado, registra
  * o log de acesso e retorna o resultado para a tela do totem.
  */
-async function tentarLiberar({ aluno, metodo }) {
+async function tentarLiberar({ aluno, metodo, mensagemDiagnostico }) {
   const { autorizado, motivo } = await verificarAutorizacaoAluno(aluno);
   // Aviso de vencimento (2026-07): calculado sempre, liberado ou negado — ver
   // buscarAvisoVencimentoSeguro acima. Nunca lança, então nunca atrasa/impede
@@ -914,7 +914,12 @@ async function tentarLiberar({ aluno, metodo }) {
     }).catch(() => {});
   }
 
-  await registrarAcesso({ alunoId: aluno.id, metodo, resultado: 'liberado', mensagem: null });
+  // 2026-08-04: guarda a similaridade/margem exatas do reconhecimento facial
+  // mesmo quando LIBERADO (antes só era logado no caso negado) — sem isso,
+  // não dava pra investigar depois um relato de reconhecimento errado (ex.:
+  // confusão entre alunos que usam boné) com nenhum dado concreto pra
+  // calibrar FACE_MATCH_LIMIAR_COSSENO/FACE_MATCH_MARGEM_MINIMA_COSSENO.
+  await registrarAcesso({ alunoId: aluno.id, metodo, resultado: 'liberado', mensagem: metodo === 'facial' ? mensagemDiagnostico || null : null });
   return { autorizado: true, motivo: null, aluno_nome: aluno.nome, aluno_id: aluno.id, cpf: aluno.cpf, aviso_vencimento: avisoVencimento, primeiro_acesso_hoje: primeiroAcessoHoje };
 }
 

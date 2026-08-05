@@ -1980,169 +1980,93 @@ document.getElementById('btn-remover-face').addEventListener('click', async () =
   } catch (err) { mostrarToast(err.message, true); }
 });
 
-// ---------------- Cadastro facial direto pelo painel (câmera do PC) ----------------
+// ---------------- Cadastro facial guiado direto pelo painel (câmera do PC) ----------------
+// 2026-08-04: antes era um cadastro de clique único (sem liveness — virava só
+// de frente, sem virar pros lados/levantar-abaixar o queixo), divergente do
+// totem/portal/cadastro pelo celular. Passa a usar o MESMO mecanismo guiado
+// compartilhado (executarCadastroFacialGuiado, ver facial-guiado.js — já
+// carregado nesta página) — pedido explícito do dono do sistema.
 
-const FACE_MODELS_URL_PERFIL = 'vendor/face-api/weights';
-let faceModelsCarregados = false;
 let streamCameraPerfil = null;
-let intervaloDeteccaoLivePerfil = null;
-let rostoDetectadoAgoraPerfil = false;
-// 2026-08-04: frontal/traseira — ver alternarCameraPerfil abaixo (pedido
+// 2026-08-04: frontal/traseira — ver btn-trocar-camera-perfil abaixo (pedido
 // explícito pra poder cadastrar o rosto do aluno usando a câmera traseira do
 // celular/tablet, mais fácil de mirar do que virar a tela pra frontal).
 let facingModePerfilAtual = 'user';
 
-async function garantirModelosFaciais() {
-  if (faceModelsCarregados) return;
-  // 2026-07-27: faceRecognitionNet do face-api não é mais carregado aqui —
-  // o embedding salvo passou a ser o do SFace (ver facial-sface.js), pra
-  // ficar no mesmo formato usado pelo totem/portal/cadastro pelo celular
-  // (reconhecimento é 1:N contra TODOS os alunos, então um descritor de
-  // outro modelo aqui simplesmente nunca bateria com nada).
-  await Promise.all([
-    faceapi.nets.tinyFaceDetector.loadFromUri(FACE_MODELS_URL_PERFIL),
-    faceapi.nets.faceLandmark68Net.loadFromUri(FACE_MODELS_URL_PERFIL),
-    carregarSessaoSFace(),
-  ]);
-  faceModelsCarregados = true;
-}
-
-// 2026-07-22: antes disso o fluxo era "às cegas" — a pessoa clicava em
-// "Capturar rosto" sem nenhum retorno de que a câmera realmente enxergava um
-// rosto naquele instante (nunca tinha instrução na tela nem indicação de
-// pronto, diferente do totem que guia passo a passo). Esse loop roda uma
-// detecção leve (sem landmarks/descriptor, só localizar o rosto — barato o
-// bastante pra rodar a cada 400ms sem travar o navegador) só pra pintar a
-// borda do vídeo de verde quando há rosto no quadro, dando o mesmo tipo de
-// feedback em tempo real que o totem já tinha.
-function pararDeteccaoLivePerfil() {
-  if (intervaloDeteccaoLivePerfil) {
-    clearInterval(intervaloDeteccaoLivePerfil);
-    intervaloDeteccaoLivePerfil = null;
-  }
-  rostoDetectadoAgoraPerfil = false;
-}
-
-function iniciarDeteccaoLivePerfil(video, status) {
-  pararDeteccaoLivePerfil();
-  intervaloDeteccaoLivePerfil = setInterval(async () => {
-    if (!streamCameraPerfil || video.readyState < 2) return;
-    try {
-      const deteccao = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions());
-      rostoDetectadoAgoraPerfil = Boolean(deteccao);
-      video.style.borderColor = rostoDetectadoAgoraPerfil ? '#12b76a' : '#d0d5dd';
-      if (!status.dataset.travado) {
-        status.textContent = rostoDetectadoAgoraPerfil
-          ? 'Rosto detectado — pode clicar em "Capturar rosto".'
-          : 'Nenhum rosto no quadro. Aproxime/afaste ou ajuste a iluminação.';
-      }
-    } catch {
-      // ciclo pontual de detecção falhou (quadro instável) — só tenta de novo
-      // no próximo intervalo, sem interromper o loop.
-    }
-  }, 400);
+async function iniciarCameraPerfil(video) {
+  // 2026-07-22: sem constraints, alguns notebooks escolhem uma resolução
+  // baixa/instável (mesma classe de problema já visto na câmera do totem) —
+  // pede um mínimo razoável, sem forçar proporção exata (ver comentário
+  // equivalente em terminal.js/iniciarCamera).
+  streamCameraPerfil = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facingModePerfilAtual, width: { ideal: 1280 } } });
+  video.srcObject = streamCameraPerfil;
+  // Traseira não deve vir espelhada — só a frontal tem o efeito "espelho" esperado.
+  video.style.transform = facingModePerfilAtual === 'environment' ? 'none' : 'scaleX(-1)';
+  await video.play().catch(() => {}); // autoplay já cobre a maioria dos casos; isso só garante antes de liberar o botão
 }
 
 function pararCameraPerfil() {
-  pararDeteccaoLivePerfil();
   if (streamCameraPerfil) {
     streamCameraPerfil.getTracks().forEach((t) => t.stop());
     streamCameraPerfil = null;
   }
   facingModePerfilAtual = 'user';
   const video = document.getElementById('video-facial-perfil');
-  video.style.display = 'none';
-  video.style.borderColor = 'transparent';
-  video.style.transform = 'scaleX(-1)';
   video.srcObject = null;
+  document.getElementById('video-wrap-facial-perfil').classList.add('oculto');
   document.getElementById('dica-facial-perfil').classList.add('oculto');
+  document.getElementById('progresso-wrap-facial-perfil').classList.add('oculto');
   document.getElementById('btn-abrir-camera-perfil').classList.remove('oculto');
-  document.getElementById('btn-capturar-facial-perfil').classList.add('oculto');
   document.getElementById('btn-cancelar-camera-perfil').classList.add('oculto');
-  document.getElementById('btn-trocar-camera-perfil').classList.add('oculto');
-  const status = document.getElementById('status-facial-perfil');
-  status.textContent = '';
-  delete status.dataset.travado;
+  document.getElementById('status-facial-perfil').textContent = '';
 }
 
 document.getElementById('btn-abrir-camera-perfil').addEventListener('click', async () => {
   const status = document.getElementById('status-facial-perfil');
+  const video = document.getElementById('video-facial-perfil');
   try {
     status.textContent = 'Carregando modelos e abrindo câmera...';
-    await garantirModelosFaciais();
-    // 2026-07-22: sem constraints, alguns notebooks escolhem uma resolução
-    // baixa/instável (mesma classe de problema já visto na câmera do
-    // totem) — pede um mínimo razoável, sem forçar proporção exata (ver
-    // comentário equivalente em terminal.js/iniciarCamera).
-    streamCameraPerfil = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facingModePerfilAtual, width: { ideal: 1280 } } });
-    const video = document.getElementById('video-facial-perfil');
-    video.srcObject = streamCameraPerfil;
-    video.style.display = 'block';
-    // Traseira não deve vir espelhada — só a frontal tem o efeito "espelho" esperado.
-    video.style.transform = facingModePerfilAtual === 'environment' ? 'none' : 'scaleX(-1)';
-    await video.play().catch(() => {}); // autoplay já cobre a maioria dos casos; isso só garante antes de liberar o botão
-    document.getElementById('dica-facial-perfil').classList.remove('oculto');
-    document.getElementById('btn-abrir-camera-perfil').classList.add('oculto');
-    document.getElementById('btn-capturar-facial-perfil').classList.remove('oculto');
-    document.getElementById('btn-cancelar-camera-perfil').classList.remove('oculto');
-    document.getElementById('btn-trocar-camera-perfil').classList.remove('oculto');
-    status.textContent = 'Posicione o rosto do aluno no centro do quadro...';
-    iniciarDeteccaoLivePerfil(video, status);
+    await carregarModelosFaciais();
+    await iniciarCameraPerfil(video);
   } catch (err) {
     status.textContent = `Não foi possível abrir a câmera: ${err.message}`;
+    return;
   }
+
+  document.getElementById('video-wrap-facial-perfil').classList.remove('oculto');
+  document.getElementById('dica-facial-perfil').classList.remove('oculto');
+  document.getElementById('progresso-wrap-facial-perfil').classList.remove('oculto');
+  document.getElementById('btn-abrir-camera-perfil').classList.add('oculto');
+  document.getElementById('btn-cancelar-camera-perfil').classList.remove('oculto');
+
+  await executarCadastroFacialGuiado({
+    video,
+    statusEl: status,
+    enviarDescritor: async (descriptor, foto) => {
+      pararCameraPerfil();
+      await api(`/api/alunos/${perfilAtualId}/face`, {
+        method: 'PUT',
+        body: JSON.stringify({ descriptor, foto }),
+      });
+      mostrarToast('Rosto cadastrado com sucesso.');
+      if (foto) carregarPerfilAluno(); // atualiza a foto de perfil na tela, se essa captura preencheu uma
+    },
+  });
 });
 
 document.getElementById('btn-cancelar-camera-perfil').addEventListener('click', pararCameraPerfil);
 
 document.getElementById('btn-trocar-camera-perfil').addEventListener('click', async () => {
-  const status = document.getElementById('status-facial-perfil');
   const video = document.getElementById('video-facial-perfil');
-  pararDeteccaoLivePerfil();
   if (streamCameraPerfil) { streamCameraPerfil.getTracks().forEach((t) => t.stop()); streamCameraPerfil = null; }
   facingModePerfilAtual = facingModePerfilAtual === 'user' ? 'environment' : 'user';
   try {
-    streamCameraPerfil = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facingModePerfilAtual, width: { ideal: 1280 } } });
+    await iniciarCameraPerfil(video);
   } catch (err) {
     // Sem a câmera pedida (ex.: PC sem traseira) — volta pra frontal em vez
     // de deixar a tela sem imagem nenhuma.
     facingModePerfilAtual = 'user';
-    streamCameraPerfil = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facingModePerfilAtual, width: { ideal: 1280 } } });
-  }
-  video.srcObject = streamCameraPerfil;
-  video.style.transform = facingModePerfilAtual === 'environment' ? 'none' : 'scaleX(-1)';
-  await video.play().catch(() => {});
-  iniciarDeteccaoLivePerfil(video, status);
-});
-
-document.getElementById('btn-capturar-facial-perfil').addEventListener('click', async () => {
-  const status = document.getElementById('status-facial-perfil');
-  const video = document.getElementById('video-facial-perfil');
-  try {
-    status.dataset.travado = '1'; // pausa as atualizações do loop live enquanto mostra o resultado da captura
-    status.textContent = 'Analisando rosto...';
-    const deteccao = await faceapi
-      .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
-      .withFaceLandmarks();
-
-    if (!deteccao) {
-      status.textContent = 'Nenhum rosto detectado. Aguarde a borda ficar verde e tente novamente.';
-      delete status.dataset.travado;
-      return;
-    }
-
-    const descriptor = await obterEmbeddingSFace(video, deteccao);
-    const foto = obterFotoRecorte(video, deteccao);
-    await api(`/api/alunos/${perfilAtualId}/face`, {
-      method: 'PUT',
-      body: JSON.stringify({ descriptor, foto }),
-    });
-    mostrarToast('Rosto cadastrado com sucesso.');
-    pararCameraPerfil();
-    if (foto) carregarPerfilAluno(); // atualiza a foto de perfil na tela, se essa captura preencheu uma
-  } catch (err) {
-    status.textContent = `Erro ao cadastrar rosto: ${err.message}`;
-    delete status.dataset.travado;
+    await iniciarCameraPerfil(video);
   }
 });
 

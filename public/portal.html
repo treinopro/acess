@@ -78,6 +78,9 @@ if ('serviceWorker' in navigator) {
   /* Traseira não deve vir espelhada — ver alternarCamera em portal.js. */
   video.camera-traseira { transform: none; }
   .status-scan { color: #94a3b8; font-size: 14px; margin-top: 8px; min-height: 20px; }
+  /* Boné/chapéu/óculos escuros cobrindo testa e olhos degrada o
+     reconhecimento (já causou confusão entre alunos diferentes). */
+  .dica-sem-acessorios { color: #64748b; font-size: 12px; margin-top: 4px; }
 
   /* Cadastro facial guiado (liveness) — mesmo visual usado no totem (ver
      terminal.html): círculo sobre o vídeo que muda de cor conforme o passo
@@ -255,6 +258,7 @@ if ('serviceWorker' in navigator) {
         <button type="button" class="btn-trocar-camera" id="btn-trocar-camera-hub" title="Trocar câmera (frontal/traseira)">🔄</button>
       </div>
       <div class="status-scan" id="status-facial-hub">Posicione seu rosto no centro da câmera...</div>
+      <div class="dica-sem-acessorios">Para melhor reconhecimento: sem boné, chapéu ou óculos escuros.</div>
       <div class="guia-facial-progresso"><div class="guia-facial-progresso-barra"></div></div>
     </div>
 
@@ -307,6 +311,7 @@ if ('serviceWorker' in navigator) {
         <button type="button" class="btn-trocar-camera" id="btn-trocar-camera-cadastro-portal" title="Trocar câmera (frontal/traseira)">🔄</button>
       </div>
       <div class="status-scan" id="status-cadastro-portal-facial">Posicione seu rosto no centro da câmera...</div>
+      <div class="dica-sem-acessorios">Para melhor reconhecimento: sem boné, chapéu ou óculos escuros.</div>
       <div class="guia-facial-progresso"><div class="guia-facial-progresso-barra"></div></div>
     </div>
 

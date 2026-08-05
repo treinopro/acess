@@ -108,6 +108,13 @@ if ('serviceWorker' in navigator) {
   video.camera-traseira, img.camera-feed.camera-traseira { transform: none; }
   .video-wrap { position: relative; margin-bottom: 16px; }
   .status-scan { color: #94a3b8; font-size: 14px; margin-top: 8px; min-height: 20px; }
+  /* 2026-08-04: boné/chapéu/óculos escuros cobrindo testa e olhos degrada a
+     qualidade do reconhecimento (o rosto fica menos distinto pro modelo),
+     o que já causou confusão entre alunos diferentes — pedido explícito do
+     dono do sistema. Aviso fixo (não é sobrescrito pelo texto de status, que
+     muda o tempo todo), tanto na tela de reconhecimento quanto no cadastro
+     do rosto (evita cadastrar a referência já com o acessório). */
+  .dica-sem-acessorios { color: #64748b; font-size: 12px; margin-top: 4px; }
 
   /* Demarcação circular do rosto no cadastro guiado (2026-07) — mesma ideia
      visual do cadastro de Face ID: um círculo sobre o vídeo que muda de cor
@@ -210,6 +217,7 @@ if ('serviceWorker' in navigator) {
   <div class="tela ativa" id="tela-inicio">
     <div class="logo" id="logo-totem">ACADEMIA GESTÃO</div>
     <div class="subtitulo" id="status-inicio">Aproxime-se para reconhecimento facial, ou mostre o QR do seu celular...</div>
+    <div class="dica-sem-acessorios">Para melhor reconhecimento: sem boné, chapéu ou óculos escuros.</div>
 
     <div class="video-wrap">
       <video id="video-inicio" class="camera-feed" autoplay muted playsinline></video>
@@ -268,6 +276,7 @@ if ('serviceWorker' in navigator) {
         <button type="button" class="btn-trocar-camera" id="btn-trocar-camera-vincular" title="Trocar câmera (frontal/traseira)">🔄</button>
       </div>
       <div class="status-scan" id="status-vincular-facial">Posicione seu rosto no centro da câmera...</div>
+      <div class="dica-sem-acessorios">Para melhor reconhecimento: sem boné, chapéu ou óculos escuros.</div>
       <div class="guia-facial-progresso"><div class="guia-facial-progresso-barra" id="progresso-vincular-facial"></div></div>
     </div>
 
@@ -345,6 +354,7 @@ if ('serviceWorker' in navigator) {
         <button type="button" class="btn-trocar-camera" id="btn-trocar-camera-cadastro" title="Trocar câmera (frontal/traseira)">🔄</button>
       </div>
       <div class="status-scan" id="status-cadastro-facial">Posicione seu rosto no centro da câmera...</div>
+      <div class="dica-sem-acessorios">Para melhor reconhecimento: sem boné, chapéu ou óculos escuros.</div>
       <div class="guia-facial-progresso"><div class="guia-facial-progresso-barra" id="progresso-cadastro-facial"></div></div>
     </div>
 

@@ -8,7 +8,15 @@
 // fallback pro banco local etc.) já existe em nível de aplicação, ver
 // dbResiliente.service.js/filaAcessosOffline.service.js, e cachear
 // respostas de API aqui só criaria uma segunda fonte de verdade divergente.
-const CACHE_NAME = 'academia-shell-v1';
+// v2 (2026-08-05): shell mudou (link "Avaliação física" no menu, ver
+// index.html/style.css) — subir a versão aqui é o que faz o navegador
+// perceber que o service worker mudou, buscar de novo, e descartar o
+// cache antigo do shell (a troca é automática: install->skipWaiting,
+// activate apaga qualquer CACHE_NAME diferente deste e chama
+// clients.claim()). Sem bumpar a versão, o stale-while-revalidate abaixo
+// continua servindo o HTML/CSS antigos do cache indefinidamente, mesmo
+// com os arquivos já atualizados no servidor.
+const CACHE_NAME = 'academia-shell-v2';
 
 self.addEventListener('install', () => {
   self.skipWaiting();

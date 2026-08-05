@@ -83,6 +83,17 @@ body {
 .nav-btn:hover { background: #1f2937; color: #fff; }
 .nav-btn.ativo { background: #1f2937; color: #fff; border-left-color: #10b981; font-weight: 600; }
 
+/* Link pra um app separado (abre em nova aba), com a mesma cara dos
+   nav-btn mas fora da classe .nav-btn — o app.js faz
+   document.querySelectorAll('.nav-btn').forEach(...) esperando
+   data-secao pra trocar de tela interna, e isto aqui não é isso. */
+.nav-link {
+  display: block; background: none; border: none; color: #cbd5e1;
+  text-align: left; padding: 12px 20px; font-size: 14px; cursor: pointer;
+  border-left: 3px solid transparent; text-decoration: none;
+}
+.nav-link:hover { background: #1f2937; color: #fff; }
+
 .sidebar-rodape {
   padding: 16px 20px; border-top: 1px solid #1f2937; margin-top: 12px;
   display: flex; flex-direction: column; gap: 8px; flex-shrink: 0;

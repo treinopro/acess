@@ -28,6 +28,31 @@ const dbResiliente = require('./services/dbResiliente.service');
 const filaAcessosOffline = require('./services/filaAcessosOffline.service');
 const filaCadastroOffline = require('./services/filaCadastroOffline.service');
 const syncOfflineCache = require('./jobs/syncOfflineCache');
+const { autenticar } = require('./middleware/auth');
+const { verificarToken } = require('./utils/jwt');
+const dbCru = require('./db/client');
+
+// AvaliaPro completo (interface com fotos, postural, funcional, MediaPipe)
+// só existe HOJE como pasta neste notebook, fora deste repositório — não
+// dá pra levar pro deploy na nuvem sem antes decidir onde os ~40 MB de
+// modelos de IA vão morar (ver INTEGRACAO-ACADEMIA-GESTAO.md do
+// AvaliaPro). Por isso o require é OPCIONAL: local (onde a pasta
+// `avaliapro` existe ao lado de `projeto acess aca/`) monta a rota
+// `/avaliacoes/` normalmente; na nuvem (onde ela não existe) o require
+// falha, é pego aqui, e o servidor sobe do mesmo jeito sem essa rota —
+// nunca um require ausente derruba o boot inteiro. O que NÃO depende
+// disso (portal do aluno, tela de avaliação do staff) usa
+// `vendor/avaliapro-core/` e funciona nos dois lugares.
+let criarModuloAvaliaPro = null;
+let envolverClienteLibsql = null;
+try {
+  ({ criarModulo: criarModuloAvaliaPro } = require('../../../avaliapro/src/module'));
+  ({ envolverClienteLibsql } = require('../../../avaliapro/src/adapters/db-bridge'));
+} catch (e) {
+  console.log('[server] AvaliaPro completo não encontrado ao lado do projeto — rota /avaliacoes/ (interface com ' +
+    'fotos/postural/funcional) não será montada neste processo. Portal do aluno e tela de avaliação do staff ' +
+    'continuam funcionando normalmente (usam vendor/avaliapro-core/, não a pasta completa).');
+}
 
 // Guarda do job de backup agendado: default 'true' preserva o comportamento
 // atual (nenhuma mudança pra quem não define esta variável). Existe só para
@@ -69,6 +94,51 @@ app.use((req, res, next) => {
   res.setHeader('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
   next();
 });
+
+// AvaliaPro — avaliação física, montado como módulo (ver
+// ../../../avaliapro/INTEGRACAO-ACADEMIA-GESTAO.md). Fica ANTES do
+// express.json({limit:'1mb'}) logo abaixo de propósito: o AvaliaPro tem
+// parser de corpo próprio com limite bem maior (até 600 MB, pra caber um
+// vídeo de teste funcional em base64). Montado aqui, as requisições para
+// /avaliacoes/* são lidas pelo parser dele e nunca chegam no limite de
+// 1 MB do resto do sistema — inverter a ordem cortaria/rejeitaria os
+// uploads de vídeo antes de chegarem lá.
+//
+// Só a API exige login (/avaliacoes/api/*) — os arquivos estáticos do
+// AvaliaPro (HTML/JS/CSS) carregam sem token, do mesmo jeito que o
+// painel deste sistema também carrega sem token e só autentica nas
+// chamadas de API.
+//
+// Só monta se a pasta completa do AvaliaPro foi encontrada (ver o
+// try/catch dos requires lá em cima) — sem ela não tem HTML/JS pra
+// servir nem captura de foto/vídeo pra rodar.
+if (criarModuloAvaliaPro) {
+  const avaliapro = criarModuloAvaliaPro({
+    db: envolverClienteLibsql(dbCru),
+    academia: envolverClienteLibsql(dbCru),
+    modo: 'academia',
+    autor: (req) => req.usuario?.id || 'academia',
+  });
+  // GET /avaliacoes/api/midias/:id é carregado por <img src> e <video src>
+  // (fotos posturais, vídeos dos testes funcionais) — o navegador NUNCA manda
+  // o header Authorization nesses casos, só em chamadas via fetch. Por isso
+  // só essa rota aceita o token também por query string (?t=), gerado pelo
+  // próprio front-end do AvaliaPro a partir do mesmo token que já está no
+  // localStorage (ver public/app/api.js). Todo o resto da API continua
+  // exigindo o header normal, sem exceção.
+  app.use('/avaliacoes/api', (req, res, next) => {
+    if (req.method === 'GET' && req.path.startsWith('/midias/') && req.query.t) {
+      try {
+        req.usuario = verificarToken(req.query.t);
+        return next();
+      } catch (e) {
+        return res.status(401).json({ erro: 'Token inválido ou expirado.' });
+      }
+    }
+    return autenticar(req, res, next);
+  });
+  app.use('/avaliacoes', avaliapro.router);
+}
 
 app.use(morgan('dev'));
 app.use(express.json({ limit: '1mb' })); // limite de tamanho do corpo (mitiga payloads gigantes)

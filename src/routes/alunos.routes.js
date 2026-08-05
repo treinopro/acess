@@ -10,6 +10,10 @@ const catracaGateway = require('../services/catracaGateway.service');
 const dbResiliente = require('../services/dbResiliente.service');
 const filaCadastroOffline = require('../services/filaCadastroOffline.service');
 const emailBoasVindas = require('../services/emailBoasVindas.service');
+// Vendorizado (não é um symlink pro AvaliaPro) porque o deploy na nuvem
+// não tem acesso à pasta do AvaliaPro no notebook — ver o comentário no
+// topo de vendor/avaliapro-core/anthropometry.js para como manter em dia.
+const { computeForTipo } = require('../../vendor/avaliapro-core/anthropometry');
 
 const router = express.Router();
 router.use(autenticar);
@@ -794,7 +798,17 @@ router.get('/:id/perfil', async (req, res, next) => {
 
       const [anamnese, avaliacoes, matriculas, agendamentos, cobrancas] = await Promise.all([
         db.execute({ sql: 'SELECT * FROM anamneses WHERE aluno_id = ? ORDER BY criado_em DESC LIMIT 1', args: [alunoId] }),
-        db.execute({ sql: 'SELECT * FROM avaliacoes_fisicas WHERE aluno_id = ? ORDER BY data_avaliacao DESC', args: [alunoId] }),
+        // Avaliações físicas vêm do AvaliaPro agora — ver o bloco de rotas
+        // "Avaliações físicas" mais abaixo neste arquivo para o porquê.
+        db.execute({
+          sql: `SELECT ax.id, ax.tipo, ax.protocolo, ax.data, ax.fields_json, ax.computed_json,
+                       ax.origem, ax.observacoes
+                FROM avaliacoes ax
+                JOIN avaliandos av ON av.id = ax.avaliando_id
+                WHERE av.origem='academia' AND av.externo_id = ?
+                ORDER BY ax.data DESC, ax.created_at DESC`,
+          args: [alunoId],
+        }),
         db.execute({
           sql: `SELECT m.*, p.nome as plano_nome FROM matriculas m JOIN planos p ON p.id = m.plano_id
                 WHERE m.aluno_id = ? ORDER BY m.data_inicio DESC`,
@@ -811,7 +825,12 @@ router.get('/:id/perfil', async (req, res, next) => {
       return {
         aluno: aluno.rows[0],
         anamnese: anamnese.rows[0] || null,
-        avaliacoes: avaliacoes.rows,
+        avaliacoes: avaliacoes.rows.map((r) => ({
+          id: r.id, tipo: r.tipo, protocolo: r.protocolo, data: r.data,
+          origem: r.origem, observacoes: r.observacoes,
+          fields: JSON.parse(r.fields_json || '{}'),
+          computed: JSON.parse(r.computed_json || '{}'),
+        })),
         matriculas: matriculas.rows,
         agendamentos: agendamentos.rows,
         cobrancas: cobrancas.rows,
@@ -887,36 +906,127 @@ router.put('/:id/anamnese', async (req, res, next) => {
 });
 
 // ---------------- Avaliações físicas (histórico de evolução) ----------------
+// 2026-08: passou a gravar e ler do AvaliaPro (mesmo banco, tabelas
+// `avaliandos`/`avaliacoes` — ver ../../../../avaliapro/src/db/schema.sql)
+// em vez da antiga `avaliacoes_fisicas`, que ficou congelada como histórico
+// (nunca mais recebe INSERT/UPDATE/DELETE daqui, e os registros de lá foram
+// importados uma vez para o AvaliaPro — ver
+// avaliapro/scripts/importar-avaliacoes-fisicas-academia.js). Isso também
+// alimenta o que o próprio aluno vê no portal dele
+// (GET /api/portal/avaliacoes) e o que o AvaliaPro (rota /avaliacoes/,
+// protegida por login) mostra pro staff — mesma fonte de dados nos três
+// lugares, sem sincronizar nada manualmente.
 
-// POST /api/alunos/:id/avaliacoes
+// Garante o espelho em `avaliandos` para este aluno (id do espelho = id do
+// aluno, de propósito — ver o mesmo padrão em
+// avaliapro/src/adapters/alunos.academia.js). Só escreve quando ainda não
+// existe; leitura (GET) nunca passa por aqui, só POST.
+async function espelharAvaliandoAcademia(alunoId) {
+  const existente = await db.execute({
+    sql: `SELECT id FROM avaliandos WHERE origem='academia' AND externo_id=?`,
+    args: [alunoId],
+  });
+  if (existente.rows[0]) return existente.rows[0].id;
+
+  const aluno = await db.execute({
+    sql: 'SELECT nome, email, telefone, data_nascimento, observacoes FROM alunos WHERE id=?',
+    args: [alunoId],
+  });
+  if (!aluno.rows[0]) throw new Error('Aluno não encontrado.');
+  const a = aluno.rows[0];
+  await db.execute({
+    sql: `INSERT INTO avaliandos (id, nome, email, telefone, nascimento, observacoes, origem, externo_id)
+          VALUES (?,?,?,?,?,?,'academia',?)`,
+    args: [alunoId, a.nome, a.email || null, a.telefone || null, a.data_nascimento || null, a.observacoes || null, alunoId],
+  });
+  return alunoId;
+}
+
+async function gravarAvaliacaoAcademia({ avaliandoId, tipo, protocolo, data, fields, observacoes }) {
+  const computed = computeForTipo(tipo, fields, protocolo);
+  const id = uuid();
+  await db.execute({
+    sql: `INSERT INTO avaliacoes (id, avaliando_id, tipo, protocolo, data, fields_json, computed_json, observacoes)
+          VALUES (?,?,?,?,?,?,?,?)`,
+    args: [id, avaliandoId, tipo, protocolo || null, data, JSON.stringify(fields), JSON.stringify(computed), observacoes || null],
+  });
+  return id;
+}
+
+// POST /api/alunos/:id/avaliacoes — um envio do formulário do staff pode
+// preencher peso/altura, % de gordura e/ou medidas de perímetro ao mesmo
+// tempo; o AvaliaPro guarda cada GRUPO como uma avaliação própria (mesma
+// separação por tipo que o resto do app usa), então isto pode gravar mais
+// de uma linha lá dentro a partir de um único envio daqui.
 router.post('/:id/avaliacoes', async (req, res, next) => {
   try {
     const dados = avaliacaoSchema.parse(req.body);
-    const id = uuid();
-    await db.execute({
-      sql: `INSERT INTO avaliacoes_fisicas
-            (id, aluno_id, data_avaliacao, idade, peso_kg, altura_cm, percentual_gordura,
-             medida_cintura_cm, medida_quadril_cm, medida_peito_cm, medida_braco_cm, medida_coxa_cm, objetivo, observacoes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      args: [id, req.params.id, dados.data_avaliacao, dados.idade || null, dados.peso_kg || null, dados.altura_cm || null,
-        dados.percentual_gordura || null, dados.medida_cintura_cm || null, dados.medida_quadril_cm || null,
-        dados.medida_peito_cm || null, dados.medida_braco_cm || null, dados.medida_coxa_cm || null,
-        dados.objetivo || null, dados.observacoes || null],
-    });
-    res.status(201).json({ id });
+    const avaliandoId = await espelharAvaliandoAcademia(req.params.id);
+    const nota = [dados.objetivo, dados.observacoes].filter(Boolean).join(' — ') || null;
+    const ids = [];
+
+    if (dados.peso_kg != null || dados.altura_cm != null) {
+      const fields = {};
+      if (dados.peso_kg != null) fields.peso = dados.peso_kg;
+      if (dados.altura_cm != null) fields.altura = dados.altura_cm;
+      ids.push(await gravarAvaliacaoAcademia({
+        avaliandoId, tipo: 'Antropometria', data: dados.data_avaliacao, fields, observacoes: nota,
+      }));
+    }
+
+    if (dados.percentual_gordura != null) {
+      const fields = { gordura: dados.percentual_gordura };
+      if (dados.peso_kg != null) fields.peso = dados.peso_kg;
+      ids.push(await gravarAvaliacaoAcademia({
+        avaliandoId, tipo: 'Bioimpedância', data: dados.data_avaliacao, fields, observacoes: nota,
+      }));
+    }
+
+    const temPerimetria = [dados.medida_cintura_cm, dados.medida_quadril_cm, dados.medida_peito_cm,
+      dados.medida_braco_cm, dados.medida_coxa_cm].some((v) => v != null);
+    if (temPerimetria) {
+      const fields = {};
+      if (dados.medida_cintura_cm != null) fields.cintura = dados.medida_cintura_cm;
+      if (dados.medida_quadril_cm != null) fields.quadril = dados.medida_quadril_cm;
+      if (dados.medida_peito_cm != null) fields.torax = dados.medida_peito_cm;
+      if (dados.medida_braco_cm != null) fields.braco_d = dados.medida_braco_cm;
+      if (dados.medida_coxa_cm != null) fields.coxa_d = dados.medida_coxa_cm;
+      ids.push(await gravarAvaliacaoAcademia({
+        avaliandoId, tipo: 'Perimetria', data: dados.data_avaliacao, fields, observacoes: nota,
+      }));
+    }
+
+    if (!ids.length) return res.status(400).json({ erro: 'Informe pelo menos uma medida.' });
+    res.status(201).json({ ids });
   } catch (err) {
     next(err);
   }
 });
 
-// GET /api/alunos/:id/avaliacoes
+// GET /api/alunos/:id/avaliacoes — só leitura, nunca cria o espelho (isso é
+// tarefa exclusiva do POST): aluno sem nenhuma avaliação ainda simplesmente
+// devolve lista vazia, sem gravar nada no banco à toa.
 router.get('/:id/avaliacoes', async (req, res, next) => {
   try {
     const result = await db.execute({
-      sql: 'SELECT * FROM avaliacoes_fisicas WHERE aluno_id = ? ORDER BY data_avaliacao DESC',
+      sql: `SELECT ax.id, ax.tipo, ax.protocolo, ax.data, ax.fields_json, ax.computed_json,
+                   ax.origem, ax.observacoes
+            FROM avaliacoes ax
+            JOIN avaliandos av ON av.id = ax.avaliando_id
+            WHERE av.origem='academia' AND av.externo_id = ?
+            ORDER BY ax.data DESC, ax.created_at DESC`,
       args: [req.params.id],
     });
-    res.json(result.rows);
+    res.json(result.rows.map((r) => ({
+      id: r.id,
+      tipo: r.tipo,
+      protocolo: r.protocolo,
+      data: r.data,
+      origem: r.origem,
+      observacoes: r.observacoes,
+      fields: JSON.parse(r.fields_json || '{}'),
+      computed: JSON.parse(r.computed_json || '{}'),
+    })));
   } catch (err) {
     next(err);
   }
@@ -925,7 +1035,7 @@ router.get('/:id/avaliacoes', async (req, res, next) => {
 // DELETE /api/alunos/avaliacoes/:avaliacaoId
 router.delete('/avaliacoes/:avaliacaoId', async (req, res, next) => {
   try {
-    await db.execute({ sql: 'DELETE FROM avaliacoes_fisicas WHERE id = ?', args: [req.params.avaliacaoId] });
+    await db.execute({ sql: 'DELETE FROM avaliacoes WHERE id = ?', args: [req.params.avaliacaoId] });
     res.json({ ok: true });
   } catch (err) {
     next(err);

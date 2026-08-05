@@ -1371,6 +1371,24 @@ document.querySelectorAll('.perfil-tab-btn').forEach((btn) => {
   btn.addEventListener('click', () => trocarAbaPerfil(btn.dataset.tab));
 });
 
+// Resumo de uma avaliação do AvaliaPro para a linha da tabela do perfil —
+// cada tipo destaca as medidas que o staff mais quer ver de relance
+// (ver também public/app/avaliandos.js do AvaliaPro, mesma ideia).
+function resumoAvaliacaoStaff(av) {
+  const f = av.fields || {};
+  const c = av.computed || {};
+  const partes = [];
+  if (c.bf != null) partes.push(`%G ${c.bf}%`);
+  if (c.imc != null) partes.push(`IMC ${c.imc}`);
+  if (c.rcq != null) partes.push(`RCQ ${c.rcq}`);
+  if (f.peso != null) partes.push(`${f.peso} kg`);
+  if (f.cintura != null) partes.push(`cintura ${f.cintura} cm`);
+  if (c.recomendacaoMedica) partes.push('⚠ recomenda avaliação médica');
+  if (!partes.length && av.tipo === 'Postural') partes.push('avaliação postural (fotos no AvaliaPro)');
+  if (!partes.length && av.tipo === 'Funcional') partes.push('avaliação funcional (vídeos no AvaliaPro)');
+  return escapeHtml(partes.join(' · ') || 'sem valores');
+}
+
 async function carregarPerfilAluno() {
   try {
     const perfil = await api(`/api/alunos/${perfilAtualId}/perfil`);
@@ -1400,15 +1418,13 @@ async function carregarPerfilAluno() {
     document.getElementById('anamnese-observacoes').value = anamnese?.observacoes_medicas || '';
 
     const tbodyAval = document.getElementById('lista-avaliacoes');
-    tbodyAval.innerHTML = avaliacoes.length ? '' : '<tr><td colspan="6">Nenhuma avaliação registrada.</td></tr>';
+    tbodyAval.innerHTML = avaliacoes.length ? '' : '<tr><td colspan="4">Nenhuma avaliação registrada.</td></tr>';
     avaliacoes.forEach((av) => {
       const tr = el(`
         <tr>
-          <td>${formatarDataOuDataHora(av.data_avaliacao)}</td>
-          <td>${av.idade || '—'}</td>
-          <td>${av.peso_kg ? av.peso_kg + ' kg' : '—'}</td>
-          <td>${av.percentual_gordura ? av.percentual_gordura + '%' : '—'}</td>
-          <td>${escapeHtml(av.objetivo) || '—'}</td>
+          <td>${formatarDataOuDataHora(av.data)}</td>
+          <td>${escapeHtml(av.tipo)}${av.origem === 'importado' ? ' <span title="Importado do histórico antigo" style="opacity:.6">(importado)</span>' : ''}</td>
+          <td>${resumoAvaliacaoStaff(av)}</td>
           <td><button class="btn-linha perigo" data-acao="excluir-avaliacao">Excluir</button></td>
         </tr>
       `);

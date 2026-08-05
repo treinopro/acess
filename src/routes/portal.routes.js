@@ -244,6 +244,55 @@ router.get('/treino', limitadorSenhaPortal, async (req, res, next) => {
   }
 });
 
+// GET /api/portal/avaliacoes?cpf=...&senha=... — histórico de avaliação
+// física do aluno, vindo do AvaliaPro (mesmo banco, tabelas `avaliandos` e
+// `avaliacoes` — ver ../../../avaliapro/src/db/schema.sql). Substitui, do
+// ponto de vista do aluno, a antiga `avaliacoes_fisicas` (que nunca foi
+// exposta ao aluno, só ao staff no painel — ver app.js `#lista-avaliacoes`).
+//
+// Mesma autenticação de sempre no portal: CPF + a senha sequencial
+// (biometria_id), sem token JWT — este endpoint não passa pelo router do
+// AvaliaPro (que é para o staff, protegido por `autenticar`/JWT); lê as
+// tabelas dele diretamente, com o MESMO `db` já usado no resto deste
+// arquivo, porque é o mesmo banco físico.
+//
+// Se o aluno nunca teve nenhuma avaliação registrada (ainda não existe
+// espelho dele em `avaliandos`, porque staff nunca abriu a ficha), devolve
+// lista vazia — não é erro, é "ainda não avaliado".
+router.get('/avaliacoes', limitadorSenhaPortal, async (req, res, next) => {
+  try {
+    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(req.query);
+    const autenticado = await autenticarAlunoPortal(cpf, senha);
+    if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
+    const aluno = autenticado.aluno;
+
+    const espelho = await db.execute({
+      sql: `SELECT id FROM avaliandos WHERE origem='academia' AND externo_id=?`,
+      args: [aluno.id],
+    });
+    if (!espelho.rows.length) return res.json({ avaliacoes: [] });
+
+    const linhas = await db.execute({
+      sql: `SELECT tipo, protocolo, data, fields_json, computed_json, origem
+            FROM avaliacoes WHERE avaliando_id=? ORDER BY data ASC, created_at ASC`,
+      args: [espelho.rows[0].id],
+    });
+
+    res.json({
+      avaliacoes: linhas.rows.map((r) => ({
+        tipo: r.tipo,
+        protocolo: r.protocolo,
+        data: r.data,
+        origem: r.origem,
+        fields: JSON.parse(r.fields_json || '{}'),
+        computed: JSON.parse(r.computed_json || '{}'),
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Limite dedicado e mais apertado pra /vincular/facial (além do limite geral
 // do portal acima): é a rota mais sensível — quem souber o CPF de outra
 // pessoa pode tentar vincular o PRÓPRIO rosto ao cadastro dela (ver análise de

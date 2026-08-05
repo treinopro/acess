@@ -125,6 +125,21 @@ if ('serviceWorker' in navigator) {
   .exercicio-linha { font-size: 14px; padding: 6px 0; border-bottom: 1px solid #1e293b; }
   .exercicio-linha .nome { font-weight: 600; }
   .exercicio-linha .detalhe { color: #94a3b8; font-size: 12px; }
+
+  /* Minhas avaliações */
+  .avaliacao-card { background: #0f172a; border-radius: 10px; padding: 14px; margin-bottom: 10px; }
+  .avaliacao-card h4 { margin: 0 0 10px; font-size: 14px; }
+  .avaliacao-metrica { display: flex; justify-content: space-between; align-items: baseline; padding: 6px 0; border-bottom: 1px solid #1e293b; font-size: 13px; }
+  .avaliacao-metrica:last-child { border-bottom: none; }
+  .avaliacao-metrica .rotulo { color: #cbd5e1; }
+  .avaliacao-metrica .valores { display: flex; align-items: baseline; gap: 8px; }
+  .avaliacao-metrica .atual { font-weight: 700; font-size: 15px; }
+  .avaliacao-delta { font-size: 12px; font-weight: 600; }
+  .avaliacao-delta.bom { color: #10b981; }
+  .avaliacao-delta.ruim { color: #fb923c; }
+  .avaliacao-delta.neutro { color: #64748b; }
+  .avaliacao-sparkline { display: block; margin-top: 4px; }
+  .avaliacao-data-linha { font-size: 11px; color: #64748b; margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -190,9 +205,16 @@ if ('serviceWorker' in navigator) {
 
       <div class="cartao oculto" id="card-avaliacao">
         <h3>Avaliação física</h3>
-        <p>Fale com a recepção pelo WhatsApp para agendar (ou renovar) sua avaliação.</p>
-        <a class="botao-grande primario" id="link-agendar-avaliacao" style="margin:0;display:block;text-decoration:none;text-align:center" target="_blank" rel="noopener">Agendar pelo WhatsApp</a>
+        <p id="card-avaliacao-resumo">Fale com a recepção pelo WhatsApp para agendar (ou renovar) sua avaliação.</p>
+        <button class="botao-grande secundario oculto" id="btn-ver-avaliacoes-hub" style="margin:0 0 10px">Ver minhas avaliações</button>
+        <a class="botao-grande primario oculto" id="link-agendar-avaliacao" style="margin:0;display:block;text-decoration:none;text-align:center" target="_blank" rel="noopener">Agendar pelo WhatsApp</a>
       </div>
+    </div>
+
+    <!-- Minhas avaliações -->
+    <div class="cartao oculto" id="painel-hub-avaliacoes" style="text-align:left">
+      <h3>Minhas avaliações</h3>
+      <div id="conteudo-avaliacoes-hub"></div>
     </div>
 
     <!-- Contas: lista + seleção -->

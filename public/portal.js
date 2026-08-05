@@ -144,7 +144,7 @@ function resetHub() {
   document.getElementById('input-senha-hub').classList.add('oculto');
   document.getElementById('hub-cpf-erro').textContent = '';
   document.getElementById('painel-hub-cpf').classList.remove('oculto');
-  ['painel-hub-primeiro-acesso', 'painel-hub-dashboard', 'painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-comprovante', 'painel-hub-completar-cadastro', 'painel-hub-facial']
+  ['painel-hub-primeiro-acesso', 'painel-hub-dashboard', 'painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-comprovante', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-avaliacoes']
     .forEach((id) => document.getElementById(id).classList.add('oculto'));
   const avisoVencimento = document.getElementById('aviso-vencimento-hub');
   avisoVencimento.classList.add('oculto');
@@ -159,7 +159,7 @@ function resetHub() {
 // dashboard); só faz o reset completo pro início quando já está no menu
 // principal (ou na tela de CPF).
 document.getElementById('btn-voltar-hub').addEventListener('click', () => {
-  const SUBPAINEIS_HUB = ['painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-completar-cadastro', 'painel-hub-facial'];
+  const SUBPAINEIS_HUB = ['painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-avaliacoes'];
   const painelAberto = SUBPAINEIS_HUB.find((id) => !document.getElementById(id).classList.contains('oculto'));
   if (painelAberto) {
     if (painelAberto === 'painel-hub-pix') pararPollPixHub();
@@ -194,15 +194,151 @@ function preencherDashboardHub(info) {
   else cardFacial.classList.remove('oculto');
 
   const cardAvaliacao = document.getElementById('card-avaliacao');
+  const linkAgendar = document.getElementById('link-agendar-avaliacao');
   if (configApp.whatsapp_contato) {
     cardAvaliacao.classList.remove('oculto');
+    linkAgendar.classList.remove('oculto');
     const texto = encodeURIComponent(`Olá! Sou aluno(a) ${info.aluno_nome} e gostaria de agendar/renovar minha avaliação física.`);
-    document.getElementById('link-agendar-avaliacao').href = `https://wa.me/${configApp.whatsapp_contato}?text=${texto}`;
+    linkAgendar.href = `https://wa.me/${configApp.whatsapp_contato}?text=${texto}`;
   } else {
-    cardAvaliacao.classList.add('oculto');
+    linkAgendar.classList.add('oculto');
   }
 
   carregarResumoContasHub();
+  carregarAvaliacoesHub();
+}
+
+// ---- Minhas avaliações ----
+
+let avaliacoesHubAtual = [];
+
+async function carregarAvaliacoesHub() {
+  const cardAvaliacao = document.getElementById('card-avaliacao');
+  const botaoVer = document.getElementById('btn-ver-avaliacoes-hub');
+  const resumo = document.getElementById('card-avaliacao-resumo');
+  try {
+    const resp = await api(`/api/portal/avaliacoes?cpf=${encodeURIComponent(cpfHubAtual)}&senha=${encodeURIComponent(senhaHubAtual)}`);
+    avaliacoesHubAtual = resp.avaliacoes || [];
+    if (avaliacoesHubAtual.length) {
+      cardAvaliacao.classList.remove('oculto');
+      botaoVer.classList.remove('oculto');
+      const ultima = avaliacoesHubAtual[avaliacoesHubAtual.length - 1];
+      resumo.textContent = `Última avaliação em ${formatarData(ultima.data)}. Toque para ver sua evolução.`;
+    } else {
+      botaoVer.classList.add('oculto');
+    }
+  } catch (err) {
+    // Não é crítico pro resto do hub funcionar — se falhar, só o botão
+    // de ver avaliações não aparece, sem travar o resto do dashboard.
+    botaoVer.classList.add('oculto');
+  }
+}
+
+document.getElementById('btn-ver-avaliacoes-hub').addEventListener('click', () => {
+  ocultarPaineisHub();
+  document.getElementById('painel-hub-avaliacoes').classList.remove('oculto');
+  renderizarAvaliacoesHub(avaliacoesHubAtual);
+});
+
+// Mini gráfico de linha, sem eixos nem grade — só a tendência, pensado
+// pro tema sempre-escuro do portal (o AvaliaPro tem um componente de
+// gráfico próprio, mas ele se adapta a claro/escuro pelo sistema
+// operacional, e o portal é sempre escuro; reaproveitar geraria texto
+// claro ilegível pra quem estiver com o celular no modo claro).
+function sparklineHub(pontos, unidade) {
+  if (pontos.length < 2) return '';
+  const W = 260, H = 46, PAD = 6;
+  const valores = pontos.map((p) => p.valor);
+  let min = Math.min(...valores), max = Math.max(...valores);
+  const folga = Math.max((max - min) * 0.15, Math.abs(max) * 0.02 || 1);
+  min -= folga; max += folga;
+  const px = (i) => PAD + (i / (pontos.length - 1)) * (W - PAD * 2);
+  const py = (v) => H - PAD - ((v - min) / (max - min || 1)) * (H - PAD * 2);
+  const d = pontos.map((p, i) => `${i ? 'L' : 'M'}${px(i).toFixed(1)} ${py(p.valor).toFixed(1)}`).join(' ');
+  const ultimo = pontos[pontos.length - 1];
+  return `<svg class="avaliacao-sparkline" viewBox="0 0 ${W} ${H}" width="100%" height="${H}">
+    <path d="${d}" fill="none" stroke="#10b981" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    ${pontos.map((p, i) => `<circle cx="${px(i).toFixed(1)}" cy="${py(p.valor).toFixed(1)}" r="${i === pontos.length - 1 ? 3.5 : 2.5}" fill="#10b981" stroke="#0f172a" stroke-width="1.5"/>`).join('')}
+    <text x="${px(pontos.length - 1).toFixed(1)}" y="${(py(ultimo.valor) - 8).toFixed(1)}" text-anchor="end" font-size="11" font-weight="700" fill="#cbd5e1">${formatarNumeroHub(ultimo.valor)}${unidade}</text>
+  </svg>`;
+}
+
+function formatarNumeroHub(v, casas) {
+  const c = casas != null ? casas : (Math.abs(v) < 10 ? 2 : 1);
+  return Number(v).toFixed(c).replace('.', ',');
+}
+
+// Uma métrica de destaque por tipo — o bastante pro aluno acompanhar
+// sem virar uma segunda tela de profissional (o AvaliaPro completo,
+// com edição e captura, é só pro staff).
+const METRICAS_HUB = {
+  Antropometria: [{ chave: 'fields.peso', rotulo: 'Peso', unidade: ' kg', melhor: null }],
+  Adipometria: [
+    { chave: 'computed.bf', rotulo: '% de gordura', unidade: '%', melhor: 'menor' },
+    { chave: 'computed.massaMagra', rotulo: 'Massa magra', unidade: ' kg', melhor: 'maior' },
+  ],
+  Perimetria: [{ chave: 'fields.cintura', rotulo: 'Cintura', unidade: ' cm', melhor: 'menor' }],
+  'Bioimpedância': [{ chave: 'computed.bf', rotulo: '% de gordura', unidade: '%', melhor: 'menor' }],
+};
+
+function valorEmHub(av, caminho) {
+  const partes = caminho.split('.');
+  let atual = av;
+  for (const p of partes) { if (atual == null) return null; atual = atual[p]; }
+  if (atual === '' || atual == null) return null;
+  const n = typeof atual === 'number' ? atual : parseFloat(String(atual).replace(',', '.'));
+  return Number.isFinite(n) ? n : null;
+}
+
+function renderizarAvaliacoesHub(avaliacoes) {
+  const alvo = document.getElementById('conteudo-avaliacoes-hub');
+  if (!avaliacoes.length) {
+    alvo.innerHTML = '<p style="color:#94a3b8;font-size:14px">Nenhuma avaliação registrada ainda.</p>';
+    return;
+  }
+
+  const porTipo = {};
+  avaliacoes.forEach((av) => { (porTipo[av.tipo] = porTipo[av.tipo] || []).push(av); });
+
+  let html = '';
+  Object.keys(METRICAS_HUB).forEach((tipo) => {
+    const lista = porTipo[tipo];
+    if (!lista || !lista.length) return;
+
+    html += `<div class="avaliacao-card"><h4>${tipo}</h4>`;
+    METRICAS_HUB[tipo].forEach((m) => {
+      const pontos = lista
+        .map((av) => ({ data: av.data, valor: valorEmHub(av, m.chave) }))
+        .filter((p) => p.valor != null);
+      if (!pontos.length) return;
+
+      const atual = pontos[pontos.length - 1].valor;
+      const primeiro = pontos[0].valor;
+      const delta = pontos.length > 1 ? atual - primeiro : null;
+      let classeDelta = 'neutro';
+      if (delta != null && m.melhor && Math.abs(delta) > 0.05) {
+        const melhorou = m.melhor === 'menor' ? delta < 0 : delta > 0;
+        classeDelta = melhorou ? 'bom' : 'ruim';
+      }
+      const setaDelta = delta == null ? '' : delta > 0.05 ? '▲' : delta < -0.05 ? '▼' : '';
+
+      html += `<div class="avaliacao-metrica">
+        <div>
+          <div class="rotulo">${m.rotulo}</div>
+          ${pontos.length > 1 ? sparklineHub(pontos, m.unidade) : ''}
+        </div>
+        <div class="valores">
+          <span class="atual">${formatarNumeroHub(atual)}${m.unidade}</span>
+          ${delta != null ? `<span class="avaliacao-delta ${classeDelta}">${setaDelta} ${formatarNumeroHub(Math.abs(delta))}${m.unidade}</span>` : ''}
+        </div>
+      </div>`;
+    });
+    const datas = lista.map((av) => av.data);
+    html += `<div class="avaliacao-data-linha">${lista.length} avaliaç${lista.length === 1 ? 'ão' : 'ões'} · ${formatarData(datas[0])} a ${formatarData(datas[datas.length - 1])}</div>`;
+    html += '</div>';
+  });
+
+  alvo.innerHTML = html || '<p style="color:#94a3b8;font-size:14px">Nenhuma medida reconhecida nas avaliações registradas.</p>';
 }
 
 document.getElementById('btn-buscar-hub').addEventListener('click', async () => {

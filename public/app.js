@@ -4209,20 +4209,44 @@ document.getElementById('btn-rel-matriculas-imprimir').addEventListener('click',
   });
 });
 
+// Classifica um acesso em 'liberado' / 'negado' / 'vencido' (negado por mensalidade em
+// atraso) — mesma regra usada no badge do painel "Acessos recentes" (ver formatarTipoAcesso),
+// só que devolvendo a chave em vez do HTML, pra poder filtrar e contar por tipo.
+function tipoDeAcesso(a) {
+  if (a.resultado === 'liberado') return 'liberado';
+  return a.mensagem && /venc/i.test(a.mensagem) ? 'vencido' : 'negado';
+}
+
+const LABEL_TIPO_ACESSO = { liberado: 'liberado(s)', negado: 'negado(s)', vencido: 'vencido(s)' };
+
 // ---- Relatório: Acesso Diário (todos os acessos de um dia) ----
 async function buscarRelatorioAcessoDiario() {
   try {
     const data = document.getElementById('rel-diario-data').value;
     const busca = document.getElementById('rel-diario-busca').value.trim();
     const modo = document.getElementById('rel-diario-modo').value;
+    const tipoFiltro = document.getElementById('rel-diario-tipo').value;
     const params = new URLSearchParams();
     if (data) params.set('data', data);
     if (busca) params.set('busca', busca);
     if (modo === 'primeiro') params.set('apenas_primeiro', 'true');
 
-    const lista = await api(`/api/terminal/acessos${params.toString() ? '?' + params.toString() : ''}`);
+    const listaCompleta = await api(`/api/terminal/acessos${params.toString() ? '?' + params.toString() : ''}`);
+    const lista = tipoFiltro ? listaCompleta.filter((a) => tipoDeAcesso(a) === tipoFiltro) : listaCompleta;
+
+    const totalEl = document.getElementById('rel-diario-total');
+    if (!listaCompleta.length) {
+      totalEl.textContent = '';
+    } else if (tipoFiltro) {
+      totalEl.textContent = `${lista.length} de ${listaCompleta.length} acesso(s) — mostrando só ${LABEL_TIPO_ACESSO[tipoFiltro]}`;
+    } else {
+      const porTipo = { liberado: 0, negado: 0, vencido: 0 };
+      listaCompleta.forEach((a) => { porTipo[tipoDeAcesso(a)] += 1; });
+      totalEl.textContent = `${listaCompleta.length} acesso(s) — ${porTipo.liberado} liberado(s), ${porTipo.negado} negado(s), ${porTipo.vencido} vencido(s)`;
+    }
+
     const tbody = document.getElementById('rel-diario-lista');
-    tbody.innerHTML = lista.length ? '' : '<tr><td colspan="5">Nenhum acesso nessa data.</td></tr>';
+    tbody.innerHTML = lista.length ? '' : '<tr><td colspan="5">Nenhum acesso nessa data com esse filtro.</td></tr>';
     lista.forEach((a) => {
       const nomeCel = a.aluno_id
         ? `<span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${escapeHtml(a.aluno_nome)}</span>`
@@ -4242,6 +4266,7 @@ async function buscarRelatorioAcessoDiario() {
   } catch (err) { mostrarToast(err.message, true); }
 }
 document.getElementById('btn-rel-diario-buscar').addEventListener('click', buscarRelatorioAcessoDiario);
+document.getElementById('rel-diario-tipo').addEventListener('change', buscarRelatorioAcessoDiario);
 
 // ---- Relatório: Acesso Pessoal (histórico de um aluno específico) ----
 async function buscarRelatorioAcessoPessoal() {
@@ -4551,6 +4576,52 @@ document.getElementById('btn-acessos-recentes').addEventListener('click', () => 
 });
 document.getElementById('btn-fechar-acessos').addEventListener('click', fecharPainelAcessos);
 
+// ---------------- Ordenação genérica de tabelas (clique no cabeçalho) ----------------
+// Mesmo comportamento já usado em Alunos/Pagamentos (ordenacaoAlunos/ordenacaoContas), só que
+// reutilizável pra não duplicar o bloco inteiro em cada tabela nova. `tabelaId` é o id do
+// elemento <table> — os ".th-ordenavel"/".seta-ordenacao" de dentro dele são ligados
+// automaticamente. `direcaoInicial[campo]` define o sentido do primeiro clique naquela coluna
+// (padrão 'asc'; colunas de data costumam ficar melhor como 'desc', mais recente primeiro).
+// `recarregar` é chamado depois de alternar, pra tabela re-renderizar com a nova ordem.
+function criarOrdenacaoTabela(tabelaId, direcaoInicial, recarregar) {
+  const estado = { campo: null, direcao: 'asc' };
+
+  function atualizarSetas() {
+    document.querySelectorAll(`#${tabelaId} .seta-ordenacao`).forEach((span) => {
+      const campo = span.dataset.seta;
+      span.textContent = estado.campo !== campo ? '' : (estado.direcao === 'asc' ? '▲' : '▼');
+    });
+  }
+
+  document.querySelectorAll(`#${tabelaId} .th-ordenavel`).forEach((th) => {
+    th.addEventListener('click', () => {
+      const campo = th.dataset.sort;
+      if (estado.campo === campo) {
+        estado.direcao = estado.direcao === 'asc' ? 'desc' : 'asc';
+      } else {
+        estado.campo = campo;
+        estado.direcao = (direcaoInicial && direcaoInicial[campo]) || 'asc';
+      }
+      atualizarSetas();
+      recarregar();
+    });
+  });
+
+  function ordenar(lista, valorDe) {
+    if (!estado.campo) return lista;
+    const mult = estado.direcao === 'asc' ? 1 : -1;
+    return [...lista].sort((a, b) => {
+      const va = valorDe(a, estado.campo);
+      const vb = valorDe(b, estado.campo);
+      if (va < vb) return -1 * mult;
+      if (va > vb) return 1 * mult;
+      return 0;
+    });
+  }
+
+  return { ordenar, atualizarSetas };
+}
+
 // ---------------- Recuperação de clientes / prevenção de evasão (2026-07) ----------------
 // Ver STATUS-PROJETO.md e src/routes/recuperacao.routes.js. Cobre: lista de
 // "dias sem acesso" (quem sumiu), aniversariantes do mês (calendário + lista),
@@ -4608,6 +4679,8 @@ function trocarAbaRecuperacao(nome) {
 
 // ---------- Dias sem acesso ----------
 
+const ordenacaoDias = criarOrdenacaoTabela('tabela-recup-dias', { dias: 'desc' }, () => carregarDiasSemAcesso());
+
 async function carregarDiasSemAcesso() {
   try {
     const busca = document.getElementById('recup-dias-busca').value.trim();
@@ -4618,7 +4691,14 @@ async function carregarDiasSemAcesso() {
     if (diasMinimo) params.set('dias_minimo', diasMinimo);
     if (mostrarInativos) params.set('incluir_inativos', 'true');
 
-    const linhas = await api(`/api/recuperacao/dias-sem-acesso${params.toString() ? `?${params.toString()}` : ''}`);
+    const linhasBrutas = await api(`/api/recuperacao/dias-sem-acesso${params.toString() ? `?${params.toString()}` : ''}`);
+    const linhas = ordenacaoDias.ordenar(linhasBrutas, (item, campo) => {
+      if (campo === 'nome') return (item.nome || '').toLowerCase();
+      if (campo === 'dias') return item.nunca_acessou ? Infinity : (item.dias_sem_acesso ?? -1);
+      if (campo === 'status') return `${item.em_atraso ? '0' : '1'}${item.status || ''}`;
+      return '';
+    });
+    ordenacaoDias.atualizarSetas();
     recupEstado.diasCache.clear();
     recupEstado.diasSelecionados.clear();
     atualizarBotaoEnviarSelecionadosDias();
@@ -4712,6 +4792,8 @@ document.getElementById('btn-recup-dias-enviar-selecionados').addEventListener('
 // envio de sempre. Nomes rotulados CATEGORIA_LABEL já existem em outro lugar
 // do arquivo (formulário de aluno) — reaproveitados aqui também.
 
+const ordenacaoAtivos = criarOrdenacaoTabela('tabela-recup-ativos', {}, () => carregarTodosAtivos());
+
 async function carregarTodosAtivos() {
   try {
     const busca = document.getElementById('recup-ativos-busca').value.trim();
@@ -4720,7 +4802,13 @@ async function carregarTodosAtivos() {
     if (busca) params.set('busca', busca);
     if (categoria) params.set('categoria', categoria);
 
-    const linhas = await api(`/api/recuperacao/todos-ativos${params.toString() ? `?${params.toString()}` : ''}`);
+    const linhasBrutas = await api(`/api/recuperacao/todos-ativos${params.toString() ? `?${params.toString()}` : ''}`);
+    const linhas = ordenacaoAtivos.ordenar(linhasBrutas, (item, campo) => {
+      if (campo === 'categoria') return (CATEGORIA_LABEL[item.categoria] || item.categoria || '').toLowerCase();
+      if (campo === 'rosto') return item.tem_rosto_cadastrado ? 1 : 0;
+      return (item[campo] || '').toString().toLowerCase();
+    });
+    ordenacaoAtivos.atualizarSetas();
     recupEstado.ativosCache.clear();
     recupEstado.ativosSelecionados.clear();
     atualizarBotaoEnviarSelecionadosAtivos();
@@ -4787,13 +4875,22 @@ document.getElementById('btn-recup-ativos-enviar-selecionados').addEventListener
 // de acessos) e quem indicou (ver GET /api/recuperacao/visitantes) — mesmo
 // mecanismo de envio de sempre pra tentar captar matrícula.
 
+const ordenacaoVisitantes = criarOrdenacaoTabela('tabela-recup-visitantes', { cadastrado: 'desc' }, () => carregarVisitantes());
+
 async function carregarVisitantes() {
   try {
     const busca = document.getElementById('recup-visitantes-busca').value.trim();
     const params = new URLSearchParams();
     if (busca) params.set('busca', busca);
 
-    const linhas = await api(`/api/recuperacao/visitantes${params.toString() ? `?${params.toString()}` : ''}`);
+    const linhasBrutas = await api(`/api/recuperacao/visitantes${params.toString() ? `?${params.toString()}` : ''}`);
+    const linhas = ordenacaoVisitantes.ordenar(linhasBrutas, (item, campo) => {
+      if (campo === 'nome') return (item.nome || '').toLowerCase();
+      if (campo === 'cadastrado') return item.criado_em || '';
+      if (campo === 'indicado') return (item.indicado_por_nome || '').toLowerCase();
+      return '';
+    });
+    ordenacaoVisitantes.atualizarSetas();
     recupEstado.visitantesCache.clear();
     recupEstado.visitantesSelecionados.clear();
     atualizarBotaoEnviarSelecionadosVisitantes();
@@ -4863,6 +4960,8 @@ document.getElementById('btn-recup-visitantes-enviar-selecionados').addEventList
   abrirModalRecupEnviar([...recupEstado.visitantesSelecionados], 'visitantes');
 });
 
+const ordenacaoIndicadores = criarOrdenacaoTabela('tabela-recup-indicadores', { indicacoes: 'desc' }, () => carregarIndicadoresVisitantes());
+
 async function carregarIndicadoresVisitantes() {
   try {
     const mesInput = document.getElementById('recup-indicadores-mes');
@@ -4870,13 +4969,19 @@ async function carregarIndicadoresVisitantes() {
     const params = new URLSearchParams({ mes: mesInput.value });
 
     const resp = await api(`/api/recuperacao/visitantes/indicadores?${params.toString()}`);
+    const indicadores = ordenacaoIndicadores.ordenar(resp.indicadores, (item, campo) => {
+      if (campo === 'nome') return (item.aluno_nome || '').toLowerCase();
+      if (campo === 'indicacoes') return item.indicacoes_no_mes || 0;
+      return '';
+    });
+    ordenacaoIndicadores.atualizarSetas();
     const tbody = document.getElementById('recup-indicadores-lista');
     tbody.innerHTML = '';
-    if (!resp.indicadores.length) {
+    if (!indicadores.length) {
       tbody.innerHTML = '<tr><td colspan="3">Nenhuma indicação registrada nesse mês.</td></tr>';
       return;
     }
-    resp.indicadores.forEach((linha) => {
+    indicadores.forEach((linha) => {
       const tr = el(`
         <tr style="${linha.limite_atingido ? 'background:#fff7ed' : ''}">
           <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${escapeHtml(linha.aluno_nome)}</span></td>
@@ -4963,12 +5068,22 @@ function renderizarCalendarioAniversariantes(linhas) {
   }
 }
 
+const ordenacaoAniv = criarOrdenacaoTabela('tabela-recup-aniv', {}, () => renderizarListaAniversariantes([...recupEstado.anivCache.values()]));
+
 function renderizarListaAniversariantes(linhas) {
   const tbody = document.getElementById('recup-aniv-lista');
   tbody.innerHTML = '';
-  const filtradas = recupEstado.anivDiaFiltro
+  const filtradasPorDia = recupEstado.anivDiaFiltro
     ? linhas.filter((l) => l.dia_aniversario === recupEstado.anivDiaFiltro)
     : linhas;
+  const filtradas = ordenacaoAniv.ordenar(filtradasPorDia, (item, campo) => {
+    if (campo === 'dia') return item.dia_aniversario;
+    if (campo === 'nome') return (item.nome || '').toLowerCase();
+    if (campo === 'telefone') return item.telefone || '';
+    if (campo === 'email') return item.email || '';
+    return '';
+  });
+  ordenacaoAniv.atualizarSetas();
 
   document.getElementById('recup-aniv-filtro-dia-label').textContent = recupEstado.anivDiaFiltro
     ? `Mostrando dia ${recupEstado.anivDiaFiltro} (clique de novo no dia pra ver o mês inteiro)`
@@ -5031,9 +5146,17 @@ async function verificarAniversariantesHoje(mostrarAvisoToast = false) {
 
 // ---------- Modelos de mensagem ----------
 
+const ordenacaoTemplates = criarOrdenacaoTabela('tabela-recup-templates', {}, () => carregarRecupTemplates());
+
 async function carregarRecupTemplates() {
   try {
-    const templates = await api('/api/recuperacao/templates');
+    const templatesBrutos = await api('/api/recuperacao/templates');
+    const templates = ordenacaoTemplates.ordenar(templatesBrutos, (item, campo) => {
+      if (campo === 'nome') return (item.nome || '').toLowerCase();
+      if (campo === 'ativo') return item.ativo ? 1 : 0;
+      return '';
+    });
+    ordenacaoTemplates.atualizarSetas();
     recupEstado.templates = templates;
 
     const tbody = document.getElementById('recup-templates-lista');
@@ -5349,11 +5472,21 @@ function rotuloStatusAgendada(status) {
   return { pendente: 'Pendente', enviado: 'Enviada', cancelado: 'Cancelada', erro: 'Erro' }[status] || status;
 }
 
+const ordenacaoAgendadas = criarOrdenacaoTabela('tabela-recup-agendadas', { quando: 'desc' }, () => carregarRecupAgendadas());
+
 async function carregarRecupAgendadas() {
   try {
     const status = document.getElementById('recup-agendadas-filtro-status').value;
     const params = status ? `?status=${encodeURIComponent(status)}` : '';
-    const linhas = await api(`/api/recuperacao/agendadas${params}`);
+    const linhasBrutas = await api(`/api/recuperacao/agendadas${params}`);
+    const linhas = ordenacaoAgendadas.ordenar(linhasBrutas, (item, campo) => {
+      if (campo === 'quando') return item.agendado_para || '';
+      if (campo === 'canal') return item.canal || '';
+      if (campo === 'alunos') return item.aluno_ids.length;
+      if (campo === 'status') return item.status || '';
+      return '';
+    });
+    ordenacaoAgendadas.atualizarSetas();
     const tbody = document.getElementById('recup-agendadas-lista');
     tbody.innerHTML = '';
     if (!linhas.length) {
@@ -5475,6 +5608,8 @@ document.getElementById('btn-recup-whatsapp-agendado-concluir').addEventListener
 
 // ---------- Histórico ----------
 
+const ordenacaoHistorico = criarOrdenacaoTabela('tabela-recup-hist', { data: 'desc' }, () => carregarRecupHistorico());
+
 async function carregarRecupHistorico() {
   try {
     const selectAluno = document.getElementById('recup-hist-aluno');
@@ -5486,7 +5621,15 @@ async function carregarRecupHistorico() {
     if (alunoId) params.set('aluno_id', alunoId);
     if (canal) params.set('canal', canal);
 
-    const linhas = await api(`/api/recuperacao/historico${params.toString() ? `?${params.toString()}` : ''}`);
+    const linhasBrutas = await api(`/api/recuperacao/historico${params.toString() ? `?${params.toString()}` : ''}`);
+    const linhas = ordenacaoHistorico.ordenar(linhasBrutas, (item, campo) => {
+      if (campo === 'data') return item.criado_em || '';
+      if (campo === 'aluno') return (item.aluno_nome || '').toLowerCase();
+      if (campo === 'canal') return item.canal || '';
+      if (campo === 'status') return item.status || '';
+      return '';
+    });
+    ordenacaoHistorico.atualizarSetas();
     const tbody = document.getElementById('recup-hist-lista');
     tbody.innerHTML = '';
     if (!linhas.length) {

@@ -1074,8 +1074,18 @@
                 <option value="primeiro">Só o 1º acesso de cada um no dia</option>
               </select>
             </div>
+            <div>
+              <label>Tipo de acesso</label>
+              <select id="rel-diario-tipo">
+                <option value="">Todos (com variações)</option>
+                <option value="liberado">Só liberados</option>
+                <option value="negado">Só negados</option>
+                <option value="vencido">Só vencidos (negado por atraso)</option>
+              </select>
+            </div>
             <button type="button" class="btn-primario" id="btn-rel-diario-buscar">Filtrar</button>
           </div>
+          <p id="rel-diario-total" style="font-size:13px;color:#667085;margin:10px 0 0"></p>
           <table class="tabela">
             <thead><tr><th>Hora</th><th>Aluno</th><th>Método</th><th>Resultado</th><th>Mensagem</th></tr></thead>
             <tbody id="rel-diario-lista"></tbody>
@@ -1236,13 +1246,13 @@
             <span id="recup-dias-selecionados-contagem" style="font-size:13px;color:#667085"></span>
           </div>
 
-          <table class="tabela">
+          <table class="tabela" id="tabela-recup-dias">
             <thead>
               <tr>
                 <th style="width:30px"></th>
-                <th>Aluno</th>
-                <th>Dias sem acesso</th>
-                <th>Status</th>
+                <th class="th-ordenavel" data-sort="nome" style="cursor:pointer;user-select:none">Aluno <span class="seta-ordenacao" data-seta="nome"></span></th>
+                <th class="th-ordenavel" data-sort="dias" style="cursor:pointer;user-select:none">Dias sem acesso <span class="seta-ordenacao" data-seta="dias"></span></th>
+                <th class="th-ordenavel" data-sort="status" style="cursor:pointer;user-select:none">Status <span class="seta-ordenacao" data-seta="status"></span></th>
                 <th>Ações</th>
               </tr>
             </thead>
@@ -1271,8 +1281,16 @@
             <button type="button" class="btn-secundario" id="btn-recup-aniv-enviar-selecionados" disabled>Enviar mensagem aos selecionados</button>
           </div>
 
-          <table class="tabela">
-            <thead><tr><th style="width:30px"></th><th>Dia</th><th>Aluno</th><th>Telefone</th><th>E-mail</th></tr></thead>
+          <table class="tabela" id="tabela-recup-aniv">
+            <thead>
+              <tr>
+                <th style="width:30px"></th>
+                <th class="th-ordenavel" data-sort="dia" style="cursor:pointer;user-select:none">Dia <span class="seta-ordenacao" data-seta="dia"></span></th>
+                <th class="th-ordenavel" data-sort="nome" style="cursor:pointer;user-select:none">Aluno <span class="seta-ordenacao" data-seta="nome"></span></th>
+                <th class="th-ordenavel" data-sort="telefone" style="cursor:pointer;user-select:none">Telefone <span class="seta-ordenacao" data-seta="telefone"></span></th>
+                <th class="th-ordenavel" data-sort="email" style="cursor:pointer;user-select:none">E-mail <span class="seta-ordenacao" data-seta="email"></span></th>
+              </tr>
+            </thead>
             <tbody id="recup-aniv-lista"></tbody>
           </table>
         </div>
@@ -1317,15 +1335,15 @@
             <span id="recup-ativos-selecionados-contagem" style="font-size:13px;color:#667085"></span>
           </div>
 
-          <table class="tabela">
+          <table class="tabela" id="tabela-recup-ativos">
             <thead>
               <tr>
                 <th style="width:30px"></th>
-                <th>Nome</th>
-                <th>Categoria</th>
-                <th>E-mail</th>
-                <th>Telefone</th>
-                <th>Rosto cadastrado</th>
+                <th class="th-ordenavel" data-sort="nome" style="cursor:pointer;user-select:none">Nome <span class="seta-ordenacao" data-seta="nome"></span></th>
+                <th class="th-ordenavel" data-sort="categoria" style="cursor:pointer;user-select:none">Categoria <span class="seta-ordenacao" data-seta="categoria"></span></th>
+                <th class="th-ordenavel" data-sort="email" style="cursor:pointer;user-select:none">E-mail <span class="seta-ordenacao" data-seta="email"></span></th>
+                <th class="th-ordenavel" data-sort="telefone" style="cursor:pointer;user-select:none">Telefone <span class="seta-ordenacao" data-seta="telefone"></span></th>
+                <th class="th-ordenavel" data-sort="rosto" style="cursor:pointer;user-select:none">Rosto cadastrado <span class="seta-ordenacao" data-seta="rosto"></span></th>
               </tr>
             </thead>
             <tbody id="recup-ativos-lista"></tbody>
@@ -1363,13 +1381,13 @@
             <span id="recup-visitantes-selecionados-contagem" style="font-size:13px;color:#667085"></span>
           </div>
 
-          <table class="tabela">
+          <table class="tabela" id="tabela-recup-visitantes">
             <thead>
               <tr>
                 <th style="width:30px"></th>
-                <th>Nome</th>
-                <th>Cadastrado em</th>
-                <th>Indicado por</th>
+                <th class="th-ordenavel" data-sort="nome" style="cursor:pointer;user-select:none">Nome <span class="seta-ordenacao" data-seta="nome"></span></th>
+                <th class="th-ordenavel" data-sort="cadastrado" style="cursor:pointer;user-select:none">Cadastrado em <span class="seta-ordenacao" data-seta="cadastrado"></span></th>
+                <th class="th-ordenavel" data-sort="indicado" style="cursor:pointer;user-select:none">Indicado por <span class="seta-ordenacao" data-seta="indicado"></span></th>
                 <th>Situação</th>
               </tr>
             </thead>
@@ -1388,8 +1406,14 @@
             </div>
             <button type="button" class="btn-primario" id="btn-recup-indicadores-buscar">Filtrar</button>
           </div>
-          <table class="tabela">
-            <thead><tr><th>Aluno indicador</th><th>Indicações no mês</th><th>Limite mensal</th></tr></thead>
+          <table class="tabela" id="tabela-recup-indicadores">
+            <thead>
+              <tr>
+                <th class="th-ordenavel" data-sort="nome" style="cursor:pointer;user-select:none">Aluno indicador <span class="seta-ordenacao" data-seta="nome"></span></th>
+                <th class="th-ordenavel" data-sort="indicacoes" style="cursor:pointer;user-select:none">Indicações no mês <span class="seta-ordenacao" data-seta="indicacoes"></span></th>
+                <th>Limite mensal</th>
+              </tr>
+            </thead>
             <tbody id="recup-indicadores-lista"></tbody>
           </table>
         </div>
@@ -1400,8 +1424,16 @@
             <h3 style="margin:0">Modelos de mensagem</h3>
             <button type="button" class="btn-primario" id="btn-novo-recup-template">+ Novo modelo</button>
           </div>
-          <table class="tabela">
-            <thead><tr><th>Nome</th><th>Link</th><th>Dias grátis</th><th>Ativo</th><th>Ações</th></tr></thead>
+          <table class="tabela" id="tabela-recup-templates">
+            <thead>
+              <tr>
+                <th class="th-ordenavel" data-sort="nome" style="cursor:pointer;user-select:none">Nome <span class="seta-ordenacao" data-seta="nome"></span></th>
+                <th>Link</th>
+                <th>Dias grátis</th>
+                <th class="th-ordenavel" data-sort="ativo" style="cursor:pointer;user-select:none">Ativo <span class="seta-ordenacao" data-seta="ativo"></span></th>
+                <th>Ações</th>
+              </tr>
+            </thead>
             <tbody id="recup-templates-lista"></tbody>
           </table>
         </div>
@@ -1423,8 +1455,16 @@
             </div>
             <button type="button" class="btn-primario" id="btn-recup-hist-buscar">Filtrar</button>
           </div>
-          <table class="tabela">
-            <thead><tr><th>Data</th><th>Aluno</th><th>Canal</th><th>Status</th><th>Mensagem</th></tr></thead>
+          <table class="tabela" id="tabela-recup-hist">
+            <thead>
+              <tr>
+                <th class="th-ordenavel" data-sort="data" style="cursor:pointer;user-select:none">Data <span class="seta-ordenacao" data-seta="data"></span></th>
+                <th class="th-ordenavel" data-sort="aluno" style="cursor:pointer;user-select:none">Aluno <span class="seta-ordenacao" data-seta="aluno"></span></th>
+                <th class="th-ordenavel" data-sort="canal" style="cursor:pointer;user-select:none">Canal <span class="seta-ordenacao" data-seta="canal"></span></th>
+                <th class="th-ordenavel" data-sort="status" style="cursor:pointer;user-select:none">Status <span class="seta-ordenacao" data-seta="status"></span></th>
+                <th>Mensagem</th>
+              </tr>
+            </thead>
             <tbody id="recup-hist-lista"></tbody>
           </table>
         </div>
@@ -1449,8 +1489,16 @@
             </div>
             <button type="button" class="btn-primario" id="btn-recup-agendadas-atualizar">Atualizar</button>
           </div>
-          <table class="tabela">
-            <thead><tr><th>Agendado para</th><th>Canal</th><th>Alunos</th><th>Status</th><th>Ações</th></tr></thead>
+          <table class="tabela" id="tabela-recup-agendadas">
+            <thead>
+              <tr>
+                <th class="th-ordenavel" data-sort="quando" style="cursor:pointer;user-select:none">Agendado para <span class="seta-ordenacao" data-seta="quando"></span></th>
+                <th class="th-ordenavel" data-sort="canal" style="cursor:pointer;user-select:none">Canal <span class="seta-ordenacao" data-seta="canal"></span></th>
+                <th class="th-ordenavel" data-sort="alunos" style="cursor:pointer;user-select:none">Alunos <span class="seta-ordenacao" data-seta="alunos"></span></th>
+                <th class="th-ordenavel" data-sort="status" style="cursor:pointer;user-select:none">Status <span class="seta-ordenacao" data-seta="status"></span></th>
+                <th>Ações</th>
+              </tr>
+            </thead>
             <tbody id="recup-agendadas-lista"></tbody>
           </table>
         </div>

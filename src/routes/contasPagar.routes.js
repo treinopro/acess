@@ -20,11 +20,16 @@ const contaPagarSchema = z.object({
   forma_pagamento: z.string().optional().nullable(),
 });
 
-// GET /api/contas-pagar?status=&busca=&vencimento_de=&vencimento_ate=&ordenar_por=&decrescente=
+// GET /api/contas-pagar?status=&busca=&vencimento_de=&vencimento_ate=&pago_de=&pago_ate=&ordenar_por=&decrescente=
+// "pago_de"/"pago_ate" filtram pela data de REALIZAÇÃO do pagamento (pago_em),
+// diferente de vencimento_de/ate (que filtram pela data de vencimento) — útil
+// pra achar tudo que foi efetivamente pago num período, independente de quando
+// venceu (ex.: uma conta vencida em junho mas paga em julho).
 router.get('/', async (req, res, next) => {
   try {
     const {
       status, busca, vencimento_de: vencimentoDe, vencimento_ate: vencimentoAte,
+      pago_de: pagoDe, pago_ate: pagoAte,
       ordenar_por: ordenarPor, decrescente,
     } = req.query;
     const condicoes = [];
@@ -33,6 +38,8 @@ router.get('/', async (req, res, next) => {
     if (busca) { condicoes.push('credor LIKE ?'); args.push(`%${busca}%`); }
     if (vencimentoDe) { condicoes.push('vencimento >= ?'); args.push(vencimentoDe); }
     if (vencimentoAte) { condicoes.push('vencimento <= ?'); args.push(vencimentoAte); }
+    if (pagoDe) { condicoes.push('date(pago_em) >= ?'); args.push(pagoDe); }
+    if (pagoAte) { condicoes.push('date(pago_em) <= ?'); args.push(pagoAte); }
     const where = condicoes.length ? `WHERE ${condicoes.join(' AND ')}` : '';
 
     const colunasOrdenacao = { vencimento: 'vencimento', valor: 'valor_centavos', credor: 'credor', status: 'status' };
@@ -66,9 +73,13 @@ router.post('/', async (req, res, next) => {
 });
 
 // PUT /api/contas-pagar/:id — edição (valor/vencimento/etc) e também usado
-// pra marcar como paga (status='pago'), preenchendo pago_em automaticamente
-// e, se valor_pago_centavos não vier explícito, assumindo o valor cheio da
-// conta (mesmo padrão de cobrancas.routes.js pra Contas a Receber).
+// pra marcar como paga (status='pago'). `pago_em` pode vir explícito no corpo
+// (a tela manda a data escolhida pelo usuário — "hoje" ou uma data passada/
+// futura) pra ser a data considerada no relatório de Balanço (ver
+// GET /relatorio/balanco/totalPago, que soma por `date(pago_em)`); se não vier,
+// cai no comportamento antigo (hora do servidor no momento do clique). Se
+// valor_pago_centavos não vier explícito, assume o valor cheio da conta
+// (mesmo padrão de cobrancas.routes.js pra Contas a Receber).
 router.put('/:id', async (req, res, next) => {
   try {
     const schema = z.object({
@@ -79,13 +90,15 @@ router.put('/:id', async (req, res, next) => {
       status: z.enum(['pendente', 'pago', 'atrasado', 'cancelado']).optional(),
       forma_pagamento: z.string().optional().nullable(),
       valor_pago_centavos: z.number().int().positive().optional().nullable(),
+      pago_em: z.string().min(1).optional().nullable(),
     });
     const dados = schema.parse(req.body);
     const campos = Object.keys(dados);
     if (campos.length === 0) return res.status(400).json({ erro: 'Nenhum campo informado.' });
 
     if (dados.status === 'pago') {
-      if (!campos.includes('pago_em')) { campos.push('pago_em'); dados.pago_em = new Date().toISOString(); }
+      if (!dados.pago_em) dados.pago_em = new Date().toISOString();
+      if (!campos.includes('pago_em')) campos.push('pago_em');
       if (!campos.includes('valor_pago_centavos')) {
         const atual = await db.execute({ sql: 'SELECT valor_centavos FROM contas_pagar WHERE id = ?', args: [req.params.id] });
         if (atual.rows[0]) { campos.push('valor_pago_centavos'); dados.valor_pago_centavos = atual.rows[0].valor_centavos; }
@@ -216,19 +229,32 @@ router.get('/relatorio/balanco', apenasAdmin, async (req, res, next) => {
       return r.rows[0].total;
     }
 
-    const INICIO_DOS_TEMPOS = '1970-01-01';
+    // 2026-07-28 (bug real relatado): "saldo atual" estava somando TUDO desde
+    // 1970 — pra uma academia com anos de histórico de mensalidades pagas
+    // (migradas do Secullum), isso incluía anos de dinheiro que já foi
+    // gasto há muito tempo (aluguel, contas, etc. — coisas que "Contas a
+    // Pagar" nem existia pra registrar ainda), inflando o saldo muito além
+    // do caixa real. Corrigido: enquanto o saldo inicial não for configurado
+    // de propósito (saldo_inicial_data continua nulo), a data de referência
+    // vira o próprio início do período escolhido (`de`) — ou seja, "saldo
+    // atual" = resultado só do período visível, sem nenhum histórico
+    // fantasma. Configurar um saldo inicial de verdade (com a data real a
+    // que ele se refere) é o jeito certo de incluir o caixa anterior.
+    // `ate` (fim do período escolhido acima) passa a ser também o "até
+    // quando" do saldo atual — mudar o período agora muda o saldo mostrado.
+    const dataReferenciaSaldo = saldoInicialData || de;
     const [
-      recebidoTotal, pagoTotal, recebidoPeriodo, pagoPeriodo, previstoReceber, previstoPagar,
+      recebidoDesdeReferencia, pagoDesdeReferencia, recebidoPeriodo, pagoPeriodo, previstoReceber, previstoPagar,
     ] = await Promise.all([
-      totalRecebido(INICIO_DOS_TEMPOS, hoje),
-      totalPago(INICIO_DOS_TEMPOS, hoje),
+      totalRecebido(dataReferenciaSaldo, ate),
+      totalPago(dataReferenciaSaldo, ate),
       totalRecebido(de, ate),
       totalPago(de, ate),
       totalPrevisto('cobrancas', de, ate),
       totalPrevisto('contas_pagar', de, ate),
     ]);
 
-    const saldoAtual = saldoInicialCentavos + recebidoTotal - pagoTotal;
+    const saldoAtual = saldoInicialCentavos + recebidoDesdeReferencia - pagoDesdeReferencia;
 
     res.json({
       periodo: { de, ate },

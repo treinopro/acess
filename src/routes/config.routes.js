@@ -48,6 +48,30 @@ const PADROES = {
   indicacao_limite_mensal: '2',
 };
 
+// Backup automático (ver src/jobs/backup.js) — destino padrão e agendamento
+// configuráveis pelo admin (Configurações > Backup). Guardado na mesma tabela
+// `configuracoes` só que por endpoints PRÓPRIOS aqui embaixo (não misturado
+// no PADROES/GET /api/config acima), pelo mesmo motivo do saldo inicial em
+// contasPagar.routes.js: GET /api/config é PÚBLICO de propósito (tela de
+// login precisa dele antes de autenticar) — não dava pra expor o e-mail de
+// destino do backup ali.
+//
+// `backup_destino`: 'local' (só salva em disco no servidor, comportamento de
+// sempre), 'email' (manda o dump como anexo pro e-mail configurado, via
+// Gmail SMTP já usado em Recuperação de Clientes) ou 'ambos'.
+// `backup_email_destino` vazio cai no próprio GMAIL_USER (manda pra si
+// mesmo). `backup_agendamento_hora` é 'HH:MM' (hora local do servidor);
+// `backup_agendamento_dia_semana` (0=domingo..6=sábado) só é usado quando a
+// frequência é 'semanal'.
+const PADROES_BACKUP = {
+  backup_destino: 'local',
+  backup_email_destino: '',
+  backup_agendamento_frequencia: 'diario',
+  backup_agendamento_hora: '03:00',
+  backup_agendamento_dia_semana: '0',
+};
+const CHAVES_BACKUP = Object.keys(PADROES_BACKUP);
+
 // GET /api/config — pública de propósito: a tela de login precisa mostrar o
 // nome do app e o "licenciado para" ANTES do usuário estar autenticado.
 // Não expõe nada sensível, só as strings de marca/identidade visual e a
@@ -187,6 +211,52 @@ router.get('/backup', autenticar, apenasAdmin, async (req, res, next) => {
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Content-Disposition', `attachment; filename="${nomeArquivo}"`);
     res.send(JSON.stringify(dump, null, 2));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---------------- Configuração do backup automático (destino + agendamento) ----------------
+
+// GET /api/config/backup-config — admin only (ver comentário de PADROES_BACKUP acima)
+router.get('/backup-config', autenticar, apenasAdmin, async (req, res, next) => {
+  try {
+    const result = await db.execute({
+      sql: 'SELECT chave, valor FROM configuracoes WHERE chave IN (?, ?, ?, ?, ?)',
+      args: CHAVES_BACKUP,
+    });
+    const config = { ...PADROES_BACKUP };
+    result.rows.forEach((row) => { config[row.chave] = row.valor; });
+    res.json(config);
+  } catch (err) {
+    next(err);
+  }
+});
+
+const BackupConfigSchema = z.object({
+  backup_destino: z.enum(['local', 'email', 'ambos']).optional(),
+  backup_email_destino: z.string().trim().email().optional().or(z.literal('')),
+  backup_agendamento_frequencia: z.enum(['diario', 'semanal', 'desativado']).optional(),
+  backup_agendamento_hora: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Horário inválido (use HH:MM).').optional(),
+  backup_agendamento_dia_semana: z.number().int().min(0).max(6).optional(),
+});
+
+// PUT /api/config/backup-config — admin only
+router.put('/backup-config', autenticar, apenasAdmin, async (req, res, next) => {
+  try {
+    const dados = BackupConfigSchema.parse(req.body);
+    const chaves = Object.keys(dados);
+    if (chaves.length === 0) return res.status(400).json({ erro: 'Nenhum campo informado.' });
+
+    for (const chave of chaves) {
+      const valor = String(dados[chave]);
+      await db.execute({
+        sql: 'INSERT INTO configuracoes (chave, valor) VALUES (?, ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor',
+        args: [chave, valor],
+      });
+    }
+
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }

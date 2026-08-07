@@ -898,6 +898,8 @@
           <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
             <div><label>Vencimento de</label><input type="date" id="cp-vencimento-de" /></div>
             <div><label>até</label><input type="date" id="cp-vencimento-ate" /></div>
+            <div><label>Realizado (pago) de</label><input type="date" id="cp-pago-de" /></div>
+            <div><label>até</label><input type="date" id="cp-pago-ate" /></div>
             <div style="flex:1;min-width:200px">
               <label>Buscar por credor</label>
               <span class="campo-busca-wrap" style="display:block">
@@ -1663,14 +1665,63 @@
         <div class="form-painel">
           <h3 style="margin-top:0">Backup</h3>
           <p style="margin-top:0;color:#667085;font-size:13px">
-            O sistema já gera um backup automático a cada 24h guardado no próprio servidor, mas isso não é uma
-            cópia de segurança de verdade (some se o servidor reiniciar/redeployar). Use o botão abaixo pra
-            baixar um backup completo agora — em JSON, direto pro seu computador — e guarde num lugar seguro
+            Baixe um backup completo agora — em JSON, direto pro seu computador — e guarde num lugar seguro
             (Google Drive, e-mail, etc.) de tempos em tempos.
           </p>
           <div class="form-acoes">
             <button type="button" class="btn-primario" id="btn-baixar-backup">Baixar backup agora</button>
           </div>
+
+          <h4 style="margin:20px 0 4px">Backup automático</h4>
+          <p style="margin-top:0;color:#667085;font-size:13px">
+            Destino padrão e agendamento do backup que roda sozinho, sem precisar clicar em nada. "Local" fica
+            guardado no próprio servidor — em hospedagens com disco que reseta a cada deploy (comum em nuvem),
+            isso NÃO é uma cópia de segurança de verdade. Escolha "E-mail" (ou "Ambos") pra receber o backup
+            fora do servidor automaticamente.
+          </p>
+          <form id="form-config-backup">
+            <div class="grid-2">
+              <div>
+                <label>Destino padrão</label>
+                <select id="cfg-backup-destino">
+                  <option value="local">Local (disco do servidor)</option>
+                  <option value="email">E-mail</option>
+                  <option value="ambos">Ambos</option>
+                </select>
+              </div>
+              <div>
+                <label>E-mail de destino</label>
+                <input id="cfg-backup-email" type="email" placeholder="deixe em branco pra usar o e-mail do sistema" />
+              </div>
+              <div>
+                <label>Frequência</label>
+                <select id="cfg-backup-frequencia">
+                  <option value="diario">Diário</option>
+                  <option value="semanal">Semanal</option>
+                  <option value="desativado">Desativado</option>
+                </select>
+              </div>
+              <div>
+                <label>Horário</label>
+                <input id="cfg-backup-hora" type="time" />
+              </div>
+              <div id="campo-backup-dia-semana">
+                <label>Dia da semana</label>
+                <select id="cfg-backup-dia-semana">
+                  <option value="0">Domingo</option>
+                  <option value="1">Segunda</option>
+                  <option value="2">Terça</option>
+                  <option value="3">Quarta</option>
+                  <option value="4">Quinta</option>
+                  <option value="5">Sexta</option>
+                  <option value="6">Sábado</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-acoes">
+              <button type="submit" class="btn-primario">Salvar agendamento</button>
+            </div>
+          </form>
         </div>
 
         <div class="form-painel oculto" id="painel-pendencias-sincronizacao">
@@ -1857,6 +1908,14 @@
               <option value="boleto">Boleto</option>
               <option value="outro">Outro</option>
             </select>
+          </div>
+          <div>
+            <label>Data de pagamento</label>
+            <span style="display:flex;gap:6px;align-items:center">
+              <input id="mcp-pago-em" type="date" style="flex:1" />
+              <button type="button" class="btn-linha" id="btn-mcp-pago-hoje" title="Usar a data de hoje">Hoje</button>
+            </span>
+            <small style="color:#667085">Usada no Balanço — mude aqui se o pagamento foi feito em outro dia.</small>
           </div>
           <div>
             <label>Status</label>

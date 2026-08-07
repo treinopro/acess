@@ -71,7 +71,7 @@ function obterTransporter() {
 }
 
 async function enviarEmail({
-  para, assunto, texto, html,
+  para, assunto, texto, html, anexos,
 }) {
   const transporter = obterTransporter();
   const nomeRemetente = limparVariavelAmbiente(process.env.GMAIL_FROM_NOME) || 'Academia Superação';
@@ -81,6 +81,10 @@ async function enviarEmail({
     subject: assunto,
     text: texto,
     html: html || undefined,
+    // `anexos`: array de { filename, content, contentType } no formato que o
+    // nodemailer espera direto em "attachments" — usado pelo backup por
+    // e-mail (ver src/jobs/backup.js).
+    attachments: anexos || undefined,
   });
 }
 

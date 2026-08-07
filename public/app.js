@@ -412,7 +412,7 @@ function carregarSecao(nome) {
   if (nome === 'contas-pagar') carregarSecaoContasPagar();
   if (nome === 'pagamento-rapido') iniciarPagamentoRapido();
   if (nome === 'usuarios') carregarUsuarios();
-  if (nome === 'config') { carregarConfiguracoesForm(); carregarPendenciasSincronizacao(); }
+  if (nome === 'config') { carregarConfiguracoesForm(); carregarConfigBackup(); carregarPendenciasSincronizacao(); }
   if (nome === 'recuperacao') carregarSecaoRecuperacao();
   if (nome === 'relatorios') carregarSecaoRelatorios();
 }
@@ -926,6 +926,42 @@ document.getElementById('btn-baixar-backup').addEventListener('click', async () 
     mostrarToast('Gerando backup...');
     await baixarArquivoAutenticado('/api/config/backup', `backup-academia-${hojeLocalISO()}.json`);
     mostrarToast('Backup baixado.');
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+// ---------------- Backup automático: destino + agendamento (admin) ----------------
+// Guardado fora de GET/PUT /api/config (que é público) — ver endpoints
+// próprios /api/config/backup-config em src/routes/config.routes.js.
+function atualizarVisibilidadeDiaSemanaBackup() {
+  const ehSemanal = document.getElementById('cfg-backup-frequencia').value === 'semanal';
+  document.getElementById('campo-backup-dia-semana').classList.toggle('oculto', !ehSemanal);
+}
+document.getElementById('cfg-backup-frequencia').addEventListener('change', atualizarVisibilidadeDiaSemanaBackup);
+
+async function carregarConfigBackup() {
+  try {
+    const config = await api('/api/config/backup-config');
+    document.getElementById('cfg-backup-destino').value = config.backup_destino || 'local';
+    document.getElementById('cfg-backup-email').value = config.backup_email_destino || '';
+    document.getElementById('cfg-backup-frequencia').value = config.backup_agendamento_frequencia || 'diario';
+    document.getElementById('cfg-backup-hora').value = config.backup_agendamento_hora || '03:00';
+    document.getElementById('cfg-backup-dia-semana').value = config.backup_agendamento_dia_semana || '0';
+    atualizarVisibilidadeDiaSemanaBackup();
+  } catch (err) { mostrarToast(err.message, true); }
+}
+
+document.getElementById('form-config-backup').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const dados = {
+    backup_destino: document.getElementById('cfg-backup-destino').value,
+    backup_email_destino: document.getElementById('cfg-backup-email').value.trim(),
+    backup_agendamento_frequencia: document.getElementById('cfg-backup-frequencia').value,
+    backup_agendamento_hora: document.getElementById('cfg-backup-hora').value || '03:00',
+    backup_agendamento_dia_semana: Number(document.getElementById('cfg-backup-dia-semana').value),
+  };
+  try {
+    await api('/api/config/backup-config', { method: 'PUT', body: JSON.stringify(dados) });
+    mostrarToast('Agendamento de backup salvo.');
   } catch (err) { mostrarToast(err.message, true); }
 });
 
@@ -2163,10 +2199,14 @@ async function buscarContasPagar() {
     const params = new URLSearchParams();
     const vencDe = document.getElementById('cp-vencimento-de').value;
     const vencAte = document.getElementById('cp-vencimento-ate').value;
+    const pagoDe = document.getElementById('cp-pago-de').value;
+    const pagoAte = document.getElementById('cp-pago-ate').value;
     const busca = document.getElementById('cp-busca').value.trim();
     const status = document.getElementById('cp-status').value;
     if (vencDe) params.set('vencimento_de', vencDe);
     if (vencAte) params.set('vencimento_ate', vencAte);
+    if (pagoDe) params.set('pago_de', pagoDe);
+    if (pagoAte) params.set('pago_ate', pagoAte);
     if (busca) params.set('busca', busca);
     if (status) params.set('status', status);
 
@@ -2202,6 +2242,7 @@ document.getElementById('btn-cp-buscar').addEventListener('click', buscarContasP
 
 // ---- Modal Conta a Pagar (incluir/editar) ----
 let contaPagarEmEdicaoId = null;
+let contaPagarStatusAtual = null;
 
 function abrirModalContaPagar(conta = null) {
   contaPagarEmEdicaoId = conta?.id || null;
@@ -2212,9 +2253,14 @@ function abrirModalContaPagar(conta = null) {
   document.getElementById('mcp-valor').value = conta ? (conta.valor_centavos / 100).toFixed(2) : '';
   document.getElementById('mcp-vencimento').value = conta?.vencimento || '';
   document.getElementById('mcp-forma-pagamento').value = conta?.forma_pagamento || '';
+  // Data considerada no Balanço (ver GET /relatorio/balanco) — se a conta já
+  // tem um pagamento registrado, mostra a data dele (editável, pra corrigir);
+  // senão já vem preenchida com hoje, pronta pro clique em "Marcar como paga".
+  document.getElementById('mcp-pago-em').value = conta?.pago_em ? conta.pago_em.slice(0, 10) : hojeLocalISO();
 
   const badge = document.getElementById('mcp-status-badge');
   const status = conta?.status || 'pendente';
+  contaPagarStatusAtual = status;
   badge.textContent = status;
   badge.className = `badge ${status}`;
   document.getElementById('btn-mcp-marcar-paga').classList.toggle('oculto', !conta || status === 'pago' || status === 'cancelado');
@@ -2223,6 +2269,9 @@ function abrirModalContaPagar(conta = null) {
 
   document.getElementById('modal-conta-pagar').classList.remove('oculto');
 }
+document.getElementById('btn-mcp-pago-hoje').addEventListener('click', () => {
+  document.getElementById('mcp-pago-em').value = hojeLocalISO();
+});
 document.getElementById('btn-nova-conta-pagar').addEventListener('click', () => abrirModalContaPagar(null));
 document.getElementById('btn-fechar-modal-conta-pagar').addEventListener('click', () => {
   document.getElementById('modal-conta-pagar').classList.add('oculto');
@@ -2237,6 +2286,12 @@ document.getElementById('form-modal-conta-pagar').addEventListener('submit', asy
     vencimento: document.getElementById('mcp-vencimento').value || null,
     forma_pagamento: document.getElementById('mcp-forma-pagamento').value || null,
   };
+  // Só manda pago_em aqui se a conta já está paga (permite corrigir a data de
+  // um pagamento já registrado) — pra conta ainda pendente, a data só é
+  // gravada mesmo no clique em "Marcar como paga" abaixo.
+  if (contaPagarStatusAtual === 'pago') {
+    dados.pago_em = document.getElementById('mcp-pago-em').value || null;
+  }
   try {
     if (contaPagarEmEdicaoId) {
       await api(`/api/contas-pagar/${contaPagarEmEdicaoId}`, { method: 'PUT', body: JSON.stringify(dados) });
@@ -2252,7 +2307,8 @@ document.getElementById('form-modal-conta-pagar').addEventListener('submit', asy
 
 document.getElementById('btn-mcp-marcar-paga').addEventListener('click', async () => {
   try {
-    await api(`/api/contas-pagar/${contaPagarEmEdicaoId}`, { method: 'PUT', body: JSON.stringify({ status: 'pago', forma_pagamento: document.getElementById('mcp-forma-pagamento').value || null }) });
+    const pagoEm = document.getElementById('mcp-pago-em').value || hojeLocalISO();
+    await api(`/api/contas-pagar/${contaPagarEmEdicaoId}`, { method: 'PUT', body: JSON.stringify({ status: 'pago', forma_pagamento: document.getElementById('mcp-forma-pagamento').value || null, pago_em: pagoEm }) });
     mostrarToast('Conta marcada como paga.');
     document.getElementById('modal-conta-pagar').classList.add('oculto');
     buscarContasPagar();

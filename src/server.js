@@ -20,7 +20,7 @@ const treinosRoutes = require('./routes/treinos.routes');
 const recuperacaoRoutes = require('./routes/recuperacao.routes');
 const contasPagarRoutes = require('./routes/contasPagar.routes');
 const { router: configRoutes } = require('./routes/config.routes');
-const { rodar: rodarBackup } = require('./jobs/backup');
+const { rodar: rodarBackup, verificarAgendamento: verificarAgendamentoBackup } = require('./jobs/backup');
 const { rodar: rodarMensagensAgendadas } = require('./jobs/mensagensAgendadas');
 const { atualizarCobrancasVencidas } = require('./services/cobrancas.service');
 const agenteGateway = require('./services/agenteGateway.service');
@@ -243,16 +243,17 @@ server.listen(PORT, () => {
   // redundante (o backup em si não tem o risco financeiro da recorrência,
   // mas não há motivo pra duplicar o trabalho).
   if (EXECUTAR_JOBS_AGENDADOS) {
-    // Roda uma vez ao subir e depois a cada 24h, salvando um dump JSON em
-    // disco local (./backups). ATENÇÃO: em hospedagens com disco efêmero
-    // (reinicia zerado a cada deploy, como costuma ser o caso em
-    // Northflank/Buildpack) esses arquivos locais NÃO sobrevivem a um
-    // redeploy — use também o botão "Baixar backup agora" no painel
-    // (Configurações), que baixa o arquivo direto pro computador do admin.
+    // Roda uma vez ao subir (rede de segurança — sempre gera um dump fresco a
+    // cada deploy, respeitando o destino configurado: local/e-mail/ambos, ver
+    // Configurações > Backup) e depois fica checando a cada 5 min se está na
+    // janela do agendamento configurado pelo admin (frequência diária/semanal
+    // + horário) — ver verificarAgendamento em src/jobs/backup.js, que evita
+    // rodar duas vezes no mesmo dia mesmo com o processo reiniciando no meio
+    // do caminho (marca a última execução no banco, não em memória).
     rodarBackup().catch((err) => console.error('[backup] erro na execução inicial:', err));
     setInterval(() => {
-      rodarBackup().catch((err) => console.error('[backup] erro na execução agendada:', err));
-    }, 24 * 60 * 60 * 1000);
+      verificarAgendamentoBackup().catch((err) => console.error('[backup] erro na checagem de agendamento:', err));
+    }, 5 * 60 * 1000);
   } else {
     console.log('[server] EXECUTAR_JOBS_AGENDADOS=false — pulando backup agendado neste processo (esperado no processo "modo totem").');
   }

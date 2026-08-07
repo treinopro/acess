@@ -1,6 +1,91 @@
 # Status do projeto — Academia Gestão
 
-Última atualização: 31/07/2026 (portal do aluno pede dados faltando antes do 1o cadastro facial — ver seção logo abaixo). **Leia só a seção "ESTADO ATUAL" abaixo pra retomar o trabalho** — o resto do arquivo é histórico de sessões passadas, mantido só como referência de "por que as coisas são como são".
+Última atualização: 07/08/2026 (ordenação por cabeçalho em Recuperação de Clientes, filtro de tipo/contagem no relatório de Acesso Diário, data de pagamento em Contas a Pagar com filtro por realizados, e destino/agendamento configuráveis do backup automático — ver seção logo abaixo). **Leia só a seção "ESTADO ATUAL" abaixo pra retomar o trabalho** — o resto do arquivo é histórico de sessões passadas, mantido só como referência de "por que as coisas são como são". Pra um resumo bem mais curto (só o essencial pra começar uma sessão nova), veja **[INICIO-RAPIDO.md](INICIO-RAPIDO.md)**.
+
+## Sessão 07/08/2026 — Ordenação por cabeçalho, filtro/contagem no Acesso Diário, data de pagamento em Contas a Pagar, e backup com destino/agendamento
+
+Sessão com Claude Code (CLI), vários pedidos em sequência, todos os commits abaixo já enviados ao GitHub (`git push origin main`, Northflank redeploya sozinho).
+
+### 1. Ordenação por clique no cabeçalho, em toda a Recuperação de Clientes
+
+Alunos e Pagamentos já tinham esse comportamento (clique no título da coluna ordena, clique de novo inverte). Criado um helper genérico reutilizável (`criarOrdenacaoTabela` em `public/app.js`) e aplicado nas 8 tabelas de Recuperação de Clientes: Todos os ativos (pedido explícito), Dias sem acesso, Aniversariantes, Visitantes, Indicadores, Modelos de mensagem, Agendadas e Histórico.
+
+### 2. Relatório "Acesso Diário" sem mostrar quantidade, sem filtro por tipo
+
+Adicionado select "Tipo de acesso" (Todos / Liberado / Negado / Vencido — mesma classificação do badge de "Acessos recentes") e uma linha de contagem acima da tabela (total + detalhamento por tipo quando "Todos" está selecionado).
+
+### 3. Contas a Pagar: data de pagamento não configurável, e sem filtro por período pago
+
+O Balanço já somava contas pagas por `date(pago_em)` (`contasPagar.routes.js`), mas `pago_em` sempre gravava a hora do servidor no clique de "Marcar como paga" — não dava pra escolher outra data (ex.: lançar um pagamento de dias atrás). Agora:
+- `PUT /api/contas-pagar/:id` aceita `pago_em` explícito no corpo; se não vier, cai no comportamento antigo (hora do servidor).
+- Modal "Conta a Pagar" ganhou campo de data (com botão "Hoje") — editável mesmo depois de marcada como paga, pra corrigir data errada.
+- Listagem ganhou filtro "Realizado (pago) de/até", separado do filtro de vencimento (`pago_de`/`pago_ate` no GET).
+
+### 4. Backup automático sem destino configurável nem agendamento de verdade
+
+Antes: `setInterval` fixo de 24h, sempre salvando local em disco (`./backups`) — que é efêmero em hospedagem com disco que reseta a cada deploy (caso do Northflank aqui). Agora, em Configurações > Backup:
+- **Destino padrão**: Local / E-mail (anexo via Gmail SMTP, mesmo mecanismo de Recuperação de Clientes, `email.service.js` ganhou suporte a `anexos`) / Ambos. Se e-mail for o único destino e falhar, cai em local como rede de segurança.
+- **Agendamento**: frequência (diário/semanal/desativado) + horário (+ dia da semana se semanal). Checagem a cada 5 min (`verificarAgendamento` em `src/jobs/backup.js`), com a última execução gravada no banco (não em memória) pra sobreviver a reinícios sem duplicar backup no mesmo dia.
+- Guardado em endpoints admin-only próprios (`GET`/`PUT /api/config/backup-config`), fora do `GET /api/config` público — mesmo padrão já usado pro saldo inicial de Contas a Pagar.
+
+Commits: `c3d132c`, `259228d`. **Push feito, Northflank já deve ter redeployado sozinho** — não houve necessidade de reiniciar nada manualmente (diferente de mudanças no PC local/totem, que dependem de restart do PM2).
+
+### 5. Achado ao preparar o commit: a correção do saldo do Balanço desde 1970 foi junto, sem querer
+
+Ao dar `git add src/routes/contasPagar.routes.js` (item 3 acima), o arquivo já tinha a correção do bug "saldo atual somando desde 1970" (`dataReferenciaSaldo = saldoInicialData || de`, ver comentário datado de 28/07 no próprio arquivo) — uma correção de sessão ANTERIOR que estava **só no disco, nunca commitada** (listada como pendente no "ESTADO ATUAL" desde 04/08). `git add` sobe o arquivo inteiro, não só as linhas mexidas nesta sessão, então essa correção foi junto no commit `259228d` e **já deve estar em produção** também. Verificado: não depende da coluna `secullum_id` pendente em `migrate.js` (essa é de outra correção, sobre importação do Secullum, sem relação) — só lê `configuracoes` (`saldo_inicial_centavos`/`saldo_inicial_data`), que já existe. Risco parece baixo (é só leitura, tela de Balanço), mas **nunca foi validada/testada nesta sessão nem confirmada como revisada antes** — vale conferir o Balanço no painel pra confirmar que os números batem.
+
+## Sessão 04/08/2026 — Barreira contra CPF duplicado, PWA instalável, troca de câmera no cadastro facial, tela de resultado mais rápida, e mitigação de confusão com boné
+
+Sessão longa, vários pedidos em sequência, todos os commits abaixo já enviados ao GitHub (`git push origin main`, Northflank redeploya sozinho).
+
+### 1. Cadastros de aluno duplicados pelo portal (relato real, com print mostrando duplicatas)
+
+Investigação encontrou uma corrida (TOCTOU): o aluno só era gravado DEPOIS de chamar a API do Mercado Pago (Pix) — uma chamada externa que pode demorar segundos. Se a pessoa confirmasse o cadastro mais de uma vez nesse intervalo, as duas tentativas passavam pela checagem de CPF (nenhuma tinha gravado ainda) e criavam cadastros duplicados.
+
+- **Reordenação** (`portal.routes.js`/`terminal.routes.js`): o aluno é criado logo após a checagem de CPF, ANTES de chamar o Mercado Pago; se o pagamento falhar depois, o cadastro é desfeito (pra não deixar o CPF "preso").
+- **Trava em memória** (`acessoTerminal.service.js`, `reservarCpfParaCadastro`/`liberarCpfDoCadastro`): fecha a corrida por completo — como o processo roda em instância única (sem cluster), reservar/liberar o CPF é síncrono, sem depender de nenhuma consulta ao banco.
+- **Normalização de CPF** (`src/utils/cpf.js`, novo): achado colateral importante — CPFs salvos COM pontuação ("707.013.529-69") e SEM ("70701352969") eram tratados como pessoas diferentes, tanto na checagem de duplicado quanto no índice único do banco. Todo ponto de entrada (portal, totem, painel admin, importação CSV) passou a normalizar pra só dígitos antes de gravar; a busca central (`buscarAlunoPorCpfEm`) normaliza antes de comparar, então login/consulta funcionam com CPF digitado de qualquer jeito.
+- **Índice único no banco** (`idx_alunos_cpf`, `schema.sql`) aplicado em produção, depois de resolver os pares de CPF duplicado que já existiam (10 cadastros inativos removidos + 2 pares revelados só depois da normalização de formatação — sempre preferindo manter o registro ATIVO, ou o de atividade financeira mais recente quando os dois eram inativos).
+
+Commits: `722a42f`, `848bfee`.
+
+### 2. PWA não instalava — nem no totem, que já tinha manifest
+
+Causa: o manifest do totem não tinha `icons` (obrigatório no Chrome/Samsung Internet Android pra oferecer "Instalar app") e o projeto não tinha NENHUM service worker; painel (`index.html`) e portal (`portal.html`) nem tinham manifest nenhum. Adicionado: ícones gerados na hora (`public/icons/`, um "A" simples), `public/sw.js` (cache do app shell estático via stale-while-revalidate, nunca intercepta `/api/` — a resiliência offline de dados já existe em nível de aplicação), e manifests pros três (`manifest-totem.json` corrigido, `manifest-painel.json` e `manifest-portal.json` novos).
+
+Commit: `5c90e6d`.
+
+### 3. Troca de câmera frontal/traseira no cadastro facial
+
+Pedido: usar a câmera traseira do próprio smartphone pra cadastrar o rosto de outra pessoa com mais facilidade (mais fácil de mirar do que virar a tela pra frontal). Implementado nas 4 telas que fazem captura facial, cada uma com seu próprio código de câmera independente: totem (`terminal.js`), portal (`portal.js` — 2 telas, hub e cadastro novo), cadastro pelo celular / "usar seu cel" (`cadastro-mobile.js`), painel admin (`app.js`, perfil do aluno). Corrigido também o espelhamento do preview: só a câmera frontal deve vir espelhada (efeito "selfie"); a traseira mostrando o rosto de outra pessoa invertido seria confuso.
+
+Commits: `5c90e6d` (totem, junto com o item 2), `2030995` (portal + cadastro-mobile + painel).
+
+### 4. Tela de "acesso liberado"/"acesso negado" demorando demais no totem
+
+Antes ficava um tempo FIXO na tela (8s liberado, 3s negado), pensado pra dar tempo de girar a catraca — redundante, já que o destrave físico da catraca tem seu próprio tempo (`HENRY_RELEASE_TIME_DECIMOS`), independente do que está na tela. Agora fecha assim que o aviso sonoro termina de tocar (evento `onend` da Web Speech API pra frase falada, ou logo após o beep), com piso de 1,2s (leitura mínima mesmo sem som) e teto de 6s (segurança caso a fala trave em algum tablet).
+
+Commit: `13a5060`.
+
+### 5. Reconhecimento facial confundindo alunos que usam boné
+
+Relato: boné/chapéu cobrindo testa e olhos reduz a distintividade do rosto pro modelo, causando reconhecimento de uma pessoa CONFIANTE como sendo outra (não foi um caso de empate ambíguo, que a margem `MARGEM_MINIMA_SEGUNDO_MELHOR_COSSENO` já cobre). **Sem dados históricos concretos pra calibrar limiares numéricos com segurança** (já houve uma regressão real no passado por apertar isso às cegas — ver "Sessão 27/07/2026" mais abaixo, item "reconhecimento não fazia nada"), a decisão desta sessão foi:
+- Aviso visível ("sem boné, chapéu ou óculos escuros") em todas as telas de reconhecimento/cadastro facial — totem, portal, cadastro pelo celular (o painel admin já tinha esse aviso, só os outros três não).
+- Log de diagnóstico (similaridade + margem do 2º colocado) passou a ser gravado também nos reconhecimentos LIBERADOS, não só nos negados como antes — sem isso não havia nenhum dado concreto pra investigar um falso positivo depois que ele já tinha acontecido.
+- **Deliberadamente NÃO mexido**: `FACE_MATCH_LIMIAR_COSSENO`/`FACE_MATCH_MARGEM_MINIMA_COSSENO` continuam com os valores de antes — se a confusão acontecer de novo, o log novo vai ter os números reais pra decidir com segurança, em vez de chutar.
+
+Aproveitado também pra unificar o cadastro facial do **painel administrativo**, que ainda usava um clique único sem liveness (só virava de frente) — agora usa o mesmo mecanismo guiado do totem/portal/celular (`facial-guiado.js`/`executarCadastroFacialGuiado`: centralizar → virar pros dois lados → aproximar/afastar → levantar/abaixar o queixo → voltar de frente, captura automática ao final).
+
+Commit: `56c6cbe`.
+
+### Pendências desta sessão
+
+1. **Se a confusão com boné acontecer de novo**, conferir o log de acesso do aluno envolvido (agora tem similaridade/margem registradas mesmo em acessos liberados) antes de decidir mexer nos limiares.
+2. Nenhum teste rodou contra hardware real (câmera do totem físico, tablet Samsung) nesta sessão — mudanças de PWA/câmera baseadas em leitura de código; usuário testou depois e confirmou o PWA instalando (só a troca de câmera não tinha aparecido ainda, porque a 1ª versão só cobria o totem — estendida pras outras 3 telas no mesmo dia).
+3. **Achado à parte, não relacionado a esta sessão** (visto ao revisar `git status` pra este registro): existem mudanças locais não commitadas de sessões anteriores, ainda sentadas na pasta do projeto — ver "Mudanças locais não commitadas" em [INICIO-RAPIDO.md](INICIO-RAPIDO.md) pra lista completa antes de mexer nesses arquivos.
+4. **Trabalho externo a esta sessão, não coberto aqui**: em 05/08/2026 (commits `cb76dc6`/`e245a9c`, fora desta conversa) a avaliação física passou a usar um sistema separado chamado "AvaliaPro" (portal do aluno + perfil do staff), com a interface completa (fotos/postural/funcional) rodando só localmente por enquanto — a nuvem mostra uma página explicativa em vez de erro. Ver as mensagens de commit pra detalhe; não foi revisado nem documentado a fundo aqui.
+
+---
 
 ## Sessão 31/07/2026 (3) — Portal do aluno: completar dados faltando antes do 1o cadastro facial
 
@@ -364,6 +449,10 @@ Pedido do dono do sistema: avaliar uma lista de ~19 pontos de segurança (injeç
 
 ## ESTADO ATUAL (comece por aqui)
 
+- **RESOLVIDO (07/08/2026): ordenação por cabeçalho em Recuperação de Clientes, filtro/contagem no relatório "Acesso Diário", data de pagamento configurável em Contas a Pagar (+ filtro "Realizado de/até"), e destino/agendamento configuráveis do backup automático.** Ver seção "Sessão 07/08/2026" no topo do arquivo. Commits `c3d132c`/`259228d` já enviados ao GitHub/Northflank. **Achado importante**: o commit `259228d` também subiu, sem querer, a correção pendente do saldo do Balanço somando desde 1970 (estava só no disco, nunca commitada — ver item 5 da seção da sessão) — vale conferir a tela de Balanço pra confirmar que os números batem, já que essa parte nunca foi validada em nenhuma sessão.
+- **RESOLVIDO (04/08/2026): duplicidade de cadastro por CPF, PWA instalável, troca de câmera no cadastro facial, tela de resultado do totem mais rápida, mitigação de confusão de reconhecimento com boné.** Ver seção "Sessão 04/08/2026" no topo do arquivo. Todos os 6 commits já enviados ao GitHub/Northflank.
+- **Mudanças locais não commitadas (de sessões ANTERIORES a 04/08, ainda pendentes)** — ver **[INICIO-RAPIDO.md](INICIO-RAPIDO.md)** pra lista completa e o que cada uma faz. Resumo: correção da foto de perfil "olhando pra baixo" no cadastro facial guiado (`facial-guiado.js`), script de migração histórica de Contas a Pagar do Secullum + coluna `secullum_id` pendente em `migrate.js`, e a restrição do link "Abrir painel completo" na tela de liberação rápida (`liberacao-rapida.html`/`.js`, já documentada como pendente desde a "Sessão 22/07/2026" mais abaixo). A correção do saldo do Balanço que estava nesta lista **já foi commitada** (ver item acima) — removida daqui.
+- **Trabalho externo, feito fora de uma sessão com IA nesta conversa (05/08/2026)**: avaliação física migrada pra um sistema separado ("AvaliaPro"). Commits `cb76dc6`/`e245a9c`. Não documentado a fundo aqui — conferir as mensagens de commit se precisar de detalhe.
 - **RESOLVIDO (30/07/2026): cadastro de biometria direto pelo novo sistema.** Ver seção "Sessão 30/07/2026" no topo do arquivo. Processo 1 (aluno que já tem cartão), Processo 2 (cadastro novo do zero, matrícula calculada automaticamente) e exclusão de biometria pela catraca — **os três confirmados funcionando de ponta a ponta com dedo real**, testados pelo botão de verdade no painel. Enviado ao GitHub/Northflank. Achado a ter em mente: excluir aluno no academia-gestao não limpa o Cartão/Biometria na catraca (mitigado pela política de nunca excluir, só desativar).
 - **IMPORTANTE — leia a seção "Ambiente local vs produção (mudança de 08/07/2026)" logo abaixo antes de rodar qualquer coisa neste PC.** O `.env` mudou de padrão: `npm start`/`npm run dev` direto agora caem no `local.db` (arquivo de teste), não mais na produção. Isso veio de um incidente real (cobrança fantasma em produção) coberto em detalhe naquela seção.
 - **Deploy é por `git push origin main`** (não é mais upload manual de arquivo por arquivo no GitHub). O Northflank redeploya sozinho a cada push na branch `main`. **O site publicado NÃO é afetado pela mudança de `.env` acima** — a hospedagem usa variáveis configuradas direto no painel dela, nunca lê o `.env` deste PC (está no `.gitignore`, nunca vai pro GitHub).

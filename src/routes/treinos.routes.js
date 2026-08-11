@@ -20,7 +20,37 @@ const exercicioSchema = z.object({
   intervalo: z.string().optional().nullable(),
   observacao: z.string().optional().nullable(),
   ordem: z.number().int().optional(),
+  // Campos do port do TreinoPro (2026-08): ver comentário em schema.sql
+  // junto de "treino_exercicios". biblioteca_id vincula o exercício a um
+  // item da biblioteca — se video_url/imagem_url não vierem preenchidos, o
+  // handler abaixo herda do item da biblioteca no momento da criação.
+  biblioteca_id: z.string().optional().nullable(),
+  video_url: z.string().optional().nullable(),
+  imagem_url: z.string().optional().nullable(),
+  metodo: z.string().optional().nullable(),
+  dica: z.string().optional().nullable(),
+  concluido: z.boolean().optional(),
 });
+
+// Se um exercício referencia um item da biblioteca mas não veio com
+// vídeo/imagem próprios no corpo da requisição, herda do item da biblioteca
+// (1 SELECT). Mesma lógica do TreinoPro original (server.js, criação de
+// exercício) — o exercício guarda sua própria cópia, então trocar/excluir o
+// item da biblioteca depois não afeta treinos já montados.
+async function herdarMidiaDaBiblioteca(dados) {
+  if (!dados.biblioteca_id || (dados.video_url && dados.imagem_url)) return dados;
+  const item = await db.execute({
+    sql: 'SELECT video_url, imagem_url FROM exercicio_biblioteca WHERE id = ?',
+    args: [dados.biblioteca_id],
+  });
+  const row = item.rows[0];
+  if (!row) return dados;
+  return {
+    ...dados,
+    video_url: dados.video_url || row.video_url || null,
+    imagem_url: dados.imagem_url || row.imagem_url || null,
+  };
+}
 
 function linhaParaTreino(row) {
   let dias = [];
@@ -111,7 +141,7 @@ router.delete('/:id', async (req, res, next) => {
 // POST /api/treinos/:id/exercicios — adiciona um exercício ao treino.
 router.post('/:id/exercicios', async (req, res, next) => {
   try {
-    const dados = exercicioSchema.parse(req.body);
+    const dados = await herdarMidiaDaBiblioteca(exercicioSchema.parse(req.body));
     const id = uuid();
     const ultimaOrdem = await db.execute({
       sql: `SELECT COALESCE(MAX(ordem), -1) as maxOrdem FROM treino_exercicios WHERE treino_id = ?`,
@@ -119,10 +149,12 @@ router.post('/:id/exercicios', async (req, res, next) => {
     });
     const ordem = dados.ordem ?? (Number(ultimaOrdem.rows[0].maxOrdem) + 1);
     await db.execute({
-      sql: `INSERT INTO treino_exercicios (id, treino_id, exercicio, series, carga, intervalo, observacao, ordem)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      sql: `INSERT INTO treino_exercicios
+              (id, treino_id, exercicio, series, carga, intervalo, observacao, ordem, biblioteca_id, video_url, imagem_url, metodo, dica)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [id, req.params.id, dados.exercicio, dados.series || null, dados.carga || null,
-        dados.intervalo || null, dados.observacao || null, ordem],
+        dados.intervalo || null, dados.observacao || null, ordem, dados.biblioteca_id || null,
+        dados.video_url || null, dados.imagem_url || null, dados.metodo || null, dados.dica || null],
     });
     res.status(201).json({ id, treino_id: req.params.id, ...dados, ordem });
   } catch (err) {
@@ -133,12 +165,12 @@ router.post('/:id/exercicios', async (req, res, next) => {
 // PUT /api/treinos/exercicios/:id — edita um exercício.
 router.put('/exercicios/:id', async (req, res, next) => {
   try {
-    const dados = exercicioSchema.partial().parse(req.body);
+    const dados = await herdarMidiaDaBiblioteca(exercicioSchema.partial().parse(req.body));
     const campos = Object.keys(dados);
     if (!campos.length) return res.status(400).json({ erro: 'Nenhum campo informado.' });
 
     const sets = campos.map((c) => `${c} = ?`).join(', ');
-    const args = [...campos.map((c) => dados[c]), req.params.id];
+    const args = [...campos.map((c) => (typeof dados[c] === 'boolean' ? (dados[c] ? 1 : 0) : dados[c])), req.params.id];
     await db.execute({ sql: `UPDATE treino_exercicios SET ${sets} WHERE id = ?`, args });
     res.json({ ok: true });
   } catch (err) {

@@ -232,13 +232,52 @@ router.get('/treino', limitadorSenhaPortal, async (req, res, next) => {
     for (const t of treinos.rows) {
       let dias = [];
       try { dias = t.dias_semana ? JSON.parse(t.dias_semana) : []; } catch { dias = []; }
+      // Inclui vídeo/imagem/método/dica/concluído (port do TreinoPro, 2026-08)
+      // pra o portal poder mostrar o vídeo de execução e o check de concluído.
       const exercicios = await db.execute({
-        sql: `SELECT exercicio, series, carga, intervalo, observacao FROM treino_exercicios WHERE treino_id = ? ORDER BY ordem, criado_em`,
+        sql: `SELECT id, exercicio, series, carga, intervalo, observacao, metodo, dica,
+                     video_url, imagem_url, concluido
+              FROM treino_exercicios WHERE treino_id = ? ORDER BY ordem, criado_em`,
         args: [t.id],
       });
       resultado.push({ nome: t.nome, dias_semana: dias, exercicios: exercicios.rows });
     }
     res.json(resultado);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/portal/treino/exercicio/:id/concluir { cpf, senha, concluido } —
+// o aluno marca/desmarca um exercício como feito, direto do portal. Só é
+// permitido se o exercício pertencer a um treino do PRÓPRIO aluno
+// autenticado (JOIN treino_exercicios -> treinos -> valida aluno_id) — o
+// TreinoPro original tinha essa checagem frouxa (ver observação do relatório
+// de port), então aqui já nasce corrigido.
+router.post('/treino/exercicio/:id/concluir', limitadorSenhaPortal, async (req, res, next) => {
+  try {
+    const dados = z.object({
+      cpf: z.string().min(1),
+      senha: z.string().min(1),
+      concluido: z.boolean(),
+    }).parse(req.body);
+    const autenticado = await autenticarAlunoPortal(dados.cpf, dados.senha);
+    if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
+    const aluno = autenticado.aluno;
+
+    const dono = await db.execute({
+      sql: `SELECT te.id FROM treino_exercicios te
+            JOIN treinos t ON t.id = te.treino_id
+            WHERE te.id = ? AND t.aluno_id = ?`,
+      args: [req.params.id, aluno.id],
+    });
+    if (!dono.rows[0]) return res.status(404).json({ erro: 'Exercício não encontrado.' });
+
+    await db.execute({
+      sql: 'UPDATE treino_exercicios SET concluido = ? WHERE id = ?',
+      args: [dados.concluido ? 1 : 0, req.params.id],
+    });
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }

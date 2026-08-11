@@ -62,6 +62,7 @@
         <button class="nav-btn" data-secao="contas-pagar">Contas a Pagar</button>
         <button class="nav-btn" data-secao="pagamento-rapido">Pagamento Rápido</button>
         <button class="nav-btn" data-secao="relatorios">Relatórios</button>
+        <button class="nav-btn" data-secao="biblioteca">Biblioteca de Exercícios</button>
         <button class="nav-btn oculto" id="nav-recuperacao" data-secao="recuperacao">Recuperação de Clientes <span class="badge inadimplente oculto" id="recup-notif-badge">0</span></button>
         <button class="nav-btn oculto" id="nav-usuarios" data-secao="usuarios">Usuários</button>
         <button class="nav-btn oculto" id="nav-config" data-secao="config">Configurações</button>
@@ -470,7 +471,12 @@
           <div id="treino-painel-nativo">
             <div class="secao-topo" style="align-items:center">
               <div id="treino-abas" style="display:flex;gap:6px;flex-wrap:wrap"></div>
-              <button type="button" class="btn-secundario" id="btn-novo-treino">+ Novo treino</button>
+              <div style="display:flex;gap:8px">
+                <select id="sel-treino-modelo" title="Aplicar um treino salvo (modelo) a este aluno" style="max-width:220px">
+                  <option value="">Aplicar modelo salvo…</option>
+                </select>
+                <button type="button" class="btn-secundario" id="btn-novo-treino">+ Novo treino</button>
+              </div>
             </div>
 
             <div id="treino-sem-treinos" class="oculto" style="color:#667085;font-size:13px;margin:10px 0">Nenhum treino cadastrado ainda. Clique em "+ Novo treino" pra começar.</div>
@@ -480,6 +486,7 @@
                 <h3 style="margin:0" id="treino-nome-ativo">—</h3>
                 <div style="display:flex;gap:8px">
                   <button type="button" class="btn-secundario" id="btn-renomear-treino">Renomear</button>
+                  <button type="button" class="btn-secundario" id="btn-salvar-treino-modelo" title="Salva os exercícios deste treino como modelo reutilizável para outros alunos">💾 Salvar como modelo</button>
                   <button type="button" class="btn-secundario perigo" id="btn-excluir-treino">Excluir treino</button>
                 </div>
               </div>
@@ -499,14 +506,35 @@
               <button type="button" class="btn-secundario" id="btn-toggle-exercicio" style="margin-top:10px">+ Adicionar exercício</button>
               <form id="form-exercicio" class="form-painel oculto" style="margin-top:10px">
                 <input type="hidden" id="exercicio-id" />
-                <div class="grid-2">
+                <label>Escolher da biblioteca (opcional)</label>
+                <select id="exercicio-lib-select">
+                  <option value="">— digitar nome manualmente —</option>
+                </select>
+                <div id="exercicio-lib-preview"></div>
+                <div class="grid-2" style="margin-top:8px">
                   <div><label>Exercício *</label><input id="exercicio-nome" required /></div>
                   <div><label>Séries</label><input id="exercicio-series" placeholder="ex: 4x12" /></div>
                   <div><label>Carga</label><input id="exercicio-carga" placeholder="ex: 20kg" /></div>
                   <div><label>Intervalo</label><input id="exercicio-intervalo" placeholder="ex: 60s" /></div>
+                  <div>
+                    <label>Método de treino</label>
+                    <select id="exercicio-metodo">
+                      <option value="">— Nenhum —</option>
+                      <option value="Bi-set">Bi-set</option>
+                      <option value="Tri-set">Tri-set</option>
+                      <option value="Superset">Superset</option>
+                      <option value="Pirâmide">Pirâmide</option>
+                      <option value="Drop-set">Drop-set</option>
+                      <option value="Rest-pause">Rest-pause</option>
+                      <option value="Circuito">Circuito</option>
+                    </select>
+                  </div>
+                  <div><label>Vídeo próprio (opcional, sobrescreve o da biblioteca)</label><input id="exercicio-video" placeholder="https://youtube.com/watch?v=..." /></div>
                 </div>
-                <label>Observação</label>
+                <label>Observação (visível ao aluno)</label>
                 <textarea id="exercicio-observacao" rows="2"></textarea>
+                <label>Dica do instrutor</label>
+                <textarea id="exercicio-dica" rows="2"></textarea>
                 <div class="form-acoes">
                   <button type="submit" class="btn-primario">Salvar exercício</button>
                   <button type="button" class="btn-secundario" id="btn-cancelar-exercicio">Cancelar</button>
@@ -1190,6 +1218,68 @@
           </table>
           <p id="rel-risco-total" style="font-size:13px;color:#667085;margin-top:8px"></p>
         </div>
+      </section>
+
+      <!-- BIBLIOTECA DE EXERCÍCIOS (port do TreinoPro — 2026-08) -->
+      <section id="secao-biblioteca" class="secao oculto">
+        <div class="secao-topo">
+          <h2>Biblioteca de Exercícios</h2>
+          <button class="btn-primario" id="btn-novo-exercicio-lib">+ Novo exercício</button>
+        </div>
+        <p style="color:#667085;font-size:13px;margin-top:0">Catálogo único de exercícios com vídeo de execução. Ao montar um treino na aba "Treino" do perfil do aluno, dá pra escolher um exercício direto daqui — o vídeo e a imagem já vêm preenchidos.</p>
+
+        <form id="form-exercicio-lib" class="form-painel oculto">
+          <h3 id="form-exercicio-lib-titulo">Novo exercício</h3>
+          <input type="hidden" id="lib-id" />
+          <div class="grid-2">
+            <div><label>Nome *</label><input id="lib-nome" required /></div>
+            <div>
+              <label>Grupo muscular *</label>
+              <select id="lib-grupo" required></select>
+            </div>
+            <div>
+              <label>Equipamento</label>
+              <select id="lib-equipamento">
+                <option value="">—</option>
+                <option value="barra">Barra</option>
+                <option value="halter">Halter</option>
+                <option value="máquina">Máquina</option>
+                <option value="polia">Polia</option>
+                <option value="peso corporal">Peso corporal</option>
+                <option value="elástico">Elástico</option>
+                <option value="kettlebell">Kettlebell</option>
+                <option value="hand grip">Hand grip</option>
+              </select>
+            </div>
+            <div>
+              <label>Dificuldade</label>
+              <select id="lib-dificuldade">
+                <option value="">—</option>
+                <option value="iniciante">Iniciante</option>
+                <option value="intermediario">Intermediário</option>
+                <option value="avancado">Avançado</option>
+              </select>
+            </div>
+          </div>
+          <label>Link do vídeo (YouTube ou outro link)</label>
+          <input id="lib-video" placeholder="https://youtube.com/watch?v=..." />
+          <div id="lib-video-preview"></div>
+          <label>Link da imagem (opcional)</label>
+          <input id="lib-imagem" placeholder="https://..." />
+          <label>Músculos secundários</label>
+          <input id="lib-musculos-secundarios" placeholder="ex: Tríceps, ombro anterior" />
+          <label>Instruções de execução</label>
+          <textarea id="lib-instrucoes" rows="2"></textarea>
+          <label>Notas</label>
+          <textarea id="lib-notas" rows="2"></textarea>
+          <div class="form-acoes">
+            <button type="submit" class="btn-primario">Salvar exercício</button>
+            <button type="button" class="btn-secundario" id="btn-cancelar-exercicio-lib">Cancelar</button>
+          </div>
+        </form>
+
+        <div class="chip-group" id="lib-filtro-grupos" style="display:flex;gap:6px;flex-wrap:wrap;margin:14px 0"></div>
+        <div class="lib-grid" id="lib-grid"></div>
       </section>
 
       <!-- RECUPERAÇÃO DE CLIENTES (evasão / retenção — 2026-07) -->

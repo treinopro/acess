@@ -275,12 +275,13 @@ const LABELS_MENU = {
   'contas-pagar': 'Contas a Pagar',
   'pagamento-rapido': 'Pagamento Rápido',
   relatorios: 'Relatórios',
+  biblioteca: 'Biblioteca de Exercícios',
   recuperacao: 'Recuperação de Clientes',
   usuarios: 'Usuários',
   config: 'Configurações',
   catraca: 'Catraca',
 };
-const ORDEM_MENU_PADRAO = ['alunos', 'planos', 'agenda', 'pagamentos', 'contas-pagar', 'pagamento-rapido', 'relatorios', 'recuperacao', 'usuarios', 'config', 'catraca'];
+const ORDEM_MENU_PADRAO = ['alunos', 'planos', 'agenda', 'pagamentos', 'contas-pagar', 'pagamento-rapido', 'relatorios', 'biblioteca', 'recuperacao', 'usuarios', 'config', 'catraca'];
 let ordemMenuAtual = [...ORDEM_MENU_PADRAO];
 
 // Reordena os botões <nav> de verdade na barra lateral (move os elementos já
@@ -415,6 +416,7 @@ function carregarSecao(nome) {
   if (nome === 'config') { carregarConfiguracoesForm(); carregarConfigBackup(); carregarPendenciasSincronizacao(); }
   if (nome === 'recuperacao') carregarSecaoRecuperacao();
   if (nome === 'relatorios') carregarSecaoRelatorios();
+  if (nome === 'biblioteca') carregarSecaoBiblioteca();
 }
 
 // ---------------- Janela flutuante da catraca (sobreposta, arrastável) ----------------
@@ -1538,6 +1540,7 @@ function inicializarAbaTreino(modoAtual) {
   atualizarPainelModoTreino(modoAtual);
   if (modoAtual === 'nativo') {
     carregarTreinosPerfil();
+    carregarTreinoTemplates();
   } else {
     atualizarLinkTreinoExterno();
   }
@@ -1698,13 +1701,21 @@ document.getElementById('btn-excluir-treino').addEventListener('click', async ()
   } catch (err) { mostrarToast(err.message, true); }
 });
 
-function abrirFormExercicio(exercicio) {
+async function abrirFormExercicio(exercicio) {
   document.getElementById('exercicio-id').value = exercicio?.id || '';
   document.getElementById('exercicio-nome').value = exercicio?.exercicio || '';
   document.getElementById('exercicio-series').value = exercicio?.series || '';
   document.getElementById('exercicio-carga').value = exercicio?.carga || '';
   document.getElementById('exercicio-intervalo').value = exercicio?.intervalo || '';
   document.getElementById('exercicio-observacao').value = exercicio?.observacao || '';
+  document.getElementById('exercicio-metodo').value = exercicio?.metodo || '';
+  document.getElementById('exercicio-dica').value = exercicio?.dica || '';
+  document.getElementById('exercicio-video').value = exercicio?.video_url || '';
+
+  await popularSelectLibTreino();
+  document.getElementById('exercicio-lib-select').value = exercicio?.biblioteca_id || '';
+  document.getElementById('exercicio-lib-preview').innerHTML = exercicio?.video_url ? videoPreviewHtml(exercicio.video_url) : '';
+
   document.getElementById('form-exercicio').classList.remove('oculto');
 }
 
@@ -1722,6 +1733,10 @@ document.getElementById('form-exercicio').addEventListener('submit', async (ev) 
     carga: document.getElementById('exercicio-carga').value.trim() || null,
     intervalo: document.getElementById('exercicio-intervalo').value.trim() || null,
     observacao: document.getElementById('exercicio-observacao').value.trim() || null,
+    metodo: document.getElementById('exercicio-metodo').value || null,
+    dica: document.getElementById('exercicio-dica').value.trim() || null,
+    biblioteca_id: document.getElementById('exercicio-lib-select').value || null,
+    video_url: document.getElementById('exercicio-video').value.trim() || null,
   };
   try {
     if (id) {
@@ -5710,6 +5725,238 @@ async function carregarRecupHistorico() {
 }
 
 document.getElementById('btn-recup-hist-buscar').addEventListener('click', carregarRecupHistorico);
+
+// ---------------- Biblioteca de Exercícios + Treinos salvos (port do TreinoPro, 2026-08) ----------------
+
+const GRUPOS_MUSCULARES = ['Peito', 'Costas', 'Ombros', 'Trapézio', 'Bíceps', 'Tríceps', 'Antebraço', 'Pernas', 'Glúteos', 'Panturrilhas', 'Abdômen', 'Cardio'];
+
+// Reconhece link do YouTube em qualquer formato comum (watch?v=, youtu.be/,
+// shorts/) e devolve a URL de embed; outros links caem no fallback de botão
+// "▶ Ver vídeo" abrindo em nova aba (videoPreviewHtml abaixo).
+function youtubeEmbedUrl(url) {
+  if (!url) return null;
+  const m = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([A-Za-z0-9_-]{6,})/);
+  return m ? `https://www.youtube.com/embed/${m[1]}?cc_load_policy=1&cc_lang_pref=pt&hl=pt&playsinline=1&rel=0` : null;
+}
+
+function videoPreviewHtml(url) {
+  if (!url) return '';
+  const yt = youtubeEmbedUrl(url);
+  if (yt) return `<div class="video-embed"><iframe src="${yt}" allowfullscreen loading="lazy"></iframe></div>`;
+  return `<div style="margin-top:6px"><a href="${escapeHtml(url)}" target="_blank" rel="noopener" class="btn-secundario" style="display:inline-block;text-decoration:none">▶ Ver vídeo</a></div>`;
+}
+
+let bibliotecaCache = [];
+let bibliotecaCarregada = false;
+
+async function garantirBibliotecaCarregada(forcarRecarga = false) {
+  if (bibliotecaCarregada && !forcarRecarga) return bibliotecaCache;
+  bibliotecaCache = await api('/api/biblioteca-exercicios');
+  bibliotecaCarregada = true;
+  return bibliotecaCache;
+}
+
+(function popularSelectGrupoLib() {
+  const sel = document.getElementById('lib-grupo');
+  sel.innerHTML = GRUPOS_MUSCULARES.map((g) => `<option value="${g}">${g}</option>`).join('');
+})();
+
+let libFiltroGrupo = 'todos';
+
+async function carregarSecaoBiblioteca() {
+  await garantirBibliotecaCarregada(true); // recarrega sempre ao abrir a seção — pode ter mudado noutra aba
+  renderizarFiltroGruposLib();
+  renderizarGridBiblioteca();
+}
+
+function renderizarFiltroGruposLib() {
+  const box = document.getElementById('lib-filtro-grupos');
+  box.innerHTML = '';
+  const grupos = ['todos', ...GRUPOS_MUSCULARES];
+  grupos.forEach((g) => {
+    const chip = el(`<button type="button" class="chip ${libFiltroGrupo === g ? 'ativo' : ''}">${g === 'todos' ? 'Todos' : g}</button>`);
+    chip.addEventListener('click', () => { libFiltroGrupo = g; renderizarFiltroGruposLib(); renderizarGridBiblioteca(); });
+    box.appendChild(chip);
+  });
+}
+
+function libItemHtml(ex) {
+  const diffMap = { iniciante: '🟢 Iniciante', intermediario: '🟡 Intermediário', avancado: '🔴 Avançado' };
+  let chips = '';
+  if (ex.equipamento) chips += `<span class="tag">🏋 ${escapeHtml(ex.equipamento)}</span>`;
+  if (ex.dificuldade) chips += `<span class="tag">${escapeHtml(diffMap[ex.dificuldade] || ex.dificuldade)}</span>`;
+  const videoTarget = `libVideo_${ex.id}`;
+  return `
+    <div class="lib-item">
+      ${ex.imagem_url ? `<img src="${escapeHtml(ex.imagem_url)}" loading="lazy" style="width:100%;border-radius:8px;max-height:120px;object-fit:cover">` : ''}
+      <div class="name">${escapeHtml(ex.nome)}</div>
+      <div class="meta">${escapeHtml(ex.grupo_muscular)}${chips}</div>
+      ${ex.video_url ? `<button type="button" class="btn-secundario btn-lib-video" data-video="${escapeHtml(ex.video_url)}" data-target="${videoTarget}" style="margin-top:6px">▶ Ver execução</button><div id="${videoTarget}"></div>` : ''}
+      ${ex.instrucoes ? `<div style="font-size:12.5px;color:#667085;margin-top:6px">${escapeHtml(ex.instrucoes)}</div>` : ''}
+      <div class="form-acoes" style="margin-top:8px">
+        <button type="button" class="btn-secundario btn-lib-editar" data-id="${ex.id}">Editar</button>
+        <button type="button" class="btn-secundario perigo btn-lib-excluir" data-id="${ex.id}">Excluir</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderizarGridBiblioteca() {
+  const grid = document.getElementById('lib-grid');
+  const lista = libFiltroGrupo === 'todos' ? bibliotecaCache : bibliotecaCache.filter((e) => e.grupo_muscular === libFiltroGrupo);
+  if (!lista.length) { grid.innerHTML = '<p style="color:#667085;font-size:13px">Nenhum exercício encontrado.</p>'; return; }
+  grid.innerHTML = lista.map(libItemHtml).join('');
+
+  grid.querySelectorAll('.btn-lib-video').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const alvo = document.getElementById(btn.dataset.target);
+      if (alvo.innerHTML) { alvo.innerHTML = ''; btn.textContent = '▶ Ver execução'; }
+      else { alvo.innerHTML = videoPreviewHtml(btn.dataset.video); btn.textContent = '▲ Fechar vídeo'; }
+    });
+  });
+  grid.querySelectorAll('.btn-lib-editar').forEach((btn) => {
+    btn.addEventListener('click', () => abrirFormExercicioLib(bibliotecaCache.find((e) => e.id === btn.dataset.id)));
+  });
+  grid.querySelectorAll('.btn-lib-excluir').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirmar('Excluir este exercício da biblioteca? Treinos que já usam ele continuam funcionando normalmente (guardam sua própria cópia de vídeo/imagem).')) return;
+      try {
+        await api(`/api/biblioteca-exercicios/${btn.dataset.id}`, { method: 'DELETE' });
+        mostrarToast('Exercício excluído.');
+        await carregarSecaoBiblioteca();
+      } catch (err) { mostrarToast(err.message, true); }
+    });
+  });
+}
+
+function abrirFormExercicioLib(ex) {
+  document.getElementById('form-exercicio-lib-titulo').textContent = ex ? 'Editar exercício' : 'Novo exercício';
+  document.getElementById('lib-id').value = ex?.id || '';
+  document.getElementById('lib-nome').value = ex?.nome || '';
+  document.getElementById('lib-grupo').value = ex?.grupo_muscular || GRUPOS_MUSCULARES[0];
+  document.getElementById('lib-equipamento').value = ex?.equipamento || '';
+  document.getElementById('lib-dificuldade').value = ex?.dificuldade || '';
+  document.getElementById('lib-video').value = ex?.video_url || '';
+  document.getElementById('lib-imagem').value = ex?.imagem_url || '';
+  document.getElementById('lib-musculos-secundarios').value = ex?.musculos_secundarios || '';
+  document.getElementById('lib-instrucoes').value = ex?.instrucoes || '';
+  document.getElementById('lib-notas').value = ex?.notas || '';
+  document.getElementById('lib-video-preview').innerHTML = ex?.video_url ? videoPreviewHtml(ex.video_url) : '';
+  document.getElementById('form-exercicio-lib').classList.remove('oculto');
+}
+
+document.getElementById('btn-novo-exercicio-lib').addEventListener('click', () => abrirFormExercicioLib(null));
+document.getElementById('btn-cancelar-exercicio-lib').addEventListener('click', () => {
+  document.getElementById('form-exercicio-lib').classList.add('oculto');
+});
+document.getElementById('lib-video').addEventListener('input', (ev) => {
+  document.getElementById('lib-video-preview').innerHTML = videoPreviewHtml(ev.target.value.trim());
+});
+
+document.getElementById('form-exercicio-lib').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const id = document.getElementById('lib-id').value;
+  const dados = {
+    nome: document.getElementById('lib-nome').value.trim(),
+    grupo_muscular: document.getElementById('lib-grupo').value,
+    equipamento: document.getElementById('lib-equipamento').value || null,
+    dificuldade: document.getElementById('lib-dificuldade').value || null,
+    video_url: document.getElementById('lib-video').value.trim() || null,
+    imagem_url: document.getElementById('lib-imagem').value.trim() || null,
+    musculos_secundarios: document.getElementById('lib-musculos-secundarios').value.trim() || null,
+    instrucoes: document.getElementById('lib-instrucoes').value.trim() || null,
+    notas: document.getElementById('lib-notas').value.trim() || null,
+  };
+  try {
+    if (id) await api(`/api/biblioteca-exercicios/${id}`, { method: 'PUT', body: JSON.stringify(dados) });
+    else await api('/api/biblioteca-exercicios', { method: 'POST', body: JSON.stringify(dados) });
+    mostrarToast('Exercício salvo.');
+    document.getElementById('form-exercicio-lib').classList.add('oculto');
+    await carregarSecaoBiblioteca();
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+// ---------------- Integração da biblioteca com a Aba Treino (escolher exercício com preview de vídeo) ----------------
+
+async function popularSelectLibTreino() {
+  const sel = document.getElementById('exercicio-lib-select');
+  await garantirBibliotecaCarregada();
+  const grupos = {};
+  bibliotecaCache.forEach((ex) => {
+    if (!grupos[ex.grupo_muscular]) grupos[ex.grupo_muscular] = [];
+    grupos[ex.grupo_muscular].push(ex);
+  });
+  let opts = '<option value="">— digitar nome manualmente —</option>';
+  Object.keys(grupos).sort().forEach((g) => {
+    opts += `<optgroup label="${escapeHtml(g)}">${grupos[g].map((ex) => `<option value="${ex.id}" data-nome="${escapeHtml(ex.nome)}" data-video="${escapeHtml(ex.video_url || '')}" data-imagem="${escapeHtml(ex.imagem_url || '')}">${escapeHtml(ex.nome)}</option>`).join('')}</optgroup>`;
+  });
+  sel.innerHTML = opts;
+}
+
+document.getElementById('exercicio-lib-select').addEventListener('change', (ev) => {
+  const opt = ev.target.options[ev.target.selectedIndex];
+  const preview = document.getElementById('exercicio-lib-preview');
+  if (!opt || !opt.value) { preview.innerHTML = ''; return; }
+  document.getElementById('exercicio-nome').value = opt.dataset.nome || '';
+  preview.innerHTML = opt.dataset.video ? videoPreviewHtml(opt.dataset.video) : (opt.dataset.imagem ? `<img src="${escapeHtml(opt.dataset.imagem)}" style="max-width:100%;border-radius:8px;margin-top:6px">` : '');
+});
+
+// ---------------- Treinos salvos (modelos) — "salvar como modelo" e "aplicar modelo" ----------------
+
+let treinoTemplatesCache = [];
+
+async function carregarTreinoTemplates() {
+  treinoTemplatesCache = await api('/api/treino-templates');
+  const sel = document.getElementById('sel-treino-modelo');
+  sel.innerHTML = '<option value="">Aplicar modelo salvo…</option>'
+    + treinoTemplatesCache.map((t) => `<option value="${t.id}">${escapeHtml(t.nome)} (${t.exercicios.length} exerc.)</option>`).join('');
+}
+
+document.getElementById('btn-salvar-treino-modelo').addEventListener('click', async () => {
+  const treino = treinosCache.find((t) => t.id === treinoAtivoId);
+  if (!treino) return;
+  if (!treino.exercicios.length) { mostrarToast('Este treino ainda não tem exercícios.', true); return; }
+  const nome = prompt('Nome do modelo:', treino.nome);
+  if (!nome) return;
+  try {
+    await api('/api/treino-templates', {
+      method: 'POST',
+      body: JSON.stringify({
+        nome: nome.trim(),
+        exercicios: treino.exercicios.map((ex) => ({
+          biblioteca_id: ex.biblioteca_id,
+          exercicio: ex.exercicio,
+          series: ex.series,
+          carga: ex.carga,
+          intervalo: ex.intervalo,
+          metodo: ex.metodo,
+          observacao: ex.observacao,
+          dica: ex.dica,
+          video_url: ex.video_url,
+          imagem_url: ex.imagem_url,
+        })),
+      }),
+    });
+    mostrarToast('Modelo salvo. Já aparece em "Aplicar modelo salvo" em qualquer aluno.');
+    await carregarTreinoTemplates();
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+document.getElementById('sel-treino-modelo').addEventListener('change', async (ev) => {
+  const templateId = ev.target.value;
+  if (!templateId) return;
+  const alunoId = document.getElementById('perfil-aluno-id').value;
+  try {
+    const resp = await api(`/api/treino-templates/${templateId}/aplicar`, {
+      method: 'POST',
+      body: JSON.stringify({ aluno_id: alunoId }),
+    });
+    treinoAtivoId = resp.id;
+    mostrarToast('Modelo aplicado — treino criado a partir do modelo.');
+    ev.target.value = '';
+    await carregarTreinosPerfil();
+  } catch (err) { mostrarToast(err.message, true); }
+});
 
 // ---------------- Inicialização ----------------
 

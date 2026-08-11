@@ -541,6 +541,76 @@ document.getElementById('btn-pagar-contas-hub').addEventListener('click', async 
 });
 
 // ---- Treino ----
+// Vídeo de execução (2026-08, port do TreinoPro): mesmo esquema de embed —
+// reconhece link do YouTube e monta um iframe; qualquer outro link vira um
+// botão "▶ Ver vídeo" abrindo em nova aba.
+function youtubeEmbedUrl(url) {
+  if (!url) return null;
+  const m = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([A-Za-z0-9_-]{6,})/);
+  return m ? `https://www.youtube.com/embed/${m[1]}?cc_load_policy=1&cc_lang_pref=pt&hl=pt&playsinline=1&rel=0` : null;
+}
+function videoPreviewHtml(url) {
+  if (!url) return '';
+  const yt = youtubeEmbedUrl(url);
+  if (yt) return `<div class="video-embed"><iframe src="${yt}" allowfullscreen loading="lazy"></iframe></div>`;
+  return `<div style="margin-top:6px"><a href="${url}" target="_blank" rel="noopener" class="btn-ver-video-ex" style="text-decoration:none;display:inline-block">▶ Ver vídeo</a></div>`;
+}
+
+async function abrirPainelTreino() {
+  const treinos = await api(`/api/portal/treino?cpf=${encodeURIComponent(cpfHubAtual)}&senha=${encodeURIComponent(senhaHubAtual)}`);
+  ocultarPaineisHub();
+  document.getElementById('painel-hub-treino').classList.remove('oculto');
+  const DIAS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+  const alvo = document.getElementById('conteudo-treino-hub');
+  if (!treinos.length) {
+    alvo.innerHTML = '<p>Nenhum treino cadastrado ainda. Fale com seu instrutor.</p>';
+    return;
+  }
+  alvo.innerHTML = treinos.map((t) => `
+    <div class="treino-card">
+      <h4>${t.nome}</h4>
+      <div class="dias">${(t.dias_semana || []).map((d) => DIAS[d]).join(', ') || 'Sem dias definidos'}</div>
+      ${t.exercicios.map((ex) => `
+        <div class="exercicio-linha ${ex.concluido ? 'concluido' : ''}">
+          <div class="topo">
+            <div>
+              <div class="nome">${ex.exercicio}</div>
+              <div class="detalhe">${[ex.series && `${ex.series} séries`, ex.carga && `carga ${ex.carga}`, ex.intervalo && `intervalo ${ex.intervalo}`].filter(Boolean).join(' · ')}</div>
+            </div>
+            <button type="button" class="check-concluido ${ex.concluido ? 'marcado' : ''}" data-eid="${ex.id}" title="Marcar como concluído">${ex.concluido ? '✓' : ''}</button>
+          </div>
+          ${ex.metodo ? `<span class="tag">⚡ ${ex.metodo}</span>` : ''}
+          ${ex.observacao ? `<div class="detalhe">${ex.observacao}</div>` : ''}
+          ${ex.dica ? `<div class="detalhe">💡 ${ex.dica}</div>` : ''}
+          ${ex.imagem_url && !ex.video_url ? `<img class="exercicio-imagem" src="${ex.imagem_url}" loading="lazy">` : ''}
+          ${ex.video_url ? `<button type="button" class="btn-ver-video-ex" data-video="${ex.video_url}" data-target="vid_${ex.id}">▶ Ver execução</button><div id="vid_${ex.id}"></div>` : ''}
+        </div>
+      `).join('') || '<p style="color:#94a3b8;font-size:13px">Nenhum exercício adicionado ainda.</p>'}
+    </div>
+  `).join('');
+
+  alvo.querySelectorAll('.btn-ver-video-ex[data-video]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const box = document.getElementById(btn.dataset.target);
+      if (box.innerHTML) { box.innerHTML = ''; btn.textContent = '▶ Ver execução'; }
+      else { box.innerHTML = videoPreviewHtml(btn.dataset.video); btn.textContent = '▲ Fechar vídeo'; }
+    });
+  });
+  alvo.querySelectorAll('.check-concluido').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const marcarComo = !btn.classList.contains('marcado');
+      try {
+        await api(`/api/portal/treino/exercicio/${btn.dataset.eid}/concluir`, {
+          method: 'POST',
+          body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, concluido: marcarComo }),
+        });
+        btn.classList.toggle('marcado', marcarComo);
+        btn.textContent = marcarComo ? '✓' : '';
+        btn.closest('.exercicio-linha').classList.toggle('concluido', marcarComo);
+      } catch (err) { alert(err.message); }
+    });
+  });
+}
 
 document.getElementById('btn-abrir-treino').addEventListener('click', async () => {
   if (alunoHubTreinoModo === 'app_externo') {
@@ -549,28 +619,7 @@ document.getElementById('btn-abrir-treino').addEventListener('click', async () =
     return;
   }
   try {
-    const treinos = await api(`/api/portal/treino?cpf=${encodeURIComponent(cpfHubAtual)}&senha=${encodeURIComponent(senhaHubAtual)}`);
-    ocultarPaineisHub();
-    document.getElementById('painel-hub-treino').classList.remove('oculto');
-    const DIAS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
-    const alvo = document.getElementById('conteudo-treino-hub');
-    if (!treinos.length) {
-      alvo.innerHTML = '<p>Nenhum treino cadastrado ainda. Fale com seu instrutor.</p>';
-      return;
-    }
-    alvo.innerHTML = treinos.map((t) => `
-      <div class="treino-card">
-        <h4>${t.nome}</h4>
-        <div class="dias">${(t.dias_semana || []).map((d) => DIAS[d]).join(', ') || 'Sem dias definidos'}</div>
-        ${t.exercicios.map((ex) => `
-          <div class="exercicio-linha">
-            <div class="nome">${ex.exercicio}</div>
-            <div class="detalhe">${[ex.series && `${ex.series} séries`, ex.carga && `carga ${ex.carga}`, ex.intervalo && `intervalo ${ex.intervalo}`].filter(Boolean).join(' · ')}</div>
-            ${ex.observacao ? `<div class="detalhe">${ex.observacao}</div>` : ''}
-          </div>
-        `).join('') || '<p style="color:#94a3b8;font-size:13px">Nenhum exercício adicionado ainda.</p>'}
-      </div>
-    `).join('');
+    await abrirPainelTreino();
   } catch (err) {
     alert(err.message);
   }

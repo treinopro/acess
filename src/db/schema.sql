@@ -304,7 +304,66 @@ CREATE TABLE IF NOT EXISTS treino_exercicios (
   intervalo TEXT, -- ex: "60s", "1min30"
   observacao TEXT,
   ordem INTEGER NOT NULL DEFAULT 0,
+  criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+  -- Campos abaixo (2026-08, port do módulo de treinos do TreinoPro): permitem
+  -- vincular o exercício a um item da biblioteca (herdando vídeo/imagem) ou
+  -- informar vídeo/imagem próprios, método de treino e uma dica do
+  -- instrutor separada da observação (que é a mensagem visível ao aluno).
+  -- Ver também ALTERACOES_INCREMENTAIS em src/db/migrate.js (bancos que já
+  -- existiam antes desta mudança precisam do ALTER TABLE, não só do CREATE
+  -- TABLE IF NOT EXISTS acima).
+  biblioteca_id TEXT REFERENCES exercicio_biblioteca(id),
+  video_url TEXT,
+  imagem_url TEXT,
+  metodo TEXT, -- ex: Bi-set, Tri-set, Superset, Pirâmide, Drop-set, Rest-pause, Circuito
+  dica TEXT, -- dica do instrutor sobre a execução (distinta da "observacao")
+  concluido INTEGER NOT NULL DEFAULT 0 -- aluno marca como feito no portal
+);
+
+-- Biblioteca de exercícios (2026-08, port do TreinoPro) — catálogo único e
+-- global (este sistema não é multi-tenant como o TreinoPro: uma só
+-- academia, um só catálogo, gerenciado pelo admin). Usada tanto para montar
+-- treinos rapidamente (herdando vídeo/imagem/instruções) quanto como
+-- referência de execução consultável pelo aluno no portal.
+CREATE TABLE IF NOT EXISTS exercicio_biblioteca (
+  id TEXT PRIMARY KEY,
+  grupo_muscular TEXT NOT NULL,
+  nome TEXT NOT NULL,
+  video_url TEXT, -- link do YouTube (embed automático) ou outro link externo
+  imagem_url TEXT,
+  notas TEXT,
+  equipamento TEXT, -- ex: barra, halter, máquina, polia, peso corporal, elástico, kettlebell
+  dificuldade TEXT, -- iniciante | intermediario | avancado
+  instrucoes TEXT, -- passo a passo curto de execução
+  musculos_secundarios TEXT,
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Treinos salvos ("modelos"), reutilizáveis entre alunos — não pertencem a
+-- nenhum aluno específico. O botão "Salvar como modelo" (na aba Treino do
+-- perfil) copia os exercícios de um treino real pra cá; "Aplicar modelo" ao
+-- criar um novo treino faz o caminho inverso (copia daqui pro aluno).
+CREATE TABLE IF NOT EXISTS treino_templates (
+  id TEXT PRIMARY KEY,
+  nome TEXT NOT NULL,
+  categoria TEXT, -- pasta/categoria opcional pra organizar a lista (NULL = "Sem categoria")
+  criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS treino_template_exercicios (
+  id TEXT PRIMARY KEY,
+  template_id TEXT NOT NULL REFERENCES treino_templates(id) ON DELETE CASCADE,
+  biblioteca_id TEXT REFERENCES exercicio_biblioteca(id),
+  exercicio TEXT NOT NULL,
+  series TEXT,
+  carga TEXT,
+  intervalo TEXT,
+  metodo TEXT,
+  observacao TEXT,
+  dica TEXT,
+  video_url TEXT,
+  imagem_url TEXT,
+  ordem INTEGER NOT NULL DEFAULT 0
 );
 
 -- ================= Recuperação de clientes / prevenção de evasão (2026-07) =================
@@ -424,6 +483,8 @@ CREATE INDEX IF NOT EXISTS idx_anamnese_respostas_anamnese ON anamnese_respostas
 CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_usuario ON usuarios(usuario);
 CREATE INDEX IF NOT EXISTS idx_treinos_aluno ON treinos(aluno_id);
 CREATE INDEX IF NOT EXISTS idx_treino_exercicios_treino ON treino_exercicios(treino_id);
+CREATE INDEX IF NOT EXISTS idx_exercicio_biblioteca_grupo ON exercicio_biblioteca(grupo_muscular);
+CREATE INDEX IF NOT EXISTS idx_treino_template_exercicios_template ON treino_template_exercicios(template_id);
 -- Trava em nível de banco contra corrida entre execuções sobrepostas de
 -- gerarCobrancasRecorrentes (ex.: dois reinícios do servidor muito próximos)
 -- -- a checagem em código já evita isso no caminho normal, esse índice é o

@@ -254,6 +254,22 @@ body {
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
 .form-acoes { margin-top: 16px; display: flex; gap: 10px; }
 
+/* ---------- Biblioteca de Exercícios + vídeo de execução (port do TreinoPro, 2026-08) ---------- */
+.chip-group { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip {
+  border: 1px solid #d0d5dd; background: #fff; color: #344054; border-radius: 999px;
+  padding: 6px 14px; font-size: 13px; cursor: pointer;
+}
+.chip.ativo { background: #0f172a; border-color: #0f172a; color: #fff; }
+.lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+.lib-item { background: #fff; border: 1px solid #e4e7ec; border-radius: 10px; padding: 14px; }
+.lib-item .name { font-weight: 600; margin-top: 6px; }
+.lib-item .meta { font-size: 12px; color: #667085; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 4px; }
+.tag { background: #f2f4f7; border-radius: 6px; padding: 2px 8px; font-size: 11.5px; color: #344054; }
+.video-embed { border-radius: 8px; overflow: hidden; margin-top: 8px; background: #000; }
+.video-embed iframe { width: 100%; height: 200px; border: none; display: block; }
+.video-embed video { width: 100%; max-height: 220px; display: block; background: #000; }
+
 /* ---------- Cadastro facial guiado no painel (2026-08-04) ----------
    Mesmo mecanismo/visual do totem e do portal (ver facial-guiado.js e o
    comentário em terminal.html) — antes o painel tinha seu próprio fluxo de

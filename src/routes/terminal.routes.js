@@ -840,7 +840,7 @@ admin.post('/catraca/liberar-aluno', async (req, res, next) => {
     const aluno = alunoResult.rows[0];
     if (!aluno) return res.status(404).json({ erro: 'Aluno não encontrado.' });
 
-    await catracaGateway.liberarAcesso({ ip, port, mensagem: body.mensagem || acessoTerminal.mensagemBoasVindasCatraca(aluno.nome) });
+    await catracaGateway.liberarAcesso({ ip, port, mensagem: body.mensagem || `Liberação manual - ${aluno.nome}` });
     await acessoTerminal.registrarAcesso({
       alunoId: aluno.id, metodo: 'admin', resultado: 'liberado',
       mensagem: `Liberação manual pelo painel (${req.usuario?.email || 'admin'})`,
@@ -870,29 +870,13 @@ admin.get('/catraca/agente/status', (req, res) => {
   res.json(catracaGateway.statusAgente());
 });
 
-// POST /api/terminal/catraca/liberar { ip?, port?, mensagem? } — liberação
-// manual sem indicar pessoa (usada de verdade pelo "Liberar rápido" do menu
-// lateral, pelo comando de voz, e pela liberação manual "sem indicar pessoa"
-// da janela da catraca — ver public/app.js e public/liberacao-rapida.js).
-// 2026-08-12: até aqui essa rota só acionava a catraca fisicamente e não
-// registrava nada em acessos_catraca nem avisava o totem (ver
-// totemEventos.service.js) — diferente de TODAS as outras formas de liberar
-// (facial/QR/CPF do totem, biometria da catraca, "liberar-aluno" com pessoa
-// indicada, pânico), que sempre passam por acessoTerminal.registrarAcesso.
-// Por isso essas liberações não apareciam em "Acessos recentes" e o totem não
-// acendia a tela verde/tocava o som quando alguém liberava por aqui.
+// POST /api/terminal/catraca/liberar { ip?, port?, mensagem? } — dispara abertura manual (teste de campo)
 admin.post('/catraca/liberar', async (req, res, next) => {
   try {
     const schema = z.object({ ip: z.string().optional(), port: z.number().optional(), mensagem: z.string().optional() });
     const body = schema.parse(req.body || {});
     const { ip, port } = configCatraca(body);
     await catracaGateway.liberarAcesso({ ip, port, mensagem: body.mensagem });
-    await acessoTerminal.registrarAcesso({
-      alunoId: null,
-      metodo: 'admin_rapido',
-      resultado: 'liberado',
-      mensagem: body.mensagem || `Liberação manual pelo painel (${req.usuario?.email || 'admin'})`,
-    });
     res.json({ ok: true });
   } catch (err) {
     next(err);

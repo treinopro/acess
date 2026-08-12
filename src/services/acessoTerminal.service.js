@@ -825,21 +825,6 @@ async function registrarAcessoIdempotente(dados) {
 }
 
 /**
- * Monta a mensagem de boas-vindas mostrada no display da catraca, já truncada
- * pro tamanho que comprovadamente funciona no equipamento real (14/07/2026,
- * caso da aluna "Maria fagna ismael alencar siqueira"): nomes completos longos
- * estouram o campo de mensagem do comando REON da catraca Henry, que
- * trava/ignora o comando sem devolver erro nenhum — o acesso fica registrado
- * como "liberado" mas a catraca não gira de verdade. Usa só o primeiro nome e
- * limita a 24 caracteres no total, mesmo limite já validado contra o
- * equipamento (ver agente-local/agente.js, loopBiometria).
- */
-function mensagemBoasVindasCatraca(nomeCompleto) {
-  const primeiroNome = String(nomeCompleto || '').trim().split(/\s+/)[0] || '';
-  return `Bem-vindo(a) ${primeiroNome}`.trim().slice(0, 24);
-}
-
-/**
  * Ponto único de acionamento físico da catraca. catracaGateway decide sozinho
  * se fala TCP direto (deploy local, mesma rede da catraca) ou se repassa o
  * comando para o agente local via WebSocket (deploy na nuvem). O timeout de
@@ -907,8 +892,19 @@ async function tentarLiberar({ aluno, metodo, mensagemDiagnostico }) {
   // (ver comentário de verificarPrimeiroAcessoHojeSeguro acima).
   const primeiroAcessoHoje = await verificarPrimeiroAcessoHojeSeguro(aluno.id);
 
+  // 2026-08-12: mesma mitigação já validada contra o equipamento real em
+  // 14/07/2026 (ver agente-local/agente.js, loopBiometria) — nomes completos
+  // longos (ex.: "Maria fagna ismael alencar siqueira") estouram o campo de
+  // mensagem do comando REON da catraca Henry, que trava/ignora o comando
+  // sem devolver erro nenhum: o acesso é registrado como "liberado" mas a
+  // catraca não gira de verdade. Até agora só o caminho de biometria lida
+  // direto na catraca tinha essa truncagem; este é o caminho do totem
+  // (facial/QR/CPF), que é o mais usado no dia a dia.
+  const primeiroNomeAluno = String(aluno.nome || '').trim().split(/\s+/)[0] || '';
+  const mensagemBoasVindas = `Bem-vindo(a) ${primeiroNomeAluno}`.trim().slice(0, 24);
+
   try {
-    await liberarNaCatraca(mensagemBoasVindasCatraca(aluno.nome));
+    await liberarNaCatraca(mensagemBoasVindas);
   } catch (err) {
     const motivoFalha = `Falha ao comunicar com a catraca: ${err.message}`;
     await registrarAcesso({ alunoId: aluno.id, metodo, resultado: 'negado', mensagem: motivoFalha });
@@ -968,7 +964,6 @@ module.exports = {
   registrarAcesso,
   registrarAcessoIdempotente,
   tentarLiberar,
-  mensagemBoasVindasCatraca,
   // Variantes fallback-aware (modo totem offline-resiliente, 2026-07) —
   // usadas SÓ pelas rotas de acesso (CPF/QR/facial), nunca por
   // cadastro/vinculação. Ver comentários junto das definições acima.

@@ -892,19 +892,8 @@ async function tentarLiberar({ aluno, metodo, mensagemDiagnostico }) {
   // (ver comentário de verificarPrimeiroAcessoHojeSeguro acima).
   const primeiroAcessoHoje = await verificarPrimeiroAcessoHojeSeguro(aluno.id);
 
-  // 2026-08-12: mesma mitigação já validada contra o equipamento real em
-  // 14/07/2026 (ver agente-local/agente.js, loopBiometria) — nomes completos
-  // longos (ex.: "Maria fagna ismael alencar siqueira") estouram o campo de
-  // mensagem do comando REON da catraca Henry, que trava/ignora o comando
-  // sem devolver erro nenhum: o acesso é registrado como "liberado" mas a
-  // catraca não gira de verdade. Até agora só o caminho de biometria lida
-  // direto na catraca tinha essa truncagem; este é o caminho do totem
-  // (facial/QR/CPF), que é o mais usado no dia a dia.
-  const primeiroNomeAluno = String(aluno.nome || '').trim().split(/\s+/)[0] || '';
-  const mensagemBoasVindas = `Bem-vindo(a) ${primeiroNomeAluno}`.trim().slice(0, 24);
-
   try {
-    await liberarNaCatraca(mensagemBoasVindas);
+    await liberarNaCatraca(`Bem-vindo(a) ${aluno.nome}`);
   } catch (err) {
     const motivoFalha = `Falha ao comunicar com a catraca: ${err.message}`;
     await registrarAcesso({ alunoId: aluno.id, metodo, resultado: 'negado', mensagem: motivoFalha });

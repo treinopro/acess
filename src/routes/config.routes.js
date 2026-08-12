@@ -191,26 +191,71 @@ const TABELAS_BACKUP = [
   'agendamentos', 'checkins', 'cobrancas', 'pagamentos_cobranca', 'contas_pagar', 'acessos_catraca', 'configuracoes',
 ];
 
-async function gerarBackupCompleto() {
-  const dump = { gerado_em: new Date().toISOString(), tabelas: {} };
-  for (const tabela of TABELAS_BACKUP) {
-    const result = await db.execute(`SELECT * FROM ${tabela}`);
-    dump.tabelas[tabela] = result.rows;
-  }
-  // usuarios entra sem o hash da senha — backup não deve carregar credenciais
-  const usuarios = await db.execute('SELECT id, nome, email, papel, criado_em FROM usuarios');
-  dump.tabelas.usuarios = usuarios.rows;
-  return dump;
+// Tamanho do lote de leitura por tabela — evita carregar uma tabela inteira
+// de uma vez na memória (2026-08-12: acessos_catraca, com meses de histórico
+// do totem/catraca, já tinha crescido a ponto do dump completo em memória +
+// o JSON.stringify(..., null, 2) do resultado — os dois ao mesmo tempo —
+// contribuírem pra estourar o limite de memória do serviço bem no boot, já
+// que o backup automático roda incondicionalmente a cada subida do processo
+// (ver rodarBackup() em src/jobs/backup.js). Escrever direto num stream,
+// tabela por tabela e em lotes, mantém só um punhado de linhas na memória por
+// vez em vez do banco inteiro + a string JSON inteira simultaneamente.
+const TAMANHO_LOTE_BACKUP = 500;
+
+/** Escreve um chunk no stream e só resolve depois do 'drain' se o buffer interno estiver cheio — evita acumular tudo em memória se o disco/rede for mais lento que a geração dos dados. */
+function escreverNoStream(writable, chunk) {
+  return new Promise((resolve, reject) => {
+    const coube = writable.write(chunk, (err) => { if (err) reject(err); });
+    if (coube) resolve();
+    else writable.once('drain', resolve);
+  });
 }
 
-// GET /api/config/backup — gera e baixa um backup completo agora (admin)
+/**
+ * Monta o mesmo JSON de sempre ({ gerado_em, tabelas: { ... } }), só que
+ * escrevendo direto no `writable` conforme cada lote é lido do banco, nunca
+ * guardando o dump inteiro nem o texto final inteiro na memória.
+ */
+async function escreverBackupStream(writable) {
+  await escreverNoStream(writable, `{"gerado_em":${JSON.stringify(new Date().toISOString())},"tabelas":{`);
+
+  // usuarios entra sem o hash da senha — backup não deve carregar credenciais
+  const tabelas = [
+    ...TABELAS_BACKUP.map((nome) => ({ nome, sql: `SELECT * FROM ${nome}` })),
+    { nome: 'usuarios', sql: 'SELECT id, nome, email, papel, criado_em FROM usuarios' },
+  ];
+
+  for (let i = 0; i < tabelas.length; i++) {
+    const { nome, sql } = tabelas[i];
+    await escreverNoStream(writable, `${i > 0 ? ',' : ''}${JSON.stringify(nome)}:[`);
+
+    let offset = 0;
+    let primeiraLinha = true;
+    for (;;) {
+      const result = await db.execute({ sql: `${sql} LIMIT ? OFFSET ?`, args: [TAMANHO_LOTE_BACKUP, offset] });
+      for (const row of result.rows) {
+        await escreverNoStream(writable, `${primeiraLinha ? '' : ','}${JSON.stringify(row)}`);
+        primeiraLinha = false;
+      }
+      if (result.rows.length < TAMANHO_LOTE_BACKUP) break;
+      offset += TAMANHO_LOTE_BACKUP;
+    }
+    await escreverNoStream(writable, ']');
+  }
+
+  await escreverNoStream(writable, '}}');
+}
+
+// GET /api/config/backup — gera e baixa um backup completo agora (admin).
+// Escreve direto na resposta HTTP (que já é um stream) em vez de montar o
+// JSON inteiro em memória primeiro — ver escreverBackupStream acima.
 router.get('/backup', autenticar, apenasAdmin, async (req, res, next) => {
   try {
-    const dump = await gerarBackupCompleto();
     const nomeArquivo = `backup-academia-${new Date().toISOString().slice(0, 10)}.json`;
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Content-Disposition', `attachment; filename="${nomeArquivo}"`);
-    res.send(JSON.stringify(dump, null, 2));
+    await escreverBackupStream(res);
+    res.end();
   } catch (err) {
     next(err);
   }
@@ -262,4 +307,4 @@ router.put('/backup-config', autenticar, apenasAdmin, async (req, res, next) => 
   }
 });
 
-module.exports = { router, gerarBackupCompleto };
+module.exports = { router, escreverBackupStream };

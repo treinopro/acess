@@ -16,7 +16,7 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-const { gerarBackupCompleto } = require('../routes/config.routes');
+const { escreverBackupStream } = require('../routes/config.routes');
 const db = require('../db/client');
 const { enviarEmail, emailConfigurado } = require('../services/email.service');
 
@@ -43,23 +43,29 @@ async function lerConfigBackup() {
   return config;
 }
 
-function salvarLocal(dump) {
-  if (!fs.existsSync(PASTA_BACKUPS)) fs.mkdirSync(PASTA_BACKUPS, { recursive: true });
-  const nomeArquivo = `backup-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-  const caminho = path.join(PASTA_BACKUPS, nomeArquivo);
-  fs.writeFileSync(caminho, JSON.stringify(dump, null, 2));
+/** Escreve o backup direto num arquivo, em streaming (ver escreverBackupStream) — nunca monta o JSON inteiro em memória. */
+function escreverBackupEmArquivo(caminho) {
+  return new Promise((resolve, reject) => {
+    const stream = fs.createWriteStream(caminho);
+    stream.on('error', reject);
+    escreverBackupStream(stream)
+      .then(() => stream.end(resolve))
+      .catch((err) => { stream.destroy(); reject(err); });
+  });
+}
 
-  // Mantém só os N mais recentes pra não acumular disco indefinidamente.
+/** Mantém só os N arquivos de backup mais recentes na pasta, pra não acumular disco indefinidamente. */
+function limparBackupsAntigos() {
   const arquivos = fs.readdirSync(PASTA_BACKUPS)
     .filter((f) => f.startsWith('backup-') && f.endsWith('.json'))
     .sort()
     .reverse();
   const antigos = arquivos.slice(MAX_BACKUPS_MANTIDOS);
   antigos.forEach((f) => fs.unlinkSync(path.join(PASTA_BACKUPS, f)));
-  return { caminho, removidos: antigos.length };
+  return antigos.length;
 }
 
-async function enviarPorEmail(dump, destinoConfigurado) {
+async function enviarPorEmail(caminhoArquivo, destinoConfigurado) {
   const destino = destinoConfigurado || process.env.GMAIL_USER;
   if (!destino) throw new Error('Nenhum e-mail de destino configurado pro backup (defina em Configurações > Backup, ou GMAIL_USER no servidor).');
   if (!emailConfigurado()) throw new Error('Envio de backup por e-mail não configurado: defina GMAIL_USER e GMAIL_APP_PASSWORD no servidor.');
@@ -68,36 +74,60 @@ async function enviarPorEmail(dump, destinoConfigurado) {
     para: destino,
     assunto: `Backup automático — ${new Date().toLocaleDateString('pt-BR')}`,
     texto: 'Backup completo do sistema em anexo (JSON). Guarde em local seguro.',
-    anexos: [{ filename: nomeArquivo, content: JSON.stringify(dump, null, 2), contentType: 'application/json' }],
+    // `path` (em vez de `content`) faz o nodemailer ler o arquivo do disco em
+    // streaming durante o envio, sem carregar o JSON inteiro de novo na
+    // memória do processo — mesmo motivo de existir escreverBackupEmArquivo
+    // acima (ver comentário no topo do arquivo).
+    anexos: [{ filename: nomeArquivo, path: caminhoArquivo, contentType: 'application/json' }],
   });
   return destino;
 }
 
 async function rodar() {
   const config = await lerConfigBackup();
-  const dump = await gerarBackupCompleto();
   const resultado = {};
 
-  if (config.backup_destino === 'local' || config.backup_destino === 'ambos') {
-    const { caminho, removidos } = salvarLocal(dump);
-    resultado.local = caminho;
-    console.log(`[backup] ${new Date().toISOString()} — backup salvo em ${caminho} (${removidos} antigo(s) removido(s)).`);
+  if (!fs.existsSync(PASTA_BACKUPS)) fs.mkdirSync(PASTA_BACKUPS, { recursive: true });
+
+  const querLocal = config.backup_destino === 'local' || config.backup_destino === 'ambos';
+  const querEmail = config.backup_destino === 'email' || config.backup_destino === 'ambos';
+
+  // Gera o arquivo UMA vez só (streaming — ver escreverBackupEmArquivo), não
+  // duas consultas separadas ao banco. Se for pra ficar local, já escreve
+  // direto no destino final; se for só pra e-mail, escreve num arquivo
+  // temporário que é apagado depois de enviado.
+  const nomeArquivo = `backup-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+  const caminhoFinal = path.join(PASTA_BACKUPS, nomeArquivo);
+  const caminhoGerado = querLocal ? caminhoFinal : path.join(PASTA_BACKUPS, `.tmp-${nomeArquivo}`);
+
+  await escreverBackupEmArquivo(caminhoGerado);
+
+  if (querLocal) {
+    const removidos = limparBackupsAntigos();
+    resultado.local = caminhoGerado;
+    console.log(`[backup] ${new Date().toISOString()} — backup salvo em ${caminhoGerado} (${removidos} antigo(s) removido(s)).`);
   }
 
-  if (config.backup_destino === 'email' || config.backup_destino === 'ambos') {
+  if (querEmail) {
     try {
-      resultado.email = await enviarPorEmail(dump, config.backup_email_destino);
+      resultado.email = await enviarPorEmail(caminhoGerado, config.backup_email_destino);
       console.log(`[backup] ${new Date().toISOString()} — backup enviado por e-mail para ${resultado.email}.`);
     } catch (err) {
       console.error('[backup] erro ao enviar backup por e-mail:', err.message);
-      // E-mail era o ÚNICO destino configurado e falhou — salva local mesmo
-      // assim como rede de segurança (melhor ter um backup em algum lugar do
-      // que nenhum), mas deixa o erro explícito no log pro admin corrigir.
+      // E-mail era o ÚNICO destino configurado e falhou — mantém o arquivo já
+      // gerado como backup local mesmo assim (melhor ter um backup em algum
+      // lugar do que nenhum), só renomeando do temporário pro nome final.
       if (config.backup_destino === 'email') {
-        const { caminho, removidos } = salvarLocal(dump);
-        resultado.local = caminho;
-        console.log(`[backup] fallback: backup salvo localmente em ${caminho} (${removidos} antigo(s) removido(s)).`);
+        fs.renameSync(caminhoGerado, caminhoFinal);
+        const removidos = limparBackupsAntigos();
+        resultado.local = caminhoFinal;
+        console.log(`[backup] fallback: backup salvo localmente em ${caminhoFinal} (${removidos} antigo(s) removido(s)).`);
       }
+    } finally {
+      // Limpa o temporário só se ele ainda existir nesse caminho (não existe
+      // mais se acabou de ser renomeado no fallback acima, nem se querLocal
+      // já era true — nesse caso caminhoGerado é o próprio caminhoFinal).
+      if (!querLocal && fs.existsSync(caminhoGerado)) fs.unlinkSync(caminhoGerado);
     }
   }
 

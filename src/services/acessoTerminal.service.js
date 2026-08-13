@@ -855,15 +855,26 @@ async function liberarNaCatraca(mensagem) {
 }
 
 // 2026-07-19: intervalo mínimo entre DUAS liberações por reconhecimento
-// facial (qualquer aluno) — evita que um aluno reconhecido "seguidas vezes"
-// pelo scanner contínuo do totem (ver terminal.js) acabe liberando a catraca
-// de novo rápido demais pra deixar outra pessoa passar atrás dele. Estado em
-// memória do processo (não persiste em banco) — é só uma trava de UX/anti-
-// -carona, não um controle de segurança forte; reinicia com o servidor.
-// Configurável via COOLDOWN_LIBERACAO_FACIAL_MS pra ajustar sem redeploy de
-// código, caso o valor padrão fique curto/longo demais na prática.
+// facial DO MESMO ALUNO — evita que o MESMO rosto, reconhecido de novo pelo
+// scanner contínuo do totem (ver terminal.js) rápido demais (ex.: ele ainda
+// está de frente pra câmera, ou virou e reapareceu no quadro), acabe abrindo
+// a catraca duas vezes seguidas pra ninguém. Estado em memória do processo
+// (não persiste em banco, uma entrada por aluno_id) — é só uma trava de
+// UX/anti-duplicidade, não um controle de segurança forte; reinicia com o
+// servidor. Configurável via COOLDOWN_LIBERACAO_FACIAL_MS pra ajustar sem
+// redeploy de código, caso o valor padrão fique curto/longo demais na prática.
+//
+// 2026-08-13: era um cooldown GLOBAL (uma liberação de qualquer aluno
+// travava a liberação de qualquer outro por alguns segundos) — corrigido a
+// pedido do dono do sistema pra ser por aluno (Map por aluno_id), já que o
+// objetivo sempre foi impedir o MESMO rosto de liberar duas vezes seguidas,
+// não travar a fila inteira quando duas pessoas diferentes passam em
+// sequência rápida. Também isenta professor/colaborador (junto com
+// bolsista, que já tem acesso livre de mensalidade) do cooldown — pedido
+// explícito, essas categorias nunca devem ficar presas na trava.
 const COOLDOWN_LIBERACAO_FACIAL_MS = Number(process.env.COOLDOWN_LIBERACAO_FACIAL_MS || 6000);
-let ultimaLiberacaoFacialEm = 0;
+const CATEGORIAS_SEM_COOLDOWN_FACIAL = new Set([...CATEGORIA_ACESSO_LIVRE, 'professor']);
+const ultimaLiberacaoFacialPorAluno = new Map();
 
 /**
  * Fluxo completo: checa status, tenta abrir a catraca se autorizado, registra
@@ -885,17 +896,19 @@ async function tentarLiberar({ aluno, metodo, mensagemDiagnostico }) {
     return { autorizado: false, motivo, aluno_nome: aluno ? aluno.nome : null, aluno_id: aluno ? aluno.id : null, cpf: aluno ? aluno.cpf : null, aviso_vencimento: avisoVencimento };
   }
 
-  // Cooldown entre liberações por face (2026-07-19, ver COOLDOWN_LIBERACAO_FACIAL_MS
-  // acima) — só entra DEPOIS de confirmar que a pessoa está autorizada (não
-  // queremos "gastar" o cooldown numa tentativa que já seria negada de
-  // qualquer jeito), e só bloqueia quem está tentando entrar por
-  // reconhecimento facial — CPF, QR e biometria da própria catraca não usam
-  // este cooldown, porque cada um já exige uma ação física distinta (digitar,
-  // mostrar QR, encostar o dedo) que naturalmente não se presta a "passar a
-  // liberação pra trás" do mesmo jeito que o scanner contínuo de rosto.
-  if (metodo === 'facial') {
+  // Cooldown entre liberações por face DO MESMO ALUNO (ver
+  // COOLDOWN_LIBERACAO_FACIAL_MS acima) — só entra DEPOIS de confirmar que a
+  // pessoa está autorizada (não queremos "gastar" o cooldown numa tentativa
+  // que já seria negada de qualquer jeito), só bloqueia quem está tentando
+  // entrar por reconhecimento facial (CPF, QR e biometria da própria catraca
+  // não usam este cooldown — cada um já exige uma ação física distinta que
+  // não se presta a "passar a liberação pra trás"), e nunca se aplica a
+  // professor/colaborador/bolsista (acesso livre, nunca travado por isso).
+  const categoriaAluno = aluno.categoria || 'aluno';
+  if (metodo === 'facial' && !CATEGORIAS_SEM_COOLDOWN_FACIAL.has(categoriaAluno)) {
     const agoraMs = Date.now();
-    const faltam = COOLDOWN_LIBERACAO_FACIAL_MS - (agoraMs - ultimaLiberacaoFacialEm);
+    const ultimaVezDesteAluno = ultimaLiberacaoFacialPorAluno.get(aluno.id) || 0;
+    const faltam = COOLDOWN_LIBERACAO_FACIAL_MS - (agoraMs - ultimaVezDesteAluno);
     if (faltam > 0) {
       const motivoCooldown = 'Aguarde alguns segundos antes da próxima liberação por reconhecimento facial.';
       await registrarAcesso({ alunoId: aluno.id, metodo, resultado: 'negado', mensagem: motivoCooldown });
@@ -915,7 +928,7 @@ async function tentarLiberar({ aluno, metodo, mensagemDiagnostico }) {
     return { autorizado: false, motivo: motivoFalha, aluno_nome: aluno.nome, aluno_id: aluno.id, cpf: aluno.cpf, aviso_vencimento: avisoVencimento };
   }
 
-  if (metodo === 'facial') ultimaLiberacaoFacialEm = Date.now();
+  if (metodo === 'facial') ultimaLiberacaoFacialPorAluno.set(aluno.id, Date.now());
 
   // Primeira liberação de um visitante (2026-07-19): grava quando começou a
   // contar o período de dias grátis (ver visitanteDentroDoPeriodo acima).

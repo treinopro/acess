@@ -16,6 +16,7 @@ const filaAcessosOffline = require('./filaAcessosOffline.service');
 const { formatarDataSqliteUtc } = require('../utils/data');
 const { normalizarCpf } = require('../utils/cpf');
 const totemEventos = require('./totemEventos.service');
+const { obterCooldownAcesso } = require('../routes/config.routes');
 
 // 2026-07-27: reconhecimento facial trocado de face-api.js pro SFace
 // (OpenCV Zoo, ver public/facial-sface.js) — modelo bem mais discriminativo,
@@ -661,13 +662,17 @@ async function listarAutorizacoesBiometricas() {
     const motivoStatus = motivoBloqueioPorStatus(aluno);
     // Mesma regra de verificarAutorizacaoAluno: concessão só contorna
     // inadimplência (status ou cobrança em atraso), nunca trancamento/inatividade.
+    const categoria = aluno.categoria || 'aluno';
     if (motivoStatus && motivoStatus !== 'Existem mensalidades em atraso.') {
-      return { biometria_id: aluno.biometria_id, autorizado: false, aluno_nome: aluno.nome, motivo: motivoStatus };
+      return {
+        biometria_id: aluno.biometria_id, autorizado: false, aluno_nome: aluno.nome, motivo: motivoStatus, categoria,
+      };
     }
 
-    const categoria = aluno.categoria || 'aluno';
     if (CATEGORIA_ACESSO_LIVRE.has(categoria)) {
-      return { biometria_id: aluno.biometria_id, autorizado: true, aluno_nome: aluno.nome, motivo: null };
+      return {
+        biometria_id: aluno.biometria_id, autorizado: true, aluno_nome: aluno.nome, motivo: null, categoria,
+      };
     }
     if (categoria === 'visitante') {
       if (!visitanteDentroDoPeriodo(aluno.visitante_liberado_em, diasVisitante)) {
@@ -676,16 +681,23 @@ async function listarAutorizacoesBiometricas() {
           autorizado: false,
           aluno_nome: aluno.nome,
           motivo: `Período de ${diasVisitante} dia${diasVisitante === 1 ? '' : 's'} de acesso gratuito como visitante encerrado. Procure a recepção para se matricular.`,
+          categoria,
         };
       }
-      return { biometria_id: aluno.biometria_id, autorizado: true, aluno_nome: aluno.nome, motivo: null };
+      return {
+        biometria_id: aluno.biometria_id, autorizado: true, aluno_nome: aluno.nome, motivo: null, categoria,
+      };
     }
 
     const emAtraso = motivoStatus ? true : idsEmAtraso.has(aluno.id);
     if (emAtraso && !idsComConcessao.has(aluno.id)) {
-      return { biometria_id: aluno.biometria_id, autorizado: false, aluno_nome: aluno.nome, motivo: 'Existem mensalidades em atraso.' };
+      return {
+        biometria_id: aluno.biometria_id, autorizado: false, aluno_nome: aluno.nome, motivo: 'Existem mensalidades em atraso.', categoria,
+      };
     }
-    return { biometria_id: aluno.biometria_id, autorizado: true, aluno_nome: aluno.nome, motivo: null };
+    return {
+      biometria_id: aluno.biometria_id, autorizado: true, aluno_nome: aluno.nome, motivo: null, categoria,
+    };
   });
 }
 
@@ -708,7 +720,9 @@ async function notificarAgenteAtualizacaoAluno(alunoId) {
     if (!aluno || !aluno.biometria_id) return;
 
     const { autorizado, motivo } = await verificarAutorizacaoAluno(aluno);
-    const item = { biometria_id: aluno.biometria_id, autorizado, aluno_nome: aluno.nome, motivo };
+    const item = {
+      biometria_id: aluno.biometria_id, autorizado, aluno_nome: aluno.nome, motivo, categoria: aluno.categoria || 'aluno',
+    };
 
     await agenteGateway.enviarComando('atualizar_cache', { itens: [item], substituir_tudo: false });
   } catch {
@@ -861,8 +875,7 @@ async function liberarNaCatraca(mensagem) {
 // a catraca duas vezes seguidas pra ninguém. Estado em memória do processo
 // (não persiste em banco, uma entrada por aluno_id) — é só uma trava de
 // UX/anti-duplicidade, não um controle de segurança forte; reinicia com o
-// servidor. Configurável via COOLDOWN_LIBERACAO_FACIAL_MS pra ajustar sem
-// redeploy de código, caso o valor padrão fique curto/longo demais na prática.
+// servidor.
 //
 // 2026-08-13: era um cooldown GLOBAL (uma liberação de qualquer aluno
 // travava a liberação de qualquer outro por alguns segundos) — corrigido a
@@ -871,8 +884,10 @@ async function liberarNaCatraca(mensagem) {
 // não travar a fila inteira quando duas pessoas diferentes passam em
 // sequência rápida. Também isenta professor/colaborador (junto com
 // bolsista, que já tem acesso livre de mensalidade) do cooldown — pedido
-// explícito, essas categorias nunca devem ficar presas na trava.
-const COOLDOWN_LIBERACAO_FACIAL_MS = Number(process.env.COOLDOWN_LIBERACAO_FACIAL_MS || 6000);
+// explícito, essas categorias nunca devem ficar presas na trava. A duração
+// virou configurável pelo painel (Configurações > Tempo mínimo entre
+// liberações — ver obterCooldownAcesso em config.routes.js), no lugar do
+// valor fixo por env COOLDOWN_LIBERACAO_FACIAL_MS de antes.
 const CATEGORIAS_SEM_COOLDOWN_FACIAL = new Set([...CATEGORIA_ACESSO_LIVRE, 'professor']);
 const ultimaLiberacaoFacialPorAluno = new Map();
 
@@ -896,19 +911,21 @@ async function tentarLiberar({ aluno, metodo, mensagemDiagnostico }) {
     return { autorizado: false, motivo, aluno_nome: aluno ? aluno.nome : null, aluno_id: aluno ? aluno.id : null, cpf: aluno ? aluno.cpf : null, aviso_vencimento: avisoVencimento };
   }
 
-  // Cooldown entre liberações por face DO MESMO ALUNO (ver
-  // COOLDOWN_LIBERACAO_FACIAL_MS acima) — só entra DEPOIS de confirmar que a
-  // pessoa está autorizada (não queremos "gastar" o cooldown numa tentativa
-  // que já seria negada de qualquer jeito), só bloqueia quem está tentando
-  // entrar por reconhecimento facial (CPF, QR e biometria da própria catraca
-  // não usam este cooldown — cada um já exige uma ação física distinta que
-  // não se presta a "passar a liberação pra trás"), e nunca se aplica a
-  // professor/colaborador/bolsista (acesso livre, nunca travado por isso).
+  // Cooldown entre liberações por face DO MESMO ALUNO — só entra DEPOIS de
+  // confirmar que a pessoa está autorizada (não queremos "gastar" o cooldown
+  // numa tentativa que já seria negada de qualquer jeito), só bloqueia quem
+  // está tentando entrar por reconhecimento facial (CPF e QR não usam este
+  // cooldown — cada um já exige uma ação física distinta que não se presta a
+  // "passar a liberação pra trás"; biometria da própria catraca tem o seu
+  // PRÓPRIO cooldown, aplicado direto no agente local — ver
+  // agente-local/agente.js), e nunca se aplica a professor/colaborador/
+  // bolsista (acesso livre, nunca travado por isso).
   const categoriaAluno = aluno.categoria || 'aluno';
   if (metodo === 'facial' && !CATEGORIAS_SEM_COOLDOWN_FACIAL.has(categoriaAluno)) {
+    const { cooldown_facial_segundos: cooldownFacialSegundos } = await obterCooldownAcesso();
     const agoraMs = Date.now();
     const ultimaVezDesteAluno = ultimaLiberacaoFacialPorAluno.get(aluno.id) || 0;
-    const faltam = COOLDOWN_LIBERACAO_FACIAL_MS - (agoraMs - ultimaVezDesteAluno);
+    const faltam = (cooldownFacialSegundos * 1000) - (agoraMs - ultimaVezDesteAluno);
     if (faltam > 0) {
       const motivoCooldown = 'Aguarde alguns segundos antes da próxima liberação por reconhecimento facial.';
       await registrarAcesso({ alunoId: aluno.id, metodo, resultado: 'negado', mensagem: motivoCooldown });

@@ -72,6 +72,18 @@ const PADROES_BACKUP = {
 };
 const CHAVES_BACKUP = Object.keys(PADROES_BACKUP);
 
+// Tempo mínimo entre DUAS liberações da MESMA pessoa (2026-08-13 — antes era
+// só um valor fixo pra reconhecimento facial, via env COOLDOWN_LIBERACAO_
+// FACIAL_MS; agora configurável pelo painel, e cobre biometria da catraca
+// também, que nunca teve cooldown nenhum — ver acessoTerminal.service.js e
+// agente-local/agente.js). Guardado em segundos (mais natural pro admin
+// digitar do que milissegundos).
+const PADROES_COOLDOWN = {
+  cooldown_facial_segundos: '6',
+  cooldown_biometria_segundos: '6',
+};
+const CHAVES_COOLDOWN = Object.keys(PADROES_COOLDOWN);
+
 // GET /api/config — pública de propósito: a tela de login precisa mostrar o
 // nome do app e o "licenciado para" ANTES do usuário estar autenticado.
 // Não expõe nada sensível, só as strings de marca/identidade visual e a
@@ -307,4 +319,62 @@ router.put('/backup-config', autenticar, apenasAdmin, async (req, res, next) => 
   }
 });
 
-module.exports = { router, escreverBackupStream };
+// ---------------- Cooldown de acesso (tempo mínimo entre liberações da mesma pessoa) ----------------
+
+// GET /api/config/cooldown-acesso — admin only (ver comentário de PADROES_COOLDOWN acima)
+router.get('/cooldown-acesso', autenticar, apenasAdmin, async (req, res, next) => {
+  try {
+    const config = await obterCooldownAcesso();
+    res.json(config);
+  } catch (err) {
+    next(err);
+  }
+});
+
+const CooldownConfigSchema = z.object({
+  cooldown_facial_segundos: z.number().int().min(0).max(300).optional(),
+  cooldown_biometria_segundos: z.number().int().min(0).max(300).optional(),
+});
+
+// PUT /api/config/cooldown-acesso — admin only
+router.put('/cooldown-acesso', autenticar, apenasAdmin, async (req, res, next) => {
+  try {
+    const dados = CooldownConfigSchema.parse(req.body);
+    const chaves = Object.keys(dados);
+    if (chaves.length === 0) return res.status(400).json({ erro: 'Nenhum campo informado.' });
+
+    for (const chave of chaves) {
+      const valor = String(dados[chave]);
+      await db.execute({
+        sql: 'INSERT INTO configuracoes (chave, valor) VALUES (?, ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor',
+        args: [chave, valor],
+      });
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Lê o cooldown configurado (em segundos, já convertido pra ms) — usado por
+ * acessoTerminal.service.js (facial, checado a cada tentativa) e por
+ * terminal.routes.js (embutido na resposta de /cache-autorizacao, pro agente
+ * local aplicar o cooldown de biometria sozinho, sem round-trip de rede a
+ * cada leitura — ver agente-local/agente.js e cacheAutorizacao.js).
+ */
+async function obterCooldownAcesso() {
+  const result = await db.execute({
+    sql: `SELECT chave, valor FROM configuracoes WHERE chave IN (${CHAVES_COOLDOWN.map(() => '?').join(',')})`,
+    args: CHAVES_COOLDOWN,
+  });
+  const config = { ...PADROES_COOLDOWN };
+  result.rows.forEach((row) => { config[row.chave] = row.valor; });
+  return {
+    cooldown_facial_segundos: Number(config.cooldown_facial_segundos),
+    cooldown_biometria_segundos: Number(config.cooldown_biometria_segundos),
+  };
+}
+
+module.exports = { router, escreverBackupStream, obterCooldownAcesso };

@@ -1752,6 +1752,29 @@
           </div>
         </form>
 
+        <form id="form-config-cooldown" class="form-painel">
+          <h3 style="margin-top:0">Tempo mínimo entre liberações da mesma pessoa</h3>
+          <p style="margin-top:0;color:#667085;font-size:13px">
+            Evita que a MESMA pessoa libere a catraca duas vezes seguidas rápido demais (ex.: o scanner facial
+            contínuo do totem reconhece o mesmo rosto de novo antes dela terminar de passar, ou a leitura de
+            biometria repete sem querer). Não afeta pessoas diferentes em sequência — cada uma tem seu próprio
+            contador. Professor, colaborador e bolsista nunca ficam presos nessa espera. Coloque 0 pra desativar.
+          </p>
+          <div class="grid-2">
+            <div>
+              <label>Reconhecimento facial (segundos)</label>
+              <input id="cfg-cooldown-facial" type="number" min="0" max="300" step="1" />
+            </div>
+            <div>
+              <label>Biometria da catraca (segundos)</label>
+              <input id="cfg-cooldown-biometria" type="number" min="0" max="300" step="1" />
+            </div>
+          </div>
+          <div class="form-acoes">
+            <button type="submit" class="btn-primario">Salvar</button>
+          </div>
+        </form>
+
         <div class="form-painel">
           <h3 style="margin-top:0">Backup</h3>
           <p style="margin-top:0;color:#667085;font-size:13px">

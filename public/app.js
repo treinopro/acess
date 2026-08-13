@@ -413,7 +413,7 @@ function carregarSecao(nome) {
   if (nome === 'contas-pagar') carregarSecaoContasPagar();
   if (nome === 'pagamento-rapido') iniciarPagamentoRapido();
   if (nome === 'usuarios') carregarUsuarios();
-  if (nome === 'config') { carregarConfiguracoesForm(); carregarConfigBackup(); carregarPendenciasSincronizacao(); }
+  if (nome === 'config') { carregarConfiguracoesForm(); carregarConfigCooldown(); carregarConfigBackup(); carregarPendenciasSincronizacao(); }
   if (nome === 'recuperacao') carregarSecaoRecuperacao();
   if (nome === 'relatorios') carregarSecaoRelatorios();
   if (nome === 'biblioteca') carregarSecaoBiblioteca();
@@ -928,6 +928,30 @@ document.getElementById('btn-baixar-backup').addEventListener('click', async () 
     mostrarToast('Gerando backup...');
     await baixarArquivoAutenticado('/api/config/backup', `backup-academia-${hojeLocalISO()}.json`);
     mostrarToast('Backup baixado.');
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+// ---------------- Cooldown de acesso: tempo mínimo entre liberações da mesma pessoa ----------------
+// Guardado fora de GET/PUT /api/config (que é público) — mesmo padrão do
+// backup-config logo abaixo. Ver /api/config/cooldown-acesso em
+// src/routes/config.routes.js.
+async function carregarConfigCooldown() {
+  try {
+    const config = await api('/api/config/cooldown-acesso');
+    document.getElementById('cfg-cooldown-facial').value = config.cooldown_facial_segundos ?? 6;
+    document.getElementById('cfg-cooldown-biometria').value = config.cooldown_biometria_segundos ?? 6;
+  } catch (err) { mostrarToast(err.message, true); }
+}
+
+document.getElementById('form-config-cooldown').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const dados = {
+    cooldown_facial_segundos: Number(document.getElementById('cfg-cooldown-facial').value) || 0,
+    cooldown_biometria_segundos: Number(document.getElementById('cfg-cooldown-biometria').value) || 0,
+  };
+  try {
+    await api('/api/config/cooldown-acesso', { method: 'PUT', body: JSON.stringify(dados) });
+    mostrarToast('Tempo mínimo entre liberações salvo.');
   } catch (err) { mostrarToast(err.message, true); }
 });
 

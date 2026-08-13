@@ -12,6 +12,7 @@ const totemEventos = require('../services/totemEventos.service');
 const { criarLimitador } = require('../middleware/rateLimit');
 const { normalizarCpf } = require('../utils/cpf');
 const db = require('../db/client');
+const { obterCooldownAcesso } = require('./config.routes');
 
 const router = express.Router();
 
@@ -186,10 +187,17 @@ const limitadorCacheAutorizacao = criarLimitador({
 
 // GET /api/terminal/cache-autorizacao — snapshot completo (todos os alunos
 // com biometria vinculada) para o agente local popular/atualizar seu cache.
+// Também embute o cooldown de biometria configurado (Configurações > Tempo
+// mínimo entre liberações) — o agente aplica esse cooldown sozinho, direto
+// na leitura da catraca, sem round-trip de rede a cada toque (ver
+// agente-local/agente.js e cacheAutorizacao.js).
 terminal.get('/cache-autorizacao', limitadorCacheAutorizacao, autenticarTerminal, async (req, res, next) => {
   try {
-    const itens = await acessoTerminal.listarAutorizacoesBiometricas();
-    res.json({ atualizado_em: Date.now(), itens });
+    const [itens, cooldown] = await Promise.all([
+      acessoTerminal.listarAutorizacoesBiometricas(),
+      obterCooldownAcesso(),
+    ]);
+    res.json({ atualizado_em: Date.now(), itens, cooldown_biometria_segundos: cooldown.cooldown_biometria_segundos });
   } catch (err) {
     next(err);
   }
@@ -227,6 +235,16 @@ terminal.post('/acessos/lote', limitadorAcessosLote, autenticarTerminal, async (
         id: z.string().min(1),
         biometria_id: z.string().min(1),
         capturado_em: z.string().min(1).optional(),
+        // Preenchido só quando o agente JÁ decidiu negar localmente por um
+        // motivo que o servidor não enxerga (ex.: cooldown entre duas
+        // liberações da mesma biometria, ver agente-local/agente.js) —
+        // nunca usado pra afirmar 'liberado' (isso sempre é recalculado
+        // aqui a partir da mensalidade/status real, nunca confiado do
+        // agente) nem pra decisão nenhuma de acesso — o comando de liberar
+        // ou não a catraca já rodou local, isto aqui é só pro registro em
+        // "Últimos acessos" refletir o que realmente aconteceu.
+        resultado: z.literal('negado').optional(),
+        mensagem: z.string().optional(),
       })).max(200),
     }).parse(req.body);
 
@@ -246,6 +264,20 @@ terminal.post('/acessos/lote', limitadorAcessosLote, autenticarTerminal, async (
           processados.push(evento.id);
           continue;
         }
+
+        if (evento.resultado === 'negado') {
+          await acessoTerminal.registrarAcessoIdempotente({
+            id: evento.id,
+            alunoId: aluno.id,
+            metodo: 'biometria_catraca',
+            resultado: 'negado',
+            mensagem: evento.mensagem || 'Negado localmente pelo agente.',
+            criadoEm: evento.capturado_em,
+          });
+          processados.push(evento.id);
+          continue;
+        }
+
         const { autorizado, motivo } = await acessoTerminal.verificarAutorizacaoAluno(aluno);
         await acessoTerminal.registrarAcessoIdempotente({
           id: evento.id,

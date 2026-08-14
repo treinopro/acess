@@ -348,7 +348,7 @@ document.getElementById('input-notif-ativar').addEventListener('change', async (
   else await desativarNotificacoesPush();
 });
 
-document.getElementById('form-notificacoes-hub').addEventListener('submit', async (ev) => {
+document.getElementById('painel-hub-notificacoes').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const ativar = document.getElementById('input-notif-ativar').checked;
   const diasAntes = Number(document.getElementById('input-notif-dias-antes').value) || 3;

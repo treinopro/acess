@@ -33,6 +33,7 @@ const acessoTerminal = require('../services/acessoTerminal.service');
 const pagamentoContas = require('../services/pagamentoContas.service');
 const mercadopago = require('../services/payment/mercadopago.service');
 const emailBoasVindas = require('../services/emailBoasVindas.service');
+const webPush = require('../services/webPush.service');
 const { criarLimitador } = require('../middleware/rateLimit');
 const { normalizarCpf } = require('../utils/cpf');
 
@@ -159,6 +160,10 @@ router.get('/aluno', limitadorSenhaPortal, async (req, res, next) => {
       plano_atual: matricula.rows[0] || null,
       primeiro_acesso: primeiroAcesso,
       senha_gerada: senhaGerada,
+      // null = nunca perguntado (portal mostra o convite de opt-in) — ver
+      // comentário em schema.sql junto da coluna.
+      notificar_vencimento: aluno.notificar_vencimento,
+      notificar_vencimento_dias_antes: aluno.notificar_vencimento_dias_antes,
       // 2026-07-31: dados pessoais crus (não só o nome) — o front usa isso pra
       // saber quais campos faltam preencher antes do 1o cadastro facial (ver
       // POST /completar-cadastro logo abaixo). Muitos alunos antigos vieram
@@ -747,6 +752,115 @@ router.get('/upgrade/status/:cobrancaId', async (req, res, next) => {
   try {
     const resultado = await confirmarPagamentoEAtivarMatricula(req.params.cobrancaId);
     res.json(resultado);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Web Push (2026-08-13) — notificações que chegam mesmo com o portal fechado.
+// Mesmo padrão de autenticação do resto deste arquivo (cpf+senha por
+// requisição, sem sessão) — ver autenticarAlunoPortal() no topo.
+// ---------------------------------------------------------------------------
+
+// GET /api/portal/push/vapid-public-key — pública de propósito (o front
+// precisa dela ANTES de saber quem é o aluno, só pra montar a subscription
+// do navegador). Não expõe nada sensível, é uma chave pública por design.
+router.get('/push/vapid-public-key', (req, res) => {
+  res.json({ publicKey: webPush.chavePublicaVapid(), habilitado: webPush.pushHabilitado() });
+});
+
+const pushSubscriptionSchema = z.object({
+  cpf: z.string().min(1),
+  senha: z.string().min(1),
+  subscription: z.object({
+    endpoint: z.string().url(),
+    keys: z.object({ p256dh: z.string().min(1), auth: z.string().min(1) }),
+  }),
+});
+
+// POST /api/portal/push/subscribe — chamado toda vez que o front garante a
+// inscrição (não só na primeira vez), então usa UPSERT por endpoint: se o
+// mesmo aparelho já tinha uma subscription salva (ex.: reconectando depois
+// de uma rotação de chave VAPID), atualiza em vez de duplicar. Também é
+// assim que uma troca de aluno no MESMO aparelho transfere o endpoint pro
+// novo dono, igual documentado no skill de web push — comportamento
+// aceitável aqui (portal não tem conceito de "sessões simultâneas").
+router.post('/push/subscribe', limitadorSenhaPortal, async (req, res, next) => {
+  try {
+    const dados = pushSubscriptionSchema.parse(req.body);
+    const autenticado = await autenticarAlunoPortal(dados.cpf, dados.senha);
+    if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
+    const aluno = autenticado.aluno;
+
+    await db.execute({
+      sql: `INSERT INTO push_subscriptions (id, aluno_id, endpoint, p256dh, auth, user_agent)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(endpoint) DO UPDATE SET aluno_id = excluded.aluno_id, p256dh = excluded.p256dh, auth = excluded.auth, user_agent = excluded.user_agent`,
+      args: [
+        uuid(), aluno.id, dados.subscription.endpoint, dados.subscription.keys.p256dh,
+        dados.subscription.keys.auth, req.headers['user-agent'] || null,
+      ],
+    });
+
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/portal/notificacoes-preferencia { cpf, senha, notificar_vencimento, dias_antes? }
+// — grava a resposta do convite de opt-in (ver notificar_vencimento em
+// schema.sql) e, opcionalmente, o prazo escolhido em Configurações. Não
+// mexe em push_subscriptions — ativar/desativar a inscrição de verdade no
+// navegador é sempre uma chamada separada em /push/subscribe|unsubscribe
+// (esta rota só grava a PREFERÊNCIA declarada, que o job de aviso de
+// vencimento consulta pra decidir quem notificar).
+const notificacoesPreferenciaSchema = z.object({
+  cpf: z.string().min(1),
+  senha: z.string().min(1),
+  notificar_vencimento: z.boolean(),
+  dias_antes: z.number().int().min(1).max(30).optional(),
+});
+
+router.post('/notificacoes-preferencia', limitadorSenhaPortal, async (req, res, next) => {
+  try {
+    const dados = notificacoesPreferenciaSchema.parse(req.body);
+    const autenticado = await autenticarAlunoPortal(dados.cpf, dados.senha);
+    if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
+
+    if (dados.dias_antes) {
+      await db.execute({
+        sql: 'UPDATE alunos SET notificar_vencimento = ?, notificar_vencimento_dias_antes = ? WHERE id = ?',
+        args: [dados.notificar_vencimento ? 1 : 0, dados.dias_antes, autenticado.aluno.id],
+      });
+    } else {
+      await db.execute({
+        sql: 'UPDATE alunos SET notificar_vencimento = ? WHERE id = ?',
+        args: [dados.notificar_vencimento ? 1 : 0, autenticado.aluno.id],
+      });
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/portal/push/unsubscribe { cpf, senha, endpoint } — chamado
+// quando o aluno desliga notificações explicitamente nas Configurações.
+router.post('/push/unsubscribe', limitadorSenhaPortal, async (req, res, next) => {
+  try {
+    const dados = z.object({ cpf: z.string().min(1), senha: z.string().min(1), endpoint: z.string().url() }).parse(req.body);
+    const autenticado = await autenticarAlunoPortal(dados.cpf, dados.senha);
+    if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
+
+    await db.execute({
+      sql: 'DELETE FROM push_subscriptions WHERE aluno_id = ? AND endpoint = ?',
+      args: [autenticado.aluno.id, dados.endpoint],
+    });
+
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }

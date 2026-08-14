@@ -24,6 +24,7 @@ const contasPagarRoutes = require('./routes/contasPagar.routes');
 const { router: configRoutes } = require('./routes/config.routes');
 const { rodar: rodarBackup, verificarAgendamento: verificarAgendamentoBackup } = require('./jobs/backup');
 const { rodar: rodarMensagensAgendadas } = require('./jobs/mensagensAgendadas');
+const { rodar: rodarAvisoVencimento } = require('./jobs/avisoVencimento');
 const { atualizarCobrancasVencidas } = require('./services/cobrancas.service');
 const agenteGateway = require('./services/agenteGateway.service');
 const dbResiliente = require('./services/dbResiliente.service');
@@ -291,6 +292,17 @@ server.listen(PORT, () => {
     setInterval(() => {
       rodarMensagensAgendadas().catch((err) => console.error('[mensagensAgendadas] erro na execução agendada:', err));
     }, 60 * 1000);
+  }
+
+  // Aviso de vencimento por push (2026-08-13, ver src/jobs/avisoVencimento.js)
+  // — checagem de hora em hora é suficiente (o aviso não precisa ser
+  // instantâneo no minuto exato em que a cobrança entra na janela). Mesmo
+  // guard dos outros jobs.
+  if (EXECUTAR_JOBS_AGENDADOS) {
+    rodarAvisoVencimento().catch((err) => console.error('[avisoVencimento] erro na execução inicial:', err));
+    setInterval(() => {
+      rodarAvisoVencimento().catch((err) => console.error('[avisoVencimento] erro na execução agendada:', err));
+    }, 60 * 60 * 1000);
   }
 
   // "Modo totem offline-resiliente" (2026-07): só ativa quando

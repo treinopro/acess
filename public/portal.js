@@ -30,6 +30,91 @@ function formatarData(iso) {
   return iso.split('-').reverse().join('/');
 }
 
+// ---------------------------------------------------------------------------
+// Web Push (2026-08-13) — notificações que chegam mesmo com o portal fechado
+// (ex.: aviso de vencimento). Mesmo padrão validado no TreinoPro/Entregaí:
+// pede permissão só num gesto explícito do aluno (nunca no carregamento da
+// página sem contexto — o navegador pode simplesmente ignorar o pedido fora
+// de uma interação direta), compara a chave da subscription existente com a
+// atual antes de reaproveitar (protege contra uma eventual rotação de chave
+// VAPID deixar assinaturas mortas em silêncio).
+// ---------------------------------------------------------------------------
+
+function urlBase64ToUint8Array(base64) {
+  const padding = '='.repeat((4 - (base64.length % 4)) % 4);
+  const bruto = atob((base64 + padding).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from([...bruto].map((c) => c.charCodeAt(0)));
+}
+
+function chavesIguais(chaveAtualBuffer, chaveEsperadaUint8) {
+  if (!chaveAtualBuffer) return false;
+  const atual = new Uint8Array(chaveAtualBuffer);
+  return atual.length === chaveEsperadaUint8.length && atual.every((b, i) => b === chaveEsperadaUint8[i]);
+}
+
+/**
+ * Garante uma PushSubscription válida pro aluno logado (cpfHubAtual/
+ * senhaHubAtual) e manda pro servidor. Chamar só a partir de um clique
+ * explícito (checkbox/botão de "ativar notificações") — nunca sozinho no
+ * carregamento da página. Retorna um status pra quem chamou decidir o que
+ * mostrar: 'unsupported' | 'denied' | 'subscribed' | 'erro'.
+ */
+async function ativarNotificacoesPush() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return 'unsupported';
+  if (Notification.permission === 'denied') return 'denied';
+
+  try {
+    const { publicKey, habilitado } = await api('/api/portal/push/vapid-public-key');
+    if (!habilitado || !publicKey) return 'erro';
+
+    if (Notification.permission === 'default') {
+      const permissao = await Notification.requestPermission();
+      if (permissao !== 'granted') return 'denied';
+    }
+
+    const registro = await navigator.serviceWorker.ready;
+    const chaveEsperada = urlBase64ToUint8Array(publicKey);
+    let sub = await registro.pushManager.getSubscription();
+
+    if (sub && !chavesIguais(sub.options && sub.options.applicationServerKey, chaveEsperada)) {
+      // Assinatura presa numa chave VAPID antiga (ex.: par de chaves foi
+      // regenerado no servidor) — desinscreve e força uma nova.
+      await sub.unsubscribe();
+      sub = null;
+    }
+
+    if (!sub) {
+      sub = await registro.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: chaveEsperada });
+    }
+
+    await api('/api/portal/push/subscribe', {
+      method: 'POST',
+      body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, subscription: sub.toJSON() }),
+    });
+    return 'subscribed';
+  } catch (err) {
+    console.error('[push] falha ao ativar notificações:', err.message);
+    return 'erro';
+  }
+}
+
+/** Desliga notificações neste aparelho (chamado ao desmarcar a caixa em Configurações). */
+async function desativarNotificacoesPush() {
+  try {
+    if (!('serviceWorker' in navigator)) return;
+    const registro = await navigator.serviceWorker.ready;
+    const sub = await registro.pushManager.getSubscription();
+    if (!sub) return;
+    await api('/api/portal/push/unsubscribe', {
+      method: 'POST',
+      body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, endpoint: sub.endpoint }),
+    });
+    await sub.unsubscribe();
+  } catch (err) {
+    console.error('[push] falha ao desativar notificações:', err.message);
+  }
+}
+
 let configApp = { nome_app: 'Academia Gestão', whatsapp_contato: '', treino_app_url: '' };
 
 async function carregarConfigPublica() {
@@ -159,7 +244,7 @@ function resetHub() {
 // dashboard); só faz o reset completo pro início quando já está no menu
 // principal (ou na tela de CPF).
 document.getElementById('btn-voltar-hub').addEventListener('click', () => {
-  const SUBPAINEIS_HUB = ['painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-avaliacoes'];
+  const SUBPAINEIS_HUB = ['painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-avaliacoes', 'painel-hub-notificacoes'];
   const painelAberto = SUBPAINEIS_HUB.find((id) => !document.getElementById(id).classList.contains('oculto'));
   if (painelAberto) {
     if (painelAberto === 'painel-hub-pix') pararPollPixHub();
@@ -204,9 +289,95 @@ function preencherDashboardHub(info) {
     linkAgendar.classList.add('oculto');
   }
 
+  atualizarCardNotificacoes(info);
   carregarResumoContasHub();
   carregarAvaliacoesHub();
 }
+
+// ---- Notificações de vencimento (2026-08-13) ----
+
+// notificar_vencimento: null = nunca perguntado (mostra o convite) — 0/1 =
+// já respondeu (só reflete no card, sem convite de novo).
+function atualizarCardNotificacoes(info) {
+  const convite = document.getElementById('convite-notificacoes-hub');
+  const diasAntesAtual = info.notificar_vencimento_dias_antes || 3;
+
+  if (info.notificar_vencimento === null || info.notificar_vencimento === undefined) {
+    convite.classList.remove('oculto');
+  } else {
+    convite.classList.add('oculto');
+  }
+
+  document.getElementById('card-notificacoes-resumo').textContent = info.notificar_vencimento
+    ? `Ativadas — avisamos ${diasAntesAtual} dia${diasAntesAtual === 1 ? '' : 's'} antes do vencimento.`
+    : 'Desativadas. Toque para ativar o aviso de vencimento.';
+  document.getElementById('input-notif-dias-antes').value = diasAntesAtual;
+  document.getElementById('input-notif-ativar').checked = Boolean(info.notificar_vencimento);
+}
+
+document.getElementById('btn-convite-notif-sim').addEventListener('click', async () => {
+  const resultado = await ativarNotificacoesPush();
+  await api('/api/portal/notificacoes-preferencia', {
+    method: 'POST',
+    body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, notificar_vencimento: true }),
+  }).catch(() => {});
+  document.getElementById('convite-notificacoes-hub').classList.add('oculto');
+  document.getElementById('card-notificacoes-resumo').textContent = 'Ativadas — avisamos 3 dias antes do vencimento.';
+  document.getElementById('input-notif-ativar').checked = true;
+  if (resultado === 'denied') {
+    alert('Notificação de vencimento ativada, mas o navegador bloqueou o aviso automático. Você pode permitir depois nas configurações do navegador, ou continuar vendo o aviso aqui no portal normalmente.');
+  }
+});
+
+document.getElementById('btn-convite-notif-nao').addEventListener('click', async () => {
+  await api('/api/portal/notificacoes-preferencia', {
+    method: 'POST',
+    body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, notificar_vencimento: false }),
+  }).catch(() => {});
+  document.getElementById('convite-notificacoes-hub').classList.add('oculto');
+});
+
+document.getElementById('btn-abrir-notificacoes').addEventListener('click', () => {
+  ocultarPaineisHub();
+  document.getElementById('painel-hub-notificacoes').classList.remove('oculto');
+});
+
+document.getElementById('input-notif-ativar').addEventListener('change', async (ev) => {
+  const ligar = ev.target.checked;
+  if (ligar) await ativarNotificacoesPush();
+  else await desativarNotificacoesPush();
+});
+
+document.getElementById('form-notificacoes-hub').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const ativar = document.getElementById('input-notif-ativar').checked;
+  const diasAntes = Number(document.getElementById('input-notif-dias-antes').value) || 3;
+  try {
+    await api('/api/portal/notificacoes-preferencia', {
+      method: 'POST',
+      body: JSON.stringify({
+        cpf: cpfHubAtual, senha: senhaHubAtual, notificar_vencimento: ativar, dias_antes: diasAntes,
+      }),
+    });
+    document.getElementById('card-notificacoes-resumo').textContent = ativar
+      ? `Ativadas — avisamos ${diasAntes} dia${diasAntes === 1 ? '' : 's'} antes do vencimento.`
+      : 'Desativadas. Toque para ativar o aviso de vencimento.';
+    alert('Preferência salva.');
+  } catch (err) {
+    alert(err.message);
+  }
+});
+
+// Incentivo a instalar o portal na tela de início — Web Push no Safari/iOS
+// só é entregue com o app instalado (não funciona numa aba normal, mesmo
+// com a assinatura salva certinha). Mostra só se ainda não estiver rodando
+// em modo standalone (ou seja, já instalado).
+(function avisoInstalarApp() {
+  const jaInstalado = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+  if (jaInstalado) return;
+  const aviso = document.getElementById('aviso-instalar-app');
+  if (aviso) aviso.classList.remove('oculto');
+})();
 
 // ---- Minhas avaliações ----
 
@@ -436,37 +607,45 @@ function contaMaisUrgente(contas) {
   return escolhida ? { conta: escolhida, dias: diasEscolhida } : null;
 }
 
+// 2026-08-13: pedido do dono do sistema — antes só aparecia quando urgente
+// (≤3 dias ou já vencido); agora fica sempre visível, com a data concreta,
+// logo ao acessar o app (não só quando o aluno abre "Contas"). A cor/tom
+// ainda muda com a urgência, mas a VISIBILIDADE não depende mais disso.
 function atualizarAvisoVencimento(contas) {
   const el = document.getElementById('aviso-vencimento-hub');
   if (!el) return;
 
   const urgente = contaMaisUrgente(contas);
-  if (!urgente || urgente.dias > 3) {
-    el.classList.add('oculto');
-    el.textContent = '';
+  if (!urgente) {
+    el.textContent = '✅ Sua mensalidade está em dia.';
+    el.className = 'aviso-vencimento em-dia';
     return;
   }
 
-  const { dias } = urgente;
+  const { dias, conta } = urgente;
+  const dataFormatada = formatarData(conta.vencimento);
   let texto;
   let classe;
   if (dias < 0) {
     const diasAtraso = Math.abs(dias);
-    texto = `⚠️ Mensalidade vencida há ${diasAtraso} dia${diasAtraso === 1 ? '' : 's'}. Regularize para evitar bloqueio de acesso.`;
+    texto = `⚠️ Sua mensalidade venceu dia ${dataFormatada} (há ${diasAtraso} dia${diasAtraso === 1 ? '' : 's'}). Regularize para evitar bloqueio de acesso.`;
     classe = 'vencido';
   } else if (dias === 0) {
-    texto = '⏰ Sua mensalidade vence hoje.';
+    texto = `⏰ Sua mensalidade vence hoje, dia ${dataFormatada}.`;
     classe = 'hoje';
-  } else {
-    texto = `⏳ Sua mensalidade vence em ${dias} dia${dias === 1 ? '' : 's'}.`;
+  } else if (dias <= 3) {
+    texto = `⏳ Sua mensalidade vence dia ${dataFormatada} (em ${dias} dia${dias === 1 ? '' : 's'}).`;
     classe = 'proximo';
+  } else {
+    texto = `📅 Sua mensalidade vence dia ${dataFormatada}.`;
+    classe = 'futuro';
   }
   el.textContent = texto;
   el.className = `aviso-vencimento ${classe}`;
 }
 
 function ocultarPaineisHub() {
-  ['painel-hub-dashboard', 'painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-comprovante', 'painel-hub-completar-cadastro', 'painel-hub-facial']
+  ['painel-hub-dashboard', 'painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-comprovante', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-notificacoes']
     .forEach((id) => document.getElementById(id).classList.add('oculto'));
 }
 

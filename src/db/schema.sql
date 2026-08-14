@@ -61,6 +61,17 @@ CREATE TABLE IF NOT EXISTS alunos (
   -- nunca importados. Usado pela migracao pra decidir "ja existe, so
   -- atualiza" em vez de criar duplicata a cada nova tentativa de migracao.
   secullum_id TEXT,
+  -- Preferência de notificação de vencimento pelo portal (2026-08-13, ver
+  -- src/routes/portal.routes.js). NULL = nunca perguntado ainda (o portal
+  -- mostra o convite de opt-in na próxima vez que o aluno acessar) — 0 =
+  -- perguntado e recusou — 1 = perguntado e aceitou (ver webPush.service.js
+  -- e o job de aviso de vencimento). Usar NULL como terceiro estado evita
+  -- precisar de uma coluna "ja_perguntado" separada.
+  notificar_vencimento INTEGER,
+  -- Quantos dias antes do vencimento o aviso por push deve começar a chegar
+  -- (só importa quando notificar_vencimento = 1). Padrão 3 pra bater com o
+  -- mesmo limiar já usado no aviso visual da home do portal.
+  notificar_vencimento_dias_antes INTEGER NOT NULL DEFAULT 3,
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -203,6 +214,12 @@ CREATE TABLE IF NOT EXISTS cobrancas (
   -- Chave usada pela migracao pra nunca duplicar a mesma conta em duas
   -- tentativas de importacao.
   secullum_numero TEXT,
+  -- Marca que já foi mandado (ou não é mais o caso de mandar) o aviso de
+  -- vencimento por push pra esta cobrança específica (2026-08-13, ver
+  -- src/jobs/avisoVencimento.js) — evita reenviar todo dia enquanto a conta
+  -- ficar dentro da janela configurada pelo aluno (notificar_vencimento_
+  -- dias_antes em alunos). Uma cobrança só recebe UM aviso na vida.
+  aviso_vencimento_enviado INTEGER NOT NULL DEFAULT 0,
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -454,6 +471,24 @@ CREATE TABLE IF NOT EXISTS mensagens_agendadas (
   processado_em TEXT
 );
 
+-- Web Push (2026-08-13): assinaturas de notificação push do portal do aluno
+-- (mesmo padrão validado no TreinoPro/Entregaí — ver web-push-setup skill).
+-- Uma linha por dispositivo/navegador que o aluno autorizou (PushSubscription
+-- do navegador, endpoint é único por dispositivo). `endpoint` é a própria
+-- chave de idempotência: reassinar no mesmo aparelho faz UPSERT em vez de
+-- duplicar. Guarda o user_agent só pra o aluno identificar "qual aparelho é
+-- esse" numa eventual lista de dispositivos (não usado pra nada funcional).
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id TEXT PRIMARY KEY,
+  aluno_id TEXT NOT NULL REFERENCES alunos(id) ON DELETE CASCADE,
+  endpoint TEXT NOT NULL UNIQUE,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  user_agent TEXT,
+  criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_push_subscriptions_aluno ON push_subscriptions(aluno_id);
 CREATE INDEX IF NOT EXISTS idx_alunos_status ON alunos(status);
 CREATE INDEX IF NOT EXISTS idx_alunos_categoria ON alunos(categoria);
 CREATE INDEX IF NOT EXISTS idx_alunos_indicado_por ON alunos(indicado_por_aluno_id);

@@ -68,9 +68,13 @@ if ('serviceWorker' in navigator) {
 
   .aviso-caixa { background: #0f172a; border-radius: 10px; padding: 14px; font-size: 13px; color: #cbd5e1; }
 
-  /* Aviso de vencimento da mensalidade — aparece 3 dias antes do vencimento,
-     no dia do vencimento e enquanto continuar em atraso (ver portal.js). */
-  .aviso-vencimento { border-radius: 10px; padding: 12px 14px; font-size: 13px; font-weight: 700; margin-bottom: 16px; width: 100%; max-width: 440px; text-align: left; }
+  /* Aviso de vencimento da mensalidade — 2026-08-13: sempre visível assim
+     que o aluno acessa o app (não só quando está perto/atrasado), tamanho
+     grande de propósito pra ser a primeira coisa que ele vê no dashboard
+     (ver preencherDashboardHub/atualizarAvisoVencimento em portal.js). */
+  .aviso-vencimento { border-radius: 14px; padding: 18px 20px; font-size: 16px; font-weight: 700; line-height: 1.4; margin-bottom: 20px; width: 100%; max-width: 440px; text-align: left; }
+  .aviso-vencimento.em-dia { background: #052e1b; color: #86efac; border: 1px solid #15803d; }
+  .aviso-vencimento.futuro { background: #0c2d48; color: #7dd3fc; border: 1px solid #0369a1; }
   .aviso-vencimento.proximo { background: #422006; color: #fbbf24; border: 1px solid #92400e; }
   .aviso-vencimento.hoje { background: #431407; color: #fb923c; border: 1px solid #c2410c; }
   .aviso-vencimento.vencido { background: #450a0a; color: #fca5a5; border: 1px solid #b91c1c; }
@@ -196,6 +200,19 @@ if ('serviceWorker' in navigator) {
 
       <div class="aviso-vencimento oculto" id="aviso-vencimento-hub"></div>
 
+      <div class="cartao oculto" id="aviso-instalar-app" style="text-align:left;background:#0c2d48;border-color:#0369a1">
+        <p style="margin:0;font-size:13px">📲 Adicione este portal à tela de início do seu celular — assim as notificações de vencimento chegam certinho, mesmo no iPhone.</p>
+      </div>
+
+      <div class="cartao oculto" id="convite-notificacoes-hub" style="text-align:left">
+        <h3>🔔 Quer ser avisado do vencimento?</h3>
+        <p>Mandamos uma notificação alguns dias antes da sua mensalidade vencer, direto no celular.</p>
+        <div style="display:flex;gap:10px">
+          <button class="botao-grande primario" id="btn-convite-notif-sim" style="margin:0">Sim, quero</button>
+          <button class="botao-grande secundario" id="btn-convite-notif-nao" style="margin:0">Agora não</button>
+        </div>
+      </div>
+
       <div class="cartao" id="card-contas">
         <h3>Contas em aberto</h3>
         <p id="card-contas-resumo">Consultando...</p>
@@ -214,6 +231,12 @@ if ('serviceWorker' in navigator) {
         <button class="botao-grande secundario" id="btn-abrir-upgrade" style="margin:0">Trocar / assinar plano</button>
       </div>
 
+      <div class="cartao" id="card-notificacoes">
+        <h3>🔔 Notificações</h3>
+        <p id="card-notificacoes-resumo">Consultando...</p>
+        <button class="botao-grande secundario" id="btn-abrir-notificacoes" style="margin:0">Configurar</button>
+      </div>
+
       <div class="cartao oculto" id="card-facial">
         <h3>Reconhecimento facial</h3>
         <p>Cadastre seu rosto agora e a catraca da academia já reconhece você na próxima visita.</p>
@@ -227,6 +250,20 @@ if ('serviceWorker' in navigator) {
         <a class="botao-grande primario oculto" id="link-agendar-avaliacao" style="margin:0;display:block;text-decoration:none;text-align:center" target="_blank" rel="noopener">Agendar pelo WhatsApp</a>
       </div>
     </div>
+
+    <!-- Configurações de notificações -->
+    <form class="cartao oculto" id="painel-hub-notificacoes" style="text-align:left">
+      <h3 style="margin-top:0">Notificações</h3>
+      <label style="display:flex;align-items:center;gap:10px;margin-bottom:16px;cursor:pointer">
+        <input type="checkbox" id="input-notif-ativar" style="width:20px;height:20px" />
+        <span>Avisar quando minha mensalidade estiver vencendo</span>
+      </label>
+      <label style="display:block;margin-bottom:6px;font-size:13px;color:#94a3b8">Avisar quantos dias antes do vencimento?</label>
+      <input class="campo" id="input-notif-dias-antes" type="number" min="1" max="30" value="3" style="max-width:120px" />
+      <div class="form-acoes" style="margin-top:16px">
+        <button type="submit" class="botao-grande primario" style="margin:0">Salvar</button>
+      </div>
+    </form>
 
     <!-- Minhas avaliações -->
     <div class="cartao oculto" id="painel-hub-avaliacoes" style="text-align:left">

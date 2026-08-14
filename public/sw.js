@@ -8,15 +8,14 @@
 // fallback pro banco local etc.) já existe em nível de aplicação, ver
 // dbResiliente.service.js/filaAcessosOffline.service.js, e cachear
 // respostas de API aqui só criaria uma segunda fonte de verdade divergente.
-// v2 (2026-08-05): shell mudou (link "Avaliação física" no menu, ver
-// index.html/style.css) — subir a versão aqui é o que faz o navegador
-// perceber que o service worker mudou, buscar de novo, e descartar o
-// cache antigo do shell (a troca é automática: install->skipWaiting,
-// activate apaga qualquer CACHE_NAME diferente deste e chama
-// clients.claim()). Sem bumpar a versão, o stale-while-revalidate abaixo
-// continua servindo o HTML/CSS antigos do cache indefinidamente, mesmo
-// com os arquivos já atualizados no servidor.
-const CACHE_NAME = 'academia-shell-v2';
+// v3 (2026-08-13): adiciona handlers de push/notificationclick (ver embaixo)
+// — subir a versão aqui é o que faz o navegador perceber que o service
+// worker mudou, buscar de novo, e descartar o cache antigo do shell (a
+// troca é automática: install->skipWaiting, activate apaga qualquer
+// CACHE_NAME diferente deste e chama clients.claim()). Sem bumpar a versão,
+// o stale-while-revalidate abaixo continua servindo o HTML/CSS antigos do
+// cache indefinidamente, mesmo com os arquivos já atualizados no servidor.
+const CACHE_NAME = 'academia-shell-v3';
 
 self.addEventListener('install', () => {
   self.skipWaiting();
@@ -50,6 +49,42 @@ self.addEventListener('fetch', (event) => {
         })
         .catch(() => cacheado);
       return cacheado || buscaRede;
+    })
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Web Push (2026-08-13) — só o portal do aluno assina (ver portal.js), mas
+// o service worker é compartilhado com totem/painel, então o handler fica
+// aqui junto com o resto. Payload sempre é JSON: { title, body, url, tag }
+// (ver webPush.service.js, enviarParaAluno). `tag` (opcional) faz o
+// navegador substituir uma notificação anterior com a mesma tag em vez de
+// empilhar (ex.: várias notificações de "vencimento" não precisam de uma
+// pra cada tentativa).
+self.addEventListener('push', (event) => {
+  let payload = {};
+  try { payload = event.data ? event.data.json() : {}; } catch { payload = {}; }
+
+  event.waitUntil(
+    self.registration.showNotification(payload.title || 'Academia Superação', {
+      body: payload.body || '',
+      icon: 'icons/icon-192.png',
+      badge: 'icons/icon-192.png',
+      tag: payload.tag || undefined,
+      data: { url: payload.url || '/portal.html' },
+    })
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || '/portal.html';
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((lista) => {
+      for (const cliente of lista) {
+        if ('focus' in cliente) { cliente.focus(); return undefined; }
+      }
+      return self.clients.openWindow(url);
     })
   );
 });

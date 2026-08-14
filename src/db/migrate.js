@@ -49,6 +49,11 @@ const ALTERACOES_INCREMENTAIS = [
   "ALTER TABLE treino_exercicios ADD COLUMN metodo TEXT",
   "ALTER TABLE treino_exercicios ADD COLUMN dica TEXT",
   "ALTER TABLE treino_exercicios ADD COLUMN concluido INTEGER NOT NULL DEFAULT 0",
+  // Preferência de notificação de vencimento pelo portal (2026-08-13) — ver
+  // comentário detalhado junto da definição de "alunos" em schema.sql.
+  "ALTER TABLE alunos ADD COLUMN notificar_vencimento INTEGER",
+  "ALTER TABLE alunos ADD COLUMN notificar_vencimento_dias_antes INTEGER NOT NULL DEFAULT 3",
+  "ALTER TABLE cobrancas ADD COLUMN aviso_vencimento_enviado INTEGER NOT NULL DEFAULT 0",
 ];
 
 // Divide um arquivo .sql em statements individuais (o driver libsql nao aceita

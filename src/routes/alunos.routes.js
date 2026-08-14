@@ -997,6 +997,16 @@ router.post('/:id/avaliacoes', async (req, res, next) => {
     }
 
     if (!ids.length) return res.status(400).json({ erro: 'Informe pelo menos uma medida.' });
+
+    // 2026-08-14: passo a passo da avaliação (ver Pendências) — cada envio
+    // deste formulário representa um "evento" de avaliação novo, então cria
+    // um pipeline por submissão, não um por linha de avaliacoes (que já é
+    // dividido por tipo/Antropometria/Bioimpedância/Perimetria acima).
+    await db.execute({
+      sql: 'INSERT INTO avaliacao_pipeline (id, aluno_id, data_avaliacao, criado_por) VALUES (?, ?, ?, ?)',
+      args: [uuid(), req.params.id, dados.data_avaliacao, req.usuario?.id || null],
+    });
+
     res.status(201).json({ ids });
   } catch (err) {
     next(err);

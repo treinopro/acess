@@ -409,6 +409,7 @@ function carregarSecao(nome) {
   if (nome === 'alunos') carregarAlunos();
   if (nome === 'planos') carregarPlanos();
   if (nome === 'produtos-servicos') carregarProdutosServicos();
+  if (nome === 'pendencias') carregarPendencias();
   if (nome === 'agenda') carregarAgenda();
   if (nome === 'pagamentos') carregarPagamentos();
   if (nome === 'contas-pagar') carregarSecaoContasPagar();
@@ -1415,11 +1416,12 @@ window.addEventListener('beforeunload', (ev) => {
   ev.returnValue = '';
 });
 
-async function abrirPerfilAluno(alunoId) {
+async function abrirPerfilAluno(alunoId, abaInicial = 'dados') {
   perfilAtualId = alunoId;
   document.querySelectorAll('.secao').forEach((s) => s.classList.add('oculto'));
   document.getElementById('secao-perfil-aluno').classList.remove('oculto');
-  trocarAbaPerfil('dados'); // sempre volta pra primeira aba ao abrir um aluno diferente
+  trocarAbaPerfil(abaInicial); // por padrão sempre volta pra primeira aba ao abrir um aluno diferente — Pendências
+  // (ver carregarPendencias) pode pedir pra abrir direto numa aba específica, ex.: "treino" pra prescrever.
   await carregarPerfilAluno();
 }
 
@@ -2851,6 +2853,78 @@ async function carregarVendasProdutosServicos() {
   } catch (err) { mostrarToast(err.message, true); }
 }
 document.getElementById('btn-filtrar-vendas-produtos-servicos').addEventListener('click', carregarVendasProdutosServicos);
+
+// ---------------- PENDÊNCIAS (2026-08-14) ----------------
+
+// texto do botão "avançar etapa" — pra prescrever_treino, o botão de AVANÇAR
+// (só marca a etapa como feita) fica com texto diferente do botão de ABRIR o
+// perfil na aba Treino (esse é sempre "Prescrever treino", ver mais abaixo),
+// senão ficam dois botões com o mesmo nome fazendo coisas diferentes.
+const ROTULO_PROXIMA_ETAPA = {
+  realizada: { texto: 'Marcar avaliação como realizada', proximaEtapa: 'realizada' },
+  prescrever_treino: { texto: 'Marcar treino como prescrito', proximaEtapa: 'prescrever_treino' },
+  treino_ok: { texto: 'Confirmar treino aplicado', proximaEtapa: 'treino_ok' },
+};
+
+async function carregarPendencias() {
+  try {
+    const { pendencias } = await api('/api/pendencias');
+    const badge = document.getElementById('pendencias-badge');
+    badge.textContent = String(pendencias.length);
+    badge.classList.toggle('oculto', pendencias.length === 0);
+
+    const container = document.getElementById('lista-pendencias');
+    document.getElementById('pendencias-vazio').classList.toggle('oculto', pendencias.length > 0);
+    container.innerHTML = '';
+
+    pendencias.forEach((p) => {
+      const card = el(`
+        <div class="cartao" style="text-align:left;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+          <div>
+            <span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline;font-weight:600">${escapeHtml(p.aluno_nome)}</span>
+            <p style="margin:4px 0 0;font-size:13px;color:#667085">${escapeHtml(p.detalhe)}</p>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap" id="acoes-pendencia-${p.tipo}-${p.id}"></div>
+        </div>
+      `);
+      card.querySelector('.nome-clicavel').addEventListener('click', () => abrirPerfilAluno(p.aluno_id));
+
+      const acoes = card.querySelector(`#acoes-pendencia-${p.tipo}-${p.id}`);
+      if (p.tipo === 'servico_vencido') {
+        const btn = el('<button class="btn-secundario">Marcar como resolvido</button>');
+        btn.addEventListener('click', async () => {
+          try {
+            await api(`/api/produtos-servicos/vendas/${p.id}/resolver-pendencia`, { method: 'PATCH' });
+            mostrarToast('Pendência resolvida.');
+            carregarPendencias();
+          } catch (err) { mostrarToast(err.message, true); }
+        });
+        acoes.appendChild(btn);
+      } else if (p.tipo === 'renovacao_avaliacao') {
+        const btn = el('<button class="btn-primario">Realizar avaliação</button>');
+        btn.addEventListener('click', () => abrirPerfilAluno(p.aluno_id, 'avaliacoes'));
+        acoes.appendChild(btn);
+      } else if (p.tipo === 'etapa_avaliacao') {
+        const rotulo = ROTULO_PROXIMA_ETAPA[p.etapa];
+        if (p.etapa === 'prescrever_treino') {
+          const btnTreino = el('<button class="btn-primario">Prescrever treino</button>');
+          btnTreino.addEventListener('click', () => abrirPerfilAluno(p.aluno_id, 'treino'));
+          acoes.appendChild(btnTreino);
+        }
+        const btnAvancar = el(`<button class="btn-secundario">${rotulo.texto}</button>`);
+        btnAvancar.addEventListener('click', async () => {
+          try {
+            await api(`/api/pendencias/avaliacao/${p.id}/etapa`, { method: 'PATCH', body: JSON.stringify({ etapa: rotulo.proximaEtapa }) });
+            mostrarToast('Etapa atualizada.');
+            carregarPendencias();
+          } catch (err) { mostrarToast(err.message, true); }
+        });
+        acoes.appendChild(btnAvancar);
+      }
+      container.appendChild(card);
+    });
+  } catch (err) { mostrarToast(err.message, true); }
+}
 
 // ---------------- TURMAS & AGENDA ----------------
 

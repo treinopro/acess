@@ -113,6 +113,29 @@ CREATE TABLE IF NOT EXISTS avaliacoes_fisicas (
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Passo a passo de cada avaliação física (2026-08-14) — criado
+-- automaticamente sempre que um novo grupo de avaliação é registrado (ver
+-- POST /api/alunos/:id/avaliacoes). "Avaliação criada" é o próprio
+-- criado_em; os três passos seguintes são marcados manualmente pelo
+-- professor. A avaliação MAIS RECENTE de um aluno (por data_avaliacao) que
+-- já passou da cadência de 90 dias (mesmo limiar usado no portal, ver
+-- portal.js/CADENCIA_AVALIACAO_DIAS) vira uma pendência de renovação — sem
+-- precisar de coluna própria de "resolvida": assim que uma avaliação NOVA é
+-- criada pro mesmo aluno, ela passa a ser a "mais recente" e a pendência
+-- desaparece sozinha.
+CREATE TABLE IF NOT EXISTS avaliacao_pipeline (
+  id TEXT PRIMARY KEY,
+  aluno_id TEXT NOT NULL REFERENCES alunos(id) ON DELETE CASCADE,
+  data_avaliacao TEXT NOT NULL,
+  etapa_realizada_em TEXT,
+  etapa_prescrever_treino_em TEXT,
+  etapa_treino_ok_em TEXT,
+  criado_por TEXT REFERENCES usuarios(id),
+  criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_avaliacao_pipeline_aluno ON avaliacao_pipeline(aluno_id);
+
 -- Perguntas configuraveis de anamnese (sim/nao ou texto curto), pensadas para
 -- preenchimento rapido (inclusive futuramente no totem/autoatendimento).
 CREATE TABLE IF NOT EXISTS anamnese_perguntas (

@@ -1,0 +1,121 @@
+/**
+ * Pendências (2026-08-14) — um só lugar pro professor ver tudo que precisa
+ * de atenção: serviços vencidos (ver produtosServicos.routes.js) e
+ * avaliações físicas (renovação vencida, ou etapa do passo a passo ainda
+ * não concluída). Nunca bloqueia acesso do aluno — é só uma lista de
+ * lembretes internos pro staff.
+ */
+const express = require('express');
+const { z } = require('zod');
+const db = require('../db/client');
+const { autenticar } = require('../middleware/auth');
+const { listarPendenciasServicosVencidos } = require('./produtosServicos.routes');
+
+const router = express.Router();
+router.use(autenticar);
+
+// Mesma cadência usada no portal (public/portal.js, CADENCIA_AVALIACAO_DIAS)
+// — mantida em sincronia manualmente de propósito (são só duas ocorrências,
+// não vale a complexidade de expor isso como configuração ainda).
+const CADENCIA_AVALIACAO_DIAS = 90;
+
+const ETAPAS_AVALIACAO = ['realizada', 'prescrever_treino', 'treino_ok'];
+const PROXIMA_ETAPA_LABEL = {
+  realizada: 'Confirmar que a avaliação foi realizada',
+  prescrever_treino: 'Prescrever treino',
+  treino_ok: 'Confirmar treino aplicado',
+};
+
+/** A avaliação MAIS RECENTE de cada aluno (por data_avaliacao) — só essa entra em qualquer pendência. */
+async function listarPipelinesMaisRecentes() {
+  const result = await db.execute(`
+    WITH ranked AS (
+      SELECT ap.*, a.nome as aluno_nome,
+        ROW_NUMBER() OVER (PARTITION BY ap.aluno_id ORDER BY ap.data_avaliacao DESC, ap.criado_em DESC) as rn
+      FROM avaliacao_pipeline ap
+      JOIN alunos a ON a.id = ap.aluno_id
+    )
+    SELECT * FROM ranked WHERE rn = 1
+  `);
+  return result.rows;
+}
+
+function proximaEtapaPendente(pipeline) {
+  if (!pipeline.etapa_realizada_em) return 'realizada';
+  if (!pipeline.etapa_prescrever_treino_em) return 'prescrever_treino';
+  if (!pipeline.etapa_treino_ok_em) return 'treino_ok';
+  return null; // pipeline completo
+}
+
+// GET /api/pendencias — junta serviços vencidos + avaliações (renovação
+// vencida OU etapa do passo a passo pendente), mais recentes primeiro.
+router.get('/', async (req, res, next) => {
+  try {
+    const [servicos, pipelinesRecentes] = await Promise.all([
+      listarPendenciasServicosVencidos(),
+      listarPipelinesMaisRecentes(),
+    ]);
+
+    const pendenciasServicos = servicos.map((s) => ({
+      tipo: 'servico_vencido',
+      id: s.id,
+      aluno_id: s.aluno_id,
+      aluno_nome: s.aluno_nome,
+      detalhe: `${s.nome_produto_servico} venceu em ${s.data_vencimento}`,
+      data_referencia: s.data_vencimento,
+    }));
+
+    const pendenciasAvaliacao = [];
+    for (const p of pipelinesRecentes) {
+      const diasDesde = Math.floor((Date.now() - new Date(`${p.data_avaliacao}T12:00:00Z`).getTime()) / 86400000);
+      if (diasDesde > CADENCIA_AVALIACAO_DIAS) {
+        pendenciasAvaliacao.push({
+          tipo: 'renovacao_avaliacao',
+          id: p.id,
+          aluno_id: p.aluno_id,
+          aluno_nome: p.aluno_nome,
+          detalhe: `Avaliação de ${p.data_avaliacao} venceu há ${diasDesde - CADENCIA_AVALIACAO_DIAS} dia(s) — hora de renovar.`,
+          data_referencia: p.data_avaliacao,
+        });
+        continue; // renovação vencida já cobre o caso — não empilha "etapa pendente" da mesma avaliação velha
+      }
+      const proxima = proximaEtapaPendente(p);
+      if (proxima) {
+        pendenciasAvaliacao.push({
+          tipo: 'etapa_avaliacao',
+          id: p.id,
+          aluno_id: p.aluno_id,
+          aluno_nome: p.aluno_nome,
+          etapa: proxima,
+          detalhe: `Avaliação de ${p.data_avaliacao} — próxima etapa: ${PROXIMA_ETAPA_LABEL[proxima]}.`,
+          data_referencia: p.data_avaliacao,
+        });
+      }
+    }
+
+    const pendencias = [...pendenciasServicos, ...pendenciasAvaliacao]
+      .sort((a, b) => (a.data_referencia < b.data_referencia ? -1 : 1));
+
+    res.json({ pendencias });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /api/pendencias/avaliacao/:pipelineId/etapa { etapa: 'realizada'|'prescrever_treino'|'treino_ok' }
+router.patch('/avaliacao/:pipelineId/etapa', async (req, res, next) => {
+  try {
+    const { etapa } = z.object({ etapa: z.enum(ETAPAS_AVALIACAO) }).parse(req.body);
+    const coluna = `etapa_${etapa}_em`;
+    const result = await db.execute({
+      sql: `UPDATE avaliacao_pipeline SET ${coluna} = datetime('now') WHERE id = ?`,
+      args: [req.params.pipelineId],
+    });
+    if (result.rowsAffected === 0) return res.status(404).json({ erro: 'Avaliação não encontrada.' });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+module.exports = router;

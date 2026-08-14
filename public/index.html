@@ -58,6 +58,7 @@
         <button class="nav-btn ativo" data-secao="alunos">Alunos</button>
         <button class="nav-btn" data-secao="planos">Planos</button>
         <button class="nav-btn" data-secao="produtos-servicos">Produtos e Serviços</button>
+        <button class="nav-btn" data-secao="pendencias">Pendências <span class="badge inadimplente oculto" id="pendencias-badge">0</span></button>
         <button class="nav-btn" data-secao="agenda">Turmas &amp; Agenda</button>
         <button class="nav-btn" data-secao="pagamentos">Contas a Receber</button>
         <button class="nav-btn" data-secao="contas-pagar">Contas a Pagar</button>
@@ -726,6 +727,19 @@
           <thead><tr><th>Aluno</th><th>Item</th><th>Início</th><th>Vencimento</th><th>Cobrança</th></tr></thead>
           <tbody id="lista-vendas-produtos-servicos"></tbody>
         </table>
+      </section>
+
+      <!-- PENDÊNCIAS (2026-08-14) -->
+      <section id="secao-pendencias" class="secao oculto">
+        <div class="secao-topo">
+          <h2>Pendências</h2>
+        </div>
+        <p style="font-size:13px;color:#667085;margin:0 0 14px">
+          Tudo que precisa da sua atenção: serviços vencidos e avaliações físicas (renovação vencida, ou etapa do
+          passo a passo ainda não concluída). Nunca bloqueia o acesso do aluno — é só um lembrete interno.
+        </p>
+        <div id="pendencias-vazio" class="oculto" style="color:#667085;font-size:14px">Nenhuma pendência agora. Tudo em dia! ✅</div>
+        <div id="lista-pendencias"></div>
       </section>
 
       <!-- AGENDA -->

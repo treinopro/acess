@@ -514,14 +514,26 @@ function renderizarAvaliacoesHub(avaliacoes) {
 
 document.getElementById('btn-buscar-hub').addEventListener('click', async () => {
   const cpf = document.getElementById('input-cpf-hub').value.trim();
-  const senhaDigitada = document.getElementById('input-senha-hub').value.trim();
+  const campoSenha = document.getElementById('input-senha-hub');
   const erroEl = document.getElementById('hub-cpf-erro');
   erroEl.textContent = '';
   if (!cpf) return;
 
+  // 2026-08-14: só manda "senha" se o campo já estiver VISÍVEL (ou seja, o
+  // aluno já foi explicitamente pedido por ela numa tentativa anterior) —
+  // nunca só por ter algum valor. Navegadores (Chrome principalmente) podem
+  // autopreencher um input type="password" mesmo escondido via CSS, com uma
+  // senha salva de OUTRO site/login; sem essa checagem, a 1a tentativa (só
+  // CPF) mandava esse valor lixo junto, o servidor recusava com "CPF ou
+  // senha incorretos" (em vez de "informe sua senha"), e o campo nunca
+  // aparecia pro aluno ver ou corrigir — parecia que o portal simplesmente
+  // não fazia nada. Achado testando com um aluno real (Robson).
+  const campoSenhaVisivel = !campoSenha.classList.contains('oculto');
+  const senhaDigitada = campoSenha.value.trim();
+
   try {
     const qs = new URLSearchParams({ cpf });
-    if (senhaDigitada) qs.set('senha', senhaDigitada);
+    if (campoSenhaVisivel && senhaDigitada) qs.set('senha', senhaDigitada);
     const info = await api(`/api/portal/aluno?${qs.toString()}`);
     cpfHubAtual = cpf;
 
@@ -539,12 +551,15 @@ document.getElementById('btn-buscar-hub').addEventListener('click', async () => 
     senhaHubAtual = senhaDigitada;
     preencherDashboardHub(info);
   } catch (err) {
-    if (err.dados && err.dados.precisa_senha) {
-      document.getElementById('input-senha-hub').classList.remove('oculto');
-      erroEl.textContent = 'Informe também sua senha de acesso.';
-    } else {
-      erroEl.textContent = err.message;
+    // Sempre garante o campo visível quando a senha é o problema (faltando
+    // OU errada) — antes só revelava no caso "faltando", deixando o aluno
+    // sem nenhum jeito de corrigir uma senha errada/autopreenchida.
+    if (err.dados && (err.dados.precisa_senha || campoSenhaVisivel)) {
+      campoSenha.classList.remove('oculto');
+      campoSenha.value = '';
+      campoSenha.focus();
     }
+    erroEl.textContent = err.message;
   }
 });
 

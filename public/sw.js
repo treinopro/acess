@@ -8,14 +8,18 @@
 // fallback pro banco local etc.) já existe em nível de aplicação, ver
 // dbResiliente.service.js/filaAcessosOffline.service.js, e cachear
 // respostas de API aqui só criaria uma segunda fonte de verdade divergente.
-// v3 (2026-08-13): adiciona handlers de push/notificationclick (ver embaixo)
-// — subir a versão aqui é o que faz o navegador perceber que o service
-// worker mudou, buscar de novo, e descartar o cache antigo do shell (a
-// troca é automática: install->skipWaiting, activate apaga qualquer
-// CACHE_NAME diferente deste e chama clients.claim()). Sem bumpar a versão,
-// o stale-while-revalidate abaixo continua servindo o HTML/CSS antigos do
-// cache indefinidamente, mesmo com os arquivos já atualizados no servidor.
-const CACHE_NAME = 'academia-shell-v3';
+// v4 (2026-08-13): corrige bug em portal.js (id incompatível travava o
+// portal inteiro) — quem já tinha carregado a v3 quebrada ficou com ela
+// presa no cache do stale-while-revalidate abaixo (o servidor já tinha o
+// arquivo corrigido, mas o navegador continuava servindo a cópia velha do
+// cache antes de checar a rede). Subir a versão aqui é o que faz o
+// navegador perceber que o service worker mudou, buscar de novo, e
+// descartar o cache antigo do shell (a troca é automática:
+// install->skipWaiting, activate apaga qualquer CACHE_NAME diferente deste
+// e chama clients.claim()). Sem bumpar a versão, o stale-while-revalidate
+// abaixo continua servindo o HTML/JS antigos do cache indefinidamente,
+// mesmo com os arquivos já atualizados no servidor.
+const CACHE_NAME = 'academia-shell-v4';
 
 self.addEventListener('install', () => {
   self.skipWaiting();

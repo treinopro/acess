@@ -57,6 +57,7 @@
       <nav>
         <button class="nav-btn ativo" data-secao="alunos">Alunos</button>
         <button class="nav-btn" data-secao="planos">Planos</button>
+        <button class="nav-btn" data-secao="produtos-servicos">Produtos e Serviços</button>
         <button class="nav-btn" data-secao="agenda">Turmas &amp; Agenda</button>
         <button class="nav-btn" data-secao="pagamentos">Contas a Receber</button>
         <button class="nav-btn" data-secao="contas-pagar">Contas a Pagar</button>
@@ -648,6 +649,82 @@
         <table class="tabela">
           <thead><tr><th>Aluno</th><th>Plano</th><th>Início</th><th>Fim</th><th>Status</th><th>Ações</th></tr></thead>
           <tbody id="lista-matriculas"></tbody>
+        </table>
+      </section>
+
+      <!-- PRODUTOS E SERVIÇOS (2026-08-14) -->
+      <section id="secao-produtos-servicos" class="secao oculto">
+        <div class="secao-topo">
+          <h2>Produtos e Serviços</h2>
+          <button class="btn-primario" id="btn-novo-produto-servico">+ Novo item</button>
+        </div>
+        <p style="font-size:13px;color:#667085;margin:0 0 14px">
+          Separado dos Planos de propósito: vender um item daqui gera cobrança normal em Contas a Receber, mas
+          <strong>nunca bloqueia o acesso</strong> do aluno por atraso. Serviços com duração viram uma pendência
+          pra você quando vencem (ver aba Pendências), pra lembrar de renovar/conversar com o aluno.
+        </p>
+
+        <form id="form-produto-servico" class="form-painel oculto">
+          <h3>Novo item</h3>
+          <input type="hidden" id="produto-servico-id" />
+          <div class="grid-2">
+            <div><label>Nome *</label><input id="produto-servico-nome" required /></div>
+            <div>
+              <label>Tipo *</label>
+              <select id="produto-servico-tipo" required>
+                <option value="produto">Produto (sem vencimento)</option>
+                <option value="servico">Serviço (com duração)</option>
+              </select>
+            </div>
+            <div><label>Valor (R$) *</label><input id="produto-servico-valor" type="number" step="0.01" required /></div>
+            <div id="campo-produto-servico-duracao"><label>Duração (dias)</label><input id="produto-servico-duracao" type="number" /></div>
+          </div>
+          <div class="form-acoes">
+            <button type="submit" class="btn-primario">Salvar</button>
+            <button type="button" class="btn-secundario" id="btn-cancelar-produto-servico">Cancelar</button>
+          </div>
+        </form>
+
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#667085;margin-bottom:8px">
+          <input type="checkbox" id="chk-produtos-servicos-todos" style="width:auto" /> Mostrar itens desativados também
+        </label>
+        <table class="tabela">
+          <thead><tr><th>Nome</th><th>Tipo</th><th>Valor</th><th>Duração</th><th>Status</th><th>Ações</th></tr></thead>
+          <tbody id="lista-produtos-servicos"></tbody>
+        </table>
+
+        <div class="secao-topo" style="margin-top:32px">
+          <h2>Vender pra aluno</h2>
+        </div>
+        <form id="form-vender-produto-servico" class="form-painel">
+          <div class="grid-2">
+            <div>
+              <label>Aluno *</label>
+              <select id="vender-produto-servico-aluno" required></select>
+            </div>
+            <div>
+              <label>Item *</label>
+              <select id="vender-produto-servico-item" required></select>
+            </div>
+            <div><label>Data de início *</label><input id="vender-produto-servico-data" type="date" required /></div>
+          </div>
+          <p id="vender-produto-servico-info" style="font-size:13px;color:#667085;margin:6px 0 0"></p>
+          <div class="form-acoes">
+            <button type="submit" class="btn-primario">Vender</button>
+          </div>
+        </form>
+
+        <h3 style="margin-top:24px">Vendas recentes</h3>
+        <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px">
+          <div style="flex:1;min-width:180px">
+            <label>Aluno</label>
+            <select id="vendas-produtos-servicos-filtro-aluno"><option value="">Todos os alunos</option></select>
+          </div>
+          <button type="button" class="btn-primario" id="btn-filtrar-vendas-produtos-servicos">Filtrar</button>
+        </div>
+        <table class="tabela">
+          <thead><tr><th>Aluno</th><th>Item</th><th>Início</th><th>Vencimento</th><th>Cobrança</th></tr></thead>
+          <tbody id="lista-vendas-produtos-servicos"></tbody>
         </table>
       </section>
 

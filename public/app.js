@@ -408,6 +408,7 @@ document.querySelectorAll('.nav-btn').forEach((btn) => {
 function carregarSecao(nome) {
   if (nome === 'alunos') carregarAlunos();
   if (nome === 'planos') carregarPlanos();
+  if (nome === 'produtos-servicos') carregarProdutosServicos();
   if (nome === 'agenda') carregarAgenda();
   if (nome === 'pagamentos') carregarPagamentos();
   if (nome === 'contas-pagar') carregarSecaoContasPagar();
@@ -2690,6 +2691,166 @@ document.getElementById('form-matricula').addEventListener('submit', async (ev) 
     botao.disabled = false;
   }
 });
+
+// ---------------- PRODUTOS E SERVIÇOS (2026-08-14) ----------------
+
+let produtosServicosCache = [];
+
+async function carregarProdutosServicos() {
+  try {
+    const todos = document.getElementById('chk-produtos-servicos-todos').checked;
+    const itens = await api(`/api/produtos-servicos${todos ? '?todos=1' : ''}`);
+    produtosServicosCache = itens;
+    const tbody = document.getElementById('lista-produtos-servicos');
+    tbody.innerHTML = '';
+    itens.forEach((item) => {
+      const tr = el(`
+        <tr>
+          <td>${escapeHtml(item.nome)}</td>
+          <td>${item.tipo === 'servico' ? 'Serviço' : 'Produto'}</td>
+          <td>${formatarMoeda(item.valor_centavos)}</td>
+          <td>${item.duracao_dias ? item.duracao_dias + ' dias' : '—'}</td>
+          <td><span class="badge ${item.ativo ? 'ativo' : 'inativo'}">${item.ativo ? 'ativo' : 'desativado'}</span></td>
+          <td>
+            <button class="btn-linha" data-acao="editar">Editar</button>
+            <button class="btn-linha" data-acao="alternar">${item.ativo ? 'Desativar' : 'Reativar'}</button>
+            <button class="btn-linha perigo" data-acao="excluir">Excluir</button>
+          </td>
+        </tr>
+      `);
+      tr.querySelector('[data-acao="editar"]').addEventListener('click', () => abrirFormProdutoServico(item));
+      tr.querySelector('[data-acao="alternar"]').addEventListener('click', async () => {
+        try {
+          await api(`/api/produtos-servicos/${item.id}/${item.ativo ? 'desativar' : 'reativar'}`, { method: 'PATCH' });
+          mostrarToast(item.ativo ? 'Item desativado.' : 'Item reativado.');
+          carregarProdutosServicos();
+        } catch (err) { mostrarToast(err.message, true); }
+      });
+      tr.querySelector('[data-acao="excluir"]').addEventListener('click', async () => {
+        if (!confirmar(`Excluir "${item.nome}" definitivamente?`)) return;
+        try {
+          await api(`/api/produtos-servicos/${item.id}`, { method: 'DELETE' });
+          mostrarToast('Item excluído.');
+          carregarProdutosServicos();
+        } catch (err) { mostrarToast(err.message, true); }
+      });
+      tbody.appendChild(tr);
+    });
+
+    popularSelectProdutosServicos(document.getElementById('vender-produto-servico-item'), itens.filter((i) => i.ativo));
+    await popularSelectAlunos(document.getElementById('vender-produto-servico-aluno'));
+    await popularSelectAlunosComTodos(document.getElementById('vendas-produtos-servicos-filtro-aluno'));
+    await carregarVendasProdutosServicos();
+  } catch (err) { mostrarToast(err.message, true); }
+}
+
+document.getElementById('chk-produtos-servicos-todos').addEventListener('change', carregarProdutosServicos);
+
+function popularSelectProdutosServicos(select, itens) {
+  select.innerHTML = itens.map((i) => `<option value="${i.id}">${escapeHtml(i.nome)} (${formatarMoeda(i.valor_centavos)}${i.duracao_dias ? `, ${i.duracao_dias} dias` : ''})</option>`).join('');
+  atualizarInfoVenderProdutoServico();
+}
+
+function abrirFormProdutoServico(item = null) {
+  const form = document.getElementById('form-produto-servico');
+  form.classList.remove('oculto');
+  form.querySelector('h3').textContent = item ? 'Editar item' : 'Novo item';
+  document.getElementById('produto-servico-id').value = item?.id || '';
+  document.getElementById('produto-servico-nome').value = item?.nome || '';
+  document.getElementById('produto-servico-tipo').value = item?.tipo || 'produto';
+  document.getElementById('produto-servico-valor').value = item ? (item.valor_centavos / 100).toFixed(2) : '';
+  document.getElementById('produto-servico-duracao').value = item?.duracao_dias || '';
+  atualizarCampoDuracaoProdutoServico();
+  form.scrollIntoView({ behavior: 'smooth' });
+}
+
+function atualizarCampoDuracaoProdutoServico() {
+  const ehServico = document.getElementById('produto-servico-tipo').value === 'servico';
+  document.getElementById('campo-produto-servico-duracao').classList.toggle('oculto', !ehServico);
+}
+document.getElementById('produto-servico-tipo').addEventListener('change', atualizarCampoDuracaoProdutoServico);
+
+document.getElementById('btn-novo-produto-servico').addEventListener('click', () => abrirFormProdutoServico());
+document.getElementById('btn-cancelar-produto-servico').addEventListener('click', () => {
+  document.getElementById('form-produto-servico').classList.add('oculto');
+});
+
+document.getElementById('form-produto-servico').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const id = document.getElementById('produto-servico-id').value;
+  const dados = {
+    nome: document.getElementById('produto-servico-nome').value.trim(),
+    tipo: document.getElementById('produto-servico-tipo').value,
+    valor_centavos: Math.round(parseFloat(document.getElementById('produto-servico-valor').value) * 100),
+    duracao_dias: document.getElementById('produto-servico-duracao').value ? Number(document.getElementById('produto-servico-duracao').value) : null,
+  };
+  try {
+    if (id) {
+      await api(`/api/produtos-servicos/${id}`, { method: 'PUT', body: JSON.stringify(dados) });
+      mostrarToast('Item atualizado.');
+    } else {
+      await api('/api/produtos-servicos', { method: 'POST', body: JSON.stringify(dados) });
+      mostrarToast('Item criado.');
+    }
+    document.getElementById('form-produto-servico').classList.add('oculto');
+    ev.target.reset();
+    carregarProdutosServicos();
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+function atualizarInfoVenderProdutoServico() {
+  const select = document.getElementById('vender-produto-servico-item');
+  const item = produtosServicosCache.find((i) => i.id === select.value);
+  const info = document.getElementById('vender-produto-servico-info');
+  info.textContent = item && item.duracao_dias
+    ? `Vence ${item.duracao_dias} dia(s) depois do início — quando vencer, vira pendência se ninguém renovar.`
+    : '';
+}
+document.getElementById('vender-produto-servico-item').addEventListener('change', atualizarInfoVenderProdutoServico);
+
+document.getElementById('form-vender-produto-servico').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const botao = ev.target.querySelector('button[type="submit"]');
+  const dados = {
+    aluno_id: document.getElementById('vender-produto-servico-aluno').value,
+    produto_servico_id: document.getElementById('vender-produto-servico-item').value,
+    data_inicio: document.getElementById('vender-produto-servico-data').value,
+  };
+  botao.disabled = true;
+  try {
+    await api('/api/produtos-servicos/vender', { method: 'POST', body: JSON.stringify(dados) });
+    mostrarToast('Vendido. Cobrança já foi gerada em Contas a Receber.');
+    ev.target.reset();
+    await carregarVendasProdutosServicos();
+  } catch (err) {
+    mostrarToast(err.message, true);
+  } finally {
+    botao.disabled = false;
+  }
+});
+
+async function carregarVendasProdutosServicos() {
+  try {
+    const alunoId = document.getElementById('vendas-produtos-servicos-filtro-aluno').value;
+    const tbody = document.getElementById('lista-vendas-produtos-servicos');
+    const vendas = await api(`/api/produtos-servicos/vendas${alunoId ? `?aluno_id=${encodeURIComponent(alunoId)}` : ''}`);
+    tbody.innerHTML = '';
+    if (!vendas.length) { tbody.innerHTML = '<tr><td colspan="5">Nenhuma venda pra este aluno ainda.</td></tr>'; return; }
+    vendas.forEach((v) => {
+      const tr = el(`
+        <tr>
+          <td>${escapeHtml(v.aluno_nome || '')}</td>
+          <td>${escapeHtml(v.nome_produto_servico)}</td>
+          <td>${formatarDataOuDataHora(v.data_inicio)}</td>
+          <td>${v.data_vencimento ? formatarDataOuDataHora(v.data_vencimento) : '—'}</td>
+          <td>${v.cobranca_status ? `<span class="badge ${escapeHtml(v.cobranca_status)}">${escapeHtml(v.cobranca_status)}</span>` : '—'}</td>
+        </tr>
+      `);
+      tbody.appendChild(tr);
+    });
+  } catch (err) { mostrarToast(err.message, true); }
+}
+document.getElementById('btn-filtrar-vendas-produtos-servicos').addEventListener('click', carregarVendasProdutosServicos);
 
 // ---------------- TURMAS & AGENDA ----------------
 

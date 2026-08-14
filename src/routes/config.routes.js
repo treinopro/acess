@@ -8,7 +8,7 @@ const router = express.Router();
 // Chaves válidas de menu, na ordem padrão de fábrica — usada como fallback
 // quando nenhuma ordem customizada foi salva ainda, e para validar que o
 // admin não mande nada estranho (chave inventada, item repetido/faltando).
-const CHAVES_MENU_PADRAO = ['alunos', 'planos', 'agenda', 'pagamentos', 'contas-pagar', 'pagamento-rapido', 'relatorios', 'recuperacao', 'usuarios', 'config', 'catraca'];
+const CHAVES_MENU_PADRAO = ['alunos', 'planos', 'produtos-servicos', 'agenda', 'pagamentos', 'contas-pagar', 'pagamento-rapido', 'relatorios', 'recuperacao', 'usuarios', 'config', 'catraca'];
 
 const PADROES = {
   nome_app: 'Academia Gestão',

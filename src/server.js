@@ -11,6 +11,7 @@ const { errorHandler } = require('./middleware/errorHandler');
 const authRoutes = require('./routes/auth.routes');
 const alunosRoutes = require('./routes/alunos.routes');
 const planosRoutes = require('./routes/planos.routes');
+const { router: produtosServicosRoutes } = require('./routes/produtosServicos.routes');
 const agendamentoRoutes = require('./routes/agendamento.routes');
 const pagamentosRoutes = require('./routes/pagamentos.routes');
 const usuariosRoutes = require('./routes/usuarios.routes');
@@ -206,6 +207,7 @@ app.get('/health', (req, res) => res.json({ status: 'ok', servico: 'academia-ges
 app.use('/api/auth', authRoutes);
 app.use('/api/alunos', alunosRoutes);
 app.use('/api/planos', planosRoutes);
+app.use('/api/produtos-servicos', produtosServicosRoutes);
 app.use('/api/agendamentos', agendamentoRoutes);
 app.use('/api/pagamentos', pagamentosRoutes);
 app.use('/api/usuarios', usuariosRoutes);

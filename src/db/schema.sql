@@ -153,6 +153,49 @@ CREATE TABLE IF NOT EXISTS planos (
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Produtos e Serviços (2026-08-14) — catálogo separado de "planos" de
+-- propósito: plano é a mensalidade/matrícula que CONTROLA acesso (mensalidade
+-- em atraso bloqueia a catraca); produto/serviço é uma venda avulsa (ex.:
+-- avaliação extra, pacote de massagem, suplemento) que gera cobrança em
+-- Contas a Receber normalmente, mas NUNCA bloqueia acesso — a cobrança criada
+-- pela venda (ver vendas_produtos_servicos abaixo) sempre tem matricula_id
+-- NULL, e toda a lógica de bloqueio por atraso (verificarAutorizacaoAluno,
+-- listarAutorizacoesBiometricas) já filtra "matricula_id IS NOT NULL" hoje —
+-- então isso funciona sem precisar tocar em nenhuma regra de autorização.
+CREATE TABLE IF NOT EXISTS produtos_servicos (
+  id TEXT PRIMARY KEY,
+  nome TEXT NOT NULL,
+  tipo TEXT NOT NULL DEFAULT 'produto', -- produto | servico
+  valor_centavos INTEGER NOT NULL,
+  -- Só faz sentido pra tipo='servico' (ex.: pacote de 30 dias de personal).
+  -- NULL = sem vencimento (típico de produto físico, comprado e pronto).
+  duracao_dias INTEGER,
+  ativo INTEGER NOT NULL DEFAULT 1,
+  criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Uma venda de um item do catálogo pra um aluno específico. Guarda o NOME
+-- num snapshot próprio (nome_produto_servico) pra não mudar retroativamente
+-- se o catálogo for editado depois. Quando data_vencimento passa e
+-- pendencia_resolvida_em continua NULL, vira uma pendência pro professor
+-- (ver tela de Pendências) — não bloqueia acesso, é só um lembrete interno
+-- de "hora de conversar sobre renovar isso".
+CREATE TABLE IF NOT EXISTS vendas_produtos_servicos (
+  id TEXT PRIMARY KEY,
+  aluno_id TEXT NOT NULL REFERENCES alunos(id) ON DELETE CASCADE,
+  produto_servico_id TEXT REFERENCES produtos_servicos(id) ON DELETE SET NULL,
+  nome_produto_servico TEXT NOT NULL,
+  cobranca_id TEXT REFERENCES cobrancas(id) ON DELETE SET NULL,
+  data_inicio TEXT NOT NULL,
+  data_vencimento TEXT, -- NULL = sem vencimento (produto sem duração)
+  pendencia_resolvida_em TEXT,
+  criado_por TEXT REFERENCES usuarios(id),
+  criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_vendas_produtos_servicos_aluno ON vendas_produtos_servicos(aluno_id);
+CREATE INDEX IF NOT EXISTS idx_vendas_produtos_servicos_vencimento ON vendas_produtos_servicos(data_vencimento);
+
 CREATE TABLE IF NOT EXISTS matriculas (
   id TEXT PRIMARY KEY,
   aluno_id TEXT NOT NULL REFERENCES alunos(id) ON DELETE CASCADE,

@@ -866,4 +866,31 @@ router.post('/push/unsubscribe', limitadorSenhaPortal, async (req, res, next) =>
   }
 });
 
+// GET /api/portal/banners?cpf=&senha= — banners ativos aplicáveis a este
+// aluno (2026-08-14, ver Recuperação de Clientes > Banners). "Some 1h
+// depois de aberto" é decidido no cliente, não aqui — este endpoint sempre
+// devolve todos os banners ativos aplicáveis, o front filtra pelo que já
+// viu há mais de 1h (ver public/portal.js).
+router.get('/banners', limitadorSenhaPortal, async (req, res, next) => {
+  try {
+    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(req.query);
+    const autenticado = await autenticarAlunoPortal(cpf, senha);
+    if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
+
+    const result = await db.execute(
+      'SELECT id, titulo, texto, imagem_url, aluno_ids_json FROM banners_portal WHERE ativo = 1 ORDER BY criado_em DESC',
+    );
+    const banners = result.rows
+      .filter((b) => {
+        if (!b.aluno_ids_json) return true; // null = todos os alunos
+        try { return JSON.parse(b.aluno_ids_json).includes(autenticado.aluno.id); } catch { return false; }
+      })
+      .map((b) => ({ id: b.id, titulo: b.titulo, texto: b.texto, imagem_url: b.imagem_url }));
+
+    res.json({ banners });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;

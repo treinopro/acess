@@ -489,6 +489,28 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_push_subscriptions_aluno ON push_subscriptions(aluno_id);
+
+-- Banners/avisos do admin pro portal do aluno (2026-08-14, ver Recuperação
+-- de Clientes > Banners). Mostrado como um "feed" no topo do dashboard do
+-- portal — aluno_ids_json NULL = todo mundo, senão só quem está na lista
+-- (mesmo padrão de mensagens_agendadas.aluno_ids_json, reaproveitando a
+-- mesma ideia de "lote com destinatários fixos no momento do envio"). O
+-- "some sozinho 1h depois de aberto" é resolvido inteiramente no CLIENTE
+-- (localStorage, por banner id) — não tem coluna de "visualizado_em" aqui
+-- de propósito, o portal não tem sessão/estado de servidor por aluno.
+CREATE TABLE IF NOT EXISTS banners_portal (
+  id TEXT PRIMARY KEY,
+  titulo TEXT NOT NULL,
+  texto TEXT NOT NULL,
+  imagem_url TEXT,
+  aluno_ids_json TEXT, -- NULL = todos os alunos
+  enviar_push INTEGER NOT NULL DEFAULT 0,
+  ativo INTEGER NOT NULL DEFAULT 1,
+  criado_por TEXT REFERENCES usuarios(id),
+  criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_banners_portal_ativo ON banners_portal(ativo);
 CREATE INDEX IF NOT EXISTS idx_alunos_status ON alunos(status);
 CREATE INDEX IF NOT EXISTS idx_alunos_categoria ON alunos(categoria);
 CREATE INDEX IF NOT EXISTS idx_alunos_indicado_por ON alunos(indicado_por_aluno_id);

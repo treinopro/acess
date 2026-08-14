@@ -37,6 +37,79 @@ function formatarMoeda(centavos) {
   return (centavos / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str == null ? '' : String(str);
+  return div.innerHTML;
+}
+
+// ---------------------------------------------------------------------------
+// Banners/avisos do admin (2026-08-14, ver Recuperação de Clientes >
+// Banners) — mostrados como um feed no topo do dashboard. "Some 1h depois
+// de aberto" é decidido inteiramente aqui no cliente (localStorage por
+// banner id, guardando quando o aluno viu pela primeira vez): o servidor
+// sempre devolve todos os banners ativos aplicáveis, o filtro de "já passou
+// 1h" é só visual, não precisa de round-trip nem de estado no servidor.
+// ---------------------------------------------------------------------------
+const CHAVE_BANNERS_VISTOS = 'academia_banners_vistos';
+const BANNER_DURACAO_VISIVEL_MS = 60 * 60 * 1000; // 1h
+
+function bannersVistosStorage() {
+  try { return JSON.parse(localStorage.getItem(CHAVE_BANNERS_VISTOS) || '{}'); } catch { return {}; }
+}
+
+function marcarBannerVisto(bannerId) {
+  const vistos = bannersVistosStorage();
+  if (vistos[bannerId]) return; // já marcado — não reinicia a contagem de 1h a cada reload
+  vistos[bannerId] = Date.now();
+  try { localStorage.setItem(CHAVE_BANNERS_VISTOS, JSON.stringify(vistos)); } catch { /* localStorage indisponível (modo privado etc.) — sem persistência, sem quebrar o resto */ }
+}
+
+/** Fechar manualmente conta como "já passou da 1h" — evita o banner reaparecer no mesmo login/reload logo depois de fechado. */
+function suprimirBanner(bannerId) {
+  const vistos = bannersVistosStorage();
+  vistos[bannerId] = Date.now() - BANNER_DURACAO_VISIVEL_MS - 1;
+  try { localStorage.setItem(CHAVE_BANNERS_VISTOS, JSON.stringify(vistos)); } catch { /* idem acima */ }
+}
+
+async function carregarBannersHub() {
+  const container = document.getElementById('feed-banners-hub');
+  if (!container || !cpfHubAtual || !senhaHubAtual) return;
+  try {
+    const resp = await api(`/api/portal/banners?cpf=${encodeURIComponent(cpfHubAtual)}&senha=${encodeURIComponent(senhaHubAtual)}`);
+    const vistos = bannersVistosStorage();
+    const agora = Date.now();
+    const visiveis = (resp.banners || []).filter((b) => {
+      const vistoEm = vistos[b.id];
+      return !vistoEm || (agora - vistoEm) < BANNER_DURACAO_VISIVEL_MS;
+    });
+
+    container.innerHTML = visiveis.map((b) => `
+      <div class="cartao" data-banner-id="${escapeHtml(b.id)}" style="text-align:left">
+        ${b.imagem_url ? `<img src="${escapeHtml(b.imagem_url)}" alt="" style="width:100%;border-radius:10px;margin-bottom:10px;display:block" />` : ''}
+        <h3 style="margin-top:0">${escapeHtml(b.titulo)}</h3>
+        <p style="margin-bottom:0">${escapeHtml(b.texto)}</p>
+        <button type="button" class="btn-fechar-banner-hub" style="margin-top:10px">Fechar</button>
+      </div>
+    `).join('');
+
+    // Marca como visto assim que renderizado — não precisa clicar em nada
+    // pra contar como "aberto"; ele já apareceu na tela do aluno.
+    visiveis.forEach((b) => marcarBannerVisto(b.id));
+
+    container.querySelectorAll('.btn-fechar-banner-hub').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const elBanner = btn.closest('[data-banner-id]');
+        suprimirBanner(elBanner.dataset.bannerId); // fechar manualmente também suprime de vez, não só nesta visita
+        elBanner.remove();
+      });
+    });
+  } catch {
+    // Não é crítico pro resto do hub funcionar — se falhar, só não mostra
+    // banner nenhum, sem travar o dashboard.
+  }
+}
+
 function formatarData(iso) {
   if (!iso) return '';
   return iso.split('-').reverse().join('/');
@@ -303,6 +376,7 @@ function preencherDashboardHub(info) {
   }
 
   atualizarCardNotificacoes(info);
+  carregarBannersHub();
   carregarResumoContasHub();
   carregarAvaliacoesHub();
 }

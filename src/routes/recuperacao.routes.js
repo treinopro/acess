@@ -18,6 +18,7 @@ const { z } = require('zod');
 const db = require('../db/client');
 const { autenticar, apenasAdmin } = require('../middleware/auth');
 const acessoTerminal = require('../services/acessoTerminal.service');
+const webPush = require('../services/webPush.service');
 const emailService = require('../services/email.service');
 const { formatarDataSqliteUtc } = require('../utils/data');
 
@@ -781,6 +782,126 @@ router.get('/todos-ativos', async (req, res, next) => {
       args,
     });
     res.json(result.rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---------------- Banners/avisos do portal do aluno (2026-08-14) ----------------
+// "Feed" de avisos/promoções que o admin manda pro portal — mostra pra todos
+// os alunos ou só pra uma seleção (mesma ideia de audiência fixa no momento
+// do envio já usada em mensagens_agendadas.aluno_ids_json). Pode também
+// disparar como Web Push (ver webPush.service.js) além de aparecer no
+// dashboard do portal. "Some 1h depois de aberto" é resolvido no cliente
+// (localStorage), não aqui — ver public/portal.js.
+
+// GET /api/recuperacao/banners-alunos?busca=&status=todos|inadimplente|em_dia
+// Audiência pra seleção do banner — mesmo padrão de /todos-ativos, com um
+// filtro a mais (status financeiro) que os outros públicos de recuperação
+// não tinham porque nenhum deles precisava disso até agora.
+router.get('/banners-alunos', async (req, res, next) => {
+  try {
+    const { busca, status } = req.query;
+    const condicoes = ["a.status = 'ativo'"];
+    const args = [];
+    if (busca) { condicoes.push('a.nome LIKE ?'); args.push(`%${busca}%`); }
+    const where = `WHERE ${condicoes.join(' AND ')}`;
+
+    const result = await db.execute({
+      sql: `SELECT a.id as aluno_id, a.nome, a.email, a.categoria,
+              EXISTS(
+                SELECT 1 FROM cobrancas c WHERE c.aluno_id = a.id AND c.matricula_id IS NOT NULL AND (
+                  c.status = 'atrasado' OR (c.status = 'pendente' AND c.vencimento IS NOT NULL AND c.vencimento < date('now'))
+                )
+              ) as inadimplente
+            FROM alunos a
+            ${where}
+            ORDER BY a.nome ASC`,
+      args,
+    });
+
+    const linhas = status === 'inadimplente' ? result.rows.filter((r) => r.inadimplente)
+      : status === 'em_dia' ? result.rows.filter((r) => !r.inadimplente)
+        : result.rows;
+    res.json(linhas);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/recuperacao/banners — lista todos os banners (ativos e
+// desativados) pra tela de gestão, mais recente primeiro.
+router.get('/banners', async (req, res, next) => {
+  try {
+    const result = await db.execute(`
+      SELECT id, titulo, texto, imagem_url, aluno_ids_json, enviar_push, ativo, criado_em
+      FROM banners_portal ORDER BY criado_em DESC LIMIT 100
+    `);
+    res.json(result.rows.map((r) => ({
+      ...r,
+      enviar_push: Boolean(r.enviar_push),
+      ativo: Boolean(r.ativo),
+      total_destinatarios: r.aluno_ids_json ? JSON.parse(r.aluno_ids_json).length : null, // null = todos
+    })));
+  } catch (err) {
+    next(err);
+  }
+});
+
+const criarBannerSchema = z.object({
+  titulo: z.string().trim().min(1, 'Título é obrigatório.'),
+  texto: z.string().trim().min(1, 'Texto é obrigatório.'),
+  imagem_url: z.string().trim().url().optional().or(z.literal('')),
+  aluno_ids: z.array(z.string()).nullable(), // null = todos os alunos ativos
+  enviar_push: z.boolean().optional(),
+});
+
+// POST /api/recuperacao/banners { titulo, texto, imagem_url?, aluno_ids: [...]|null, enviar_push? }
+router.post('/banners', async (req, res, next) => {
+  try {
+    const dados = criarBannerSchema.parse(req.body);
+    const id = uuid();
+
+    await db.execute({
+      sql: `INSERT INTO banners_portal (id, titulo, texto, imagem_url, aluno_ids_json, enviar_push, criado_por)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        id, dados.titulo, dados.texto, dados.imagem_url || null,
+        dados.aluno_ids ? JSON.stringify(dados.aluno_ids) : null,
+        dados.enviar_push ? 1 : 0, req.usuario?.id || null,
+      ],
+    });
+
+    let alunosNotificados = 0;
+    if (dados.enviar_push) {
+      // Push é best-effort — o banner já foi criado e vai aparecer no
+      // portal de qualquer forma; falha no envio de push não desfaz isso.
+      const destinatarios = dados.aluno_ids
+        || (await db.execute("SELECT id FROM alunos WHERE status = 'ativo'")).rows.map((r) => r.id);
+      for (const alunoId of destinatarios) {
+        try {
+          const { enviados } = await webPush.enviarParaAluno(alunoId, {
+            titulo: dados.titulo, corpo: dados.texto, url: '/portal.html', tag: `banner-${id}`,
+          });
+          if (enviados) alunosNotificados += 1;
+        } catch { /* segue pro próximo — best-effort */ }
+      }
+    }
+
+    res.status(201).json({ ok: true, id, alunos_notificados_por_push: alunosNotificados });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/recuperacao/banners/:id/desativar — some do portal de todo mundo
+// imediatamente (diferente do "some 1h depois de aberto" do lado do
+// cliente, que é por aluno; isso aqui é o admin encerrando o aviso pra
+// todo mundo de uma vez, ex.: promoção que acabou antes do previsto).
+router.put('/banners/:id/desativar', async (req, res, next) => {
+  try {
+    await db.execute({ sql: 'UPDATE banners_portal SET ativo = 0 WHERE id = ?', args: [req.params.id] });
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }

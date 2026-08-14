@@ -1297,6 +1297,7 @@
           <button class="recup-tab-btn" data-recup="templates">Modelos de mensagem</button>
           <button class="recup-tab-btn" data-recup="agendadas">Agendadas <span class="badge inadimplente oculto" id="recup-agendadas-badge">0</span></button>
           <button class="recup-tab-btn" data-recup="historico">Histórico</button>
+          <button class="recup-tab-btn" data-recup="banners">Banners</button>
         </div>
 
         <!-- Painel: Dias sem acesso -->
@@ -1558,6 +1559,68 @@
               </tr>
             </thead>
             <tbody id="recup-hist-lista"></tbody>
+          </table>
+        </div>
+
+        <!-- Painel: Banners/avisos do portal do aluno (2026-08-14) -->
+        <div class="recup-painel oculto" data-recup-painel="banners">
+          <p style="font-size:13px;color:#667085;margin:0 0 14px">
+            Aparece como um aviso no topo do dashboard do Portal do Aluno (e, se marcado, também como
+            notificação push). Some sozinho 1h depois de o aluno abrir o portal e ver o aviso — ou você pode
+            encerrar pra todo mundo agora mesmo, clicando em "Desativar".
+          </p>
+
+          <div class="form-painel">
+            <h3 style="margin-top:0">Novo banner</h3>
+            <div><label>Título</label><input class="campo" id="banner-titulo" placeholder="Ex: Promoção de aniversário!" /></div>
+            <div><label>Texto</label><textarea class="campo" id="banner-texto" rows="3" placeholder="Ex: Renove seu plano essa semana e ganhe 10% de desconto."></textarea></div>
+            <div><label>Imagem (URL, opcional)</label><input class="campo" id="banner-imagem-url" placeholder="https://..." /></div>
+            <label style="display:flex;align-items:center;gap:6px;margin-top:10px">
+              <input type="checkbox" id="banner-enviar-push" style="width:auto" /> Também enviar como notificação push
+            </label>
+
+            <h4 style="margin:20px 0 6px">Destinatários</h4>
+            <label style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
+              <input type="checkbox" id="banner-destinatarios-todos" style="width:auto" checked /> Todos os alunos ativos
+            </label>
+            <div id="banner-selecao-manual" class="oculto">
+              <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px">
+                <div style="flex:1;min-width:180px">
+                  <label>Buscar por nome</label>
+                  <input type="text" id="banner-alunos-busca" placeholder="Nome..." />
+                </div>
+                <div>
+                  <label>Situação financeira</label>
+                  <select id="banner-alunos-status">
+                    <option value="">Todos</option>
+                    <option value="inadimplente">Só inadimplentes</option>
+                    <option value="em_dia">Só em dia</option>
+                  </select>
+                </div>
+                <button type="button" class="btn-primario" id="btn-banner-alunos-buscar">Filtrar</button>
+              </div>
+              <label style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+                <input type="checkbox" id="banner-alunos-selecionar-todos" style="width:auto" /> Selecionar todos os filtrados
+              </label>
+              <span id="banner-alunos-contagem" style="font-size:13px;color:#667085"></span>
+              <table class="tabela" id="tabela-banner-alunos">
+                <thead><tr><th style="width:30px"></th><th>Nome</th><th>Situação</th></tr></thead>
+                <tbody id="banner-alunos-lista"></tbody>
+              </table>
+            </div>
+
+            <div class="form-acoes">
+              <button type="button" class="btn-primario" id="btn-banner-criar">Publicar banner</button>
+            </div>
+            <div id="banner-criar-resultado" style="margin-top:10px"></div>
+          </div>
+
+          <h3 style="margin:24px 0 10px">Banners existentes</h3>
+          <table class="tabela" id="tabela-banners">
+            <thead>
+              <tr><th>Título</th><th>Destinatários</th><th>Push</th><th>Status</th><th>Criado em</th><th></th></tr>
+            </thead>
+            <tbody id="banners-lista"></tbody>
           </table>
         </div>
 

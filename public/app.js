@@ -4742,6 +4742,7 @@ const recupEstado = {
   templates: [],
   enviarContexto: null, // { alunoIds: [...], origem: 'dias' | 'aniversariantes' }
   emailConfigurado: false,
+  bannerAlunosSelecionados: new Set(),
 };
 
 async function carregarSecaoRecuperacao() {
@@ -4770,6 +4771,7 @@ function trocarAbaRecuperacao(nome) {
   if (nome === 'templates') carregarRecupTemplates();
   if (nome === 'agendadas') carregarRecupAgendadas();
   if (nome === 'historico') carregarRecupHistorico();
+  if (nome === 'banners') { carregarBannerAlunos(); carregarBanners(); }
 }
 
 // ---------- Dias sem acesso ----------
@@ -4962,6 +4964,131 @@ document.getElementById('recup-ativos-selecionar-todos').addEventListener('chang
 });
 document.getElementById('btn-recup-ativos-enviar-selecionados').addEventListener('click', () => {
   abrirModalRecupEnviar([...recupEstado.ativosSelecionados], 'ativos');
+});
+
+// ---------- Banners/avisos do portal do aluno (2026-08-14) ----------
+
+document.getElementById('banner-destinatarios-todos').addEventListener('change', (ev) => {
+  document.getElementById('banner-selecao-manual').classList.toggle('oculto', ev.target.checked);
+});
+
+async function carregarBannerAlunos() {
+  try {
+    const busca = document.getElementById('banner-alunos-busca').value.trim();
+    const status = document.getElementById('banner-alunos-status').value;
+    const params = new URLSearchParams();
+    if (busca) params.set('busca', busca);
+    if (status) params.set('status', status);
+
+    const linhas = await api(`/api/recuperacao/banners-alunos${params.toString() ? `?${params.toString()}` : ''}`);
+    recupEstado.bannerAlunosSelecionados.clear();
+    document.getElementById('banner-alunos-selecionar-todos').checked = false;
+    atualizarContagemBannerAlunos();
+
+    const tbody = document.getElementById('banner-alunos-lista');
+    tbody.innerHTML = '';
+    if (!linhas.length) {
+      tbody.innerHTML = '<tr><td colspan="3">Nenhum aluno encontrado com esse filtro.</td></tr>';
+      return;
+    }
+    linhas.forEach((linha) => {
+      const tr = el(`
+        <tr>
+          <td><input type="checkbox" class="banner-aluno-check" style="width:auto" /></td>
+          <td>${escapeHtml(linha.nome)}</td>
+          <td>${linha.inadimplente ? '<span class="badge inadimplente">Inadimplente</span>' : '<span class="badge ativo">Em dia</span>'}</td>
+        </tr>
+      `);
+      tr.querySelector('.banner-aluno-check').addEventListener('change', (ev) => {
+        if (ev.target.checked) recupEstado.bannerAlunosSelecionados.add(linha.aluno_id);
+        else recupEstado.bannerAlunosSelecionados.delete(linha.aluno_id);
+        atualizarContagemBannerAlunos();
+      });
+      tbody.appendChild(tr);
+    });
+  } catch (err) { mostrarToast(err.message, true); }
+}
+
+function atualizarContagemBannerAlunos() {
+  const n = recupEstado.bannerAlunosSelecionados.size;
+  document.getElementById('banner-alunos-contagem').textContent = n ? `${n} selecionado(s)` : 'Nenhum selecionado ainda.';
+}
+
+document.getElementById('btn-banner-alunos-buscar').addEventListener('click', carregarBannerAlunos);
+document.getElementById('banner-alunos-selecionar-todos').addEventListener('change', (ev) => {
+  document.querySelectorAll('.banner-aluno-check').forEach((chk) => {
+    chk.checked = ev.target.checked;
+    chk.dispatchEvent(new Event('change'));
+  });
+});
+
+async function carregarBanners() {
+  try {
+    const banners = await api('/api/recuperacao/banners');
+    const tbody = document.getElementById('banners-lista');
+    tbody.innerHTML = '';
+    if (!banners.length) {
+      tbody.innerHTML = '<tr><td colspan="6">Nenhum banner criado ainda.</td></tr>';
+      return;
+    }
+    banners.forEach((b) => {
+      const tr = el(`
+        <tr>
+          <td>${escapeHtml(b.titulo)}</td>
+          <td>${b.total_destinatarios === null ? 'Todos os alunos' : `${b.total_destinatarios} selecionado(s)`}</td>
+          <td>${b.enviar_push ? 'Sim' : 'Não'}</td>
+          <td>${b.ativo ? '<span class="badge ativo">Ativo</span>' : '<span class="badge inativo">Desativado</span>'}</td>
+          <td>${formatarDataOuDataHora(b.criado_em)}</td>
+          <td>${b.ativo ? '<button type="button" class="btn-secundario btn-banner-desativar">Desativar</button>' : ''}</td>
+        </tr>
+      `);
+      const btnDesativar = tr.querySelector('.btn-banner-desativar');
+      if (btnDesativar) {
+        btnDesativar.addEventListener('click', async () => {
+          if (!confirmar(`Encerrar o banner "${b.titulo}" pra todo mundo agora?`)) return;
+          try {
+            await api(`/api/recuperacao/banners/${b.id}/desativar`, { method: 'PUT' });
+            mostrarToast('Banner desativado.');
+            carregarBanners();
+          } catch (err) { mostrarToast(err.message, true); }
+        });
+      }
+      tbody.appendChild(tr);
+    });
+  } catch (err) { mostrarToast(err.message, true); }
+}
+
+document.getElementById('btn-banner-criar').addEventListener('click', async () => {
+  const titulo = document.getElementById('banner-titulo').value.trim();
+  const texto = document.getElementById('banner-texto').value.trim();
+  const imagemUrl = document.getElementById('banner-imagem-url').value.trim();
+  const enviarPush = document.getElementById('banner-enviar-push').checked;
+  const todos = document.getElementById('banner-destinatarios-todos').checked;
+  const resultadoEl = document.getElementById('banner-criar-resultado');
+  resultadoEl.textContent = '';
+
+  if (!titulo || !texto) { mostrarToast('Preencha título e texto.', true); return; }
+  if (!todos && !recupEstado.bannerAlunosSelecionados.size) { mostrarToast('Selecione ao menos um aluno, ou marque "Todos os alunos ativos".', true); return; }
+
+  try {
+    const resp = await api('/api/recuperacao/banners', {
+      method: 'POST',
+      body: JSON.stringify({
+        titulo,
+        texto,
+        imagem_url: imagemUrl || undefined,
+        aluno_ids: todos ? null : [...recupEstado.bannerAlunosSelecionados],
+        enviar_push: enviarPush,
+      }),
+    });
+    mostrarToast('Banner publicado.');
+    resultadoEl.textContent = enviarPush ? `Push enviado com sucesso pra ${resp.alunos_notificados_por_push} aluno(s) com notificações ativadas.` : '';
+    document.getElementById('banner-titulo').value = '';
+    document.getElementById('banner-texto').value = '';
+    document.getElementById('banner-imagem-url').value = '';
+    document.getElementById('banner-enviar-push').checked = false;
+    carregarBanners();
+  } catch (err) { mostrarToast(err.message, true); }
 });
 
 // ---------- Visitantes (2026-07) ----------

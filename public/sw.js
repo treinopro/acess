@@ -8,18 +8,17 @@
 // fallback pro banco local etc.) já existe em nível de aplicação, ver
 // dbResiliente.service.js/filaAcessosOffline.service.js, e cachear
 // respostas de API aqui só criaria uma segunda fonte de verdade divergente.
-// v5 (2026-08-14): corrige portal.js aceitando senha autopreenchida pelo
-// navegador num campo ainda escondido (ver comentário em
-// btn-buscar-hub/addEventListener('click') em portal.js). Toda vez que
-// portal.js/portal.html mudam de um jeito que precisa chegar rápido em quem
-// já visitou antes, sobe a versão aqui — é o que faz o navegador perceber
-// que o service worker mudou, buscar de novo, e descartar o cache antigo do
-// shell (a troca é automática: install->skipWaiting, activate apaga
-// qualquer CACHE_NAME diferente deste e chama clients.claim()). Sem bumpar
-// a versão, o stale-while-revalidate abaixo continua servindo o HTML/JS
-// antigos do cache indefinidamente, mesmo com os arquivos já atualizados no
-// servidor.
-const CACHE_NAME = 'academia-shell-v5';
+// v6 (2026-08-14): corrige rolagem não voltando ao topo ao trocar de painel
+// no portal (parecia tela vazia) e adiciona aviso de avaliação física
+// vencida/vencendo. Toda vez que portal.js/portal.html mudam de um jeito
+// que precisa chegar rápido em quem já visitou antes, sobe a versão aqui —
+// é o que faz o navegador perceber que o service worker mudou, buscar de
+// novo, e descartar o cache antigo do shell (a troca é automática:
+// install->skipWaiting, activate apaga qualquer CACHE_NAME diferente deste
+// e chama clients.claim()). Sem bumpar a versão, o stale-while-revalidate
+// abaixo continua servindo o HTML/JS antigos do cache indefinidamente,
+// mesmo com os arquivos já atualizados no servidor.
+const CACHE_NAME = 'academia-shell-v6';
 
 self.addEventListener('install', () => {
   self.skipWaiting();

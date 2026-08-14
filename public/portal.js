@@ -19,6 +19,18 @@ async function api(caminho, opcoes = {}) {
 function mostrarPagina(id) {
   document.querySelectorAll('.pagina').forEach((p) => p.classList.remove('ativa'));
   document.getElementById(id).classList.add('ativa');
+  irParaTopo();
+}
+
+// 2026-08-14: os painéis do hub (contas, treino, avaliações, notificações
+// etc.) são mostrados/escondidos com classe CSS na MESMA página — não é
+// navegação de verdade, então o navegador nunca reseta a rolagem sozinho.
+// Sem isso, trocar de painel enquanto a rolagem está lá embaixo (ex.: o
+// aluno rolou até o fim do dashboard) faz o painel novo abrir com a
+// rolagem ainda lá embaixo — pro aluno parece que a tela abriu vazia, tendo
+// que rolar pra cima pra ver o conteúdo de verdade.
+function irParaTopo() {
+  window.scrollTo(0, 0);
 }
 
 function formatarMoeda(centavos) {
@@ -265,6 +277,7 @@ function preencherDashboardHub(info) {
   document.getElementById('painel-hub-cpf').classList.add('oculto');
   document.getElementById('painel-hub-primeiro-acesso').classList.add('oculto');
   document.getElementById('painel-hub-dashboard').classList.remove('oculto');
+  irParaTopo();
 
   document.getElementById('card-plano-resumo').textContent = info.plano_atual
     ? `${info.plano_atual.plano_nome} — ${formatarMoeda(info.plano_atual.valor_centavos)}/ciclo`
@@ -383,6 +396,13 @@ document.getElementById('painel-hub-notificacoes').addEventListener('submit', as
 
 let avaliacoesHubAtual = [];
 
+// 2026-08-14: mesma cadência recomendada usada no TreinoPro (REASSESSMENT_
+// CADENCE_DAYS) — 90 dias entre avaliações físicas. A janela de aviso aqui é
+// mais generosa que os 3 dias de lá (15) porque renovar uma avaliação exige
+// agendar um horário presencial na academia, não é uma ação de um clique.
+const CADENCIA_AVALIACAO_DIAS = 90;
+const AVISO_AVALIACAO_ANTECEDENCIA_DIAS = 15;
+
 async function carregarAvaliacoesHub() {
   const cardAvaliacao = document.getElementById('card-avaliacao');
   const botaoVer = document.getElementById('btn-ver-avaliacoes-hub');
@@ -394,7 +414,16 @@ async function carregarAvaliacoesHub() {
       cardAvaliacao.classList.remove('oculto');
       botaoVer.classList.remove('oculto');
       const ultima = avaliacoesHubAtual[avaliacoesHubAtual.length - 1];
-      resumo.textContent = `Última avaliação em ${formatarData(ultima.data)}. Toque para ver sua evolução.`;
+      const diasDesdeUltima = -diasAteVencimento(ultima.data);
+      const diasParaVencer = CADENCIA_AVALIACAO_DIAS - diasDesdeUltima;
+
+      let avisoHtml = '';
+      if (diasParaVencer < 0) {
+        avisoHtml = `<strong style="color:#fca5a5">⚠️ Sua avaliação venceu há ${Math.abs(diasParaVencer)} dia${Math.abs(diasParaVencer) === 1 ? '' : 's'} — hora de renovar.</strong><br>`;
+      } else if (diasParaVencer <= AVISO_AVALIACAO_ANTECEDENCIA_DIAS) {
+        avisoHtml = `<strong style="color:#fbbf24">⏳ Sua avaliação vence em ${diasParaVencer} dia${diasParaVencer === 1 ? '' : 's'} — hora de renovar.</strong><br>`;
+      }
+      resumo.innerHTML = `${avisoHtml}Última avaliação em ${formatarData(ultima.data)}. Toque para ver sua evolução.`;
     } else {
       botaoVer.classList.add('oculto');
     }
@@ -660,8 +689,9 @@ function atualizarAvisoVencimento(contas) {
 }
 
 function ocultarPaineisHub() {
-  ['painel-hub-dashboard', 'painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-comprovante', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-notificacoes']
+  ['painel-hub-dashboard', 'painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-comprovante', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-notificacoes', 'painel-hub-avaliacoes']
     .forEach((id) => document.getElementById(id).classList.add('oculto'));
+  irParaTopo();
 }
 
 document.getElementById('btn-abrir-contas').addEventListener('click', async () => {

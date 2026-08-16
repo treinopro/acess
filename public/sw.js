@@ -18,7 +18,10 @@
 // a versão, o stale-while-revalidate abaixo continua servindo o HTML/JS
 // antigos do cache indefinidamente, mesmo com os arquivos já atualizados no
 // servidor.
-const CACHE_NAME = 'academia-shell-v7';
+// v8 (2026-08-16): bloqueio da aba de treino por mensalidade/cadastro
+// inativo (portal.js) + correção do PWA "sambando" pros lados no iOS
+// (overflow-x/overscroll-behavior-x em portal.html).
+const CACHE_NAME = 'academia-shell-v8';
 
 self.addEventListener('install', () => {
   self.skipWaiting();

@@ -375,6 +375,17 @@ CREATE TABLE IF NOT EXISTS treinos (
   dias_semana TEXT, -- JSON array de inteiros 0-6 (0=domingo ... 6=sabado)
   ordem INTEGER NOT NULL DEFAULT 0,
   ativo INTEGER NOT NULL DEFAULT 1,
+  -- Visibilidade no portal do aluno (2026-08-15). visivel_portal é um botão
+  -- manual do professor pra ocultar ESTE treino específico do aluno a
+  -- qualquer momento, sem excluir (ele continua no painel do professor,
+  -- filtrado só por `ativo` como sempre). data_fim é o fim do "período" do
+  -- treino (opcional): quando a data passa, o treino some sozinho do portal
+  -- do aluno (ver GET /api/portal/treino) mas continua aparecendo pro
+  -- professor aqui (histórico) — nenhum dos dois mexe em `ativo`/exclusão.
+  -- Ver também o bloqueio da aba inteira por mensalidade em atraso em
+  -- portal.routes.js (regra separada e independente destas duas).
+  visivel_portal INTEGER NOT NULL DEFAULT 1,
+  data_fim TEXT,
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

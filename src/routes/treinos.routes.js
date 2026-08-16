@@ -11,6 +11,11 @@ const treinoSchema = z.object({
   aluno_id: z.string(),
   nome: z.string().min(1),
   dias_semana: z.array(z.number().int().min(0).max(6)).optional().default([]),
+  // Portal do aluno (2026-08-15) — ver comentário completo junto da
+  // definição de "treinos" em schema.sql. visivel_portal: toggle manual do
+  // professor. data_fim: fim do período (auto-oculta no portal ao passar).
+  visivel_portal: z.boolean().optional(),
+  data_fim: z.string().optional().nullable(),
 });
 
 const exercicioSchema = z.object({
@@ -98,11 +103,14 @@ router.post('/', async (req, res, next) => {
       args: [dados.aluno_id],
     });
     const ordem = Number(ultimaOrdem.rows[0].maxOrdem) + 1;
+    const visivelPortal = dados.visivel_portal === false ? 0 : 1;
     await db.execute({
-      sql: `INSERT INTO treinos (id, aluno_id, nome, dias_semana, ordem) VALUES (?, ?, ?, ?, ?)`,
-      args: [id, dados.aluno_id, dados.nome, JSON.stringify(dados.dias_semana), ordem],
+      sql: `INSERT INTO treinos (id, aluno_id, nome, dias_semana, ordem, visivel_portal, data_fim) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: [id, dados.aluno_id, dados.nome, JSON.stringify(dados.dias_semana), ordem, visivelPortal, dados.data_fim || null],
     });
-    res.status(201).json({ id, ...dados, ordem, exercicios: [] });
+    res.status(201).json({
+      id, ...dados, ordem, exercicios: [], visivel_portal: Boolean(visivelPortal), data_fim: dados.data_fim || null,
+    });
   } catch (err) {
     next(err);
   }
@@ -119,6 +127,8 @@ router.put('/:id', async (req, res, next) => {
     const args = [];
     if (dados.nome !== undefined) { sets.push('nome = ?'); args.push(dados.nome); }
     if (dados.dias_semana !== undefined) { sets.push('dias_semana = ?'); args.push(JSON.stringify(dados.dias_semana)); }
+    if (dados.visivel_portal !== undefined) { sets.push('visivel_portal = ?'); args.push(dados.visivel_portal ? 1 : 0); }
+    if (dados.data_fim !== undefined) { sets.push('data_fim = ?'); args.push(dados.data_fim || null); }
     args.push(req.params.id);
 
     await db.execute({ sql: `UPDATE treinos SET ${sets.join(', ')} WHERE id = ?`, args });

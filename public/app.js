@@ -1629,7 +1629,12 @@ function renderizarAbasTreino() {
   }
 
   treinosCache.forEach((t) => {
-    const btn = el(`<button type="button" class="btn-linha ${t.id === treinoAtivoId ? 'btn-primario' : ''}">${escapeHtml(t.nome)}</button>`);
+    // Indicador visual rápido: treino oculto manualmente pelo professor ou
+    // com o período (data_fim) já vencido — em ambos os casos o aluno não
+    // vê mais no portal, mas o treino continua aqui normalmente.
+    const ocultoDoAluno = t.visivel_portal === 0 || t.visivel_portal === false
+      || (t.data_fim && t.data_fim < new Date().toISOString().slice(0, 10));
+    const btn = el(`<button type="button" class="btn-linha ${t.id === treinoAtivoId ? 'btn-primario' : ''}" title="${ocultoDoAluno ? 'Oculto para o aluno no portal' : 'Visível para o aluno no portal'}">${escapeHtml(t.nome)}${ocultoDoAluno ? ' 🚫' : ''}</button>`);
     btn.addEventListener('click', () => { treinoAtivoId = t.id; renderizarAbasTreino(); });
     caixa.appendChild(btn);
   });
@@ -1643,6 +1648,9 @@ function renderizarTreinoAtivo() {
   if (!treino) return;
 
   document.getElementById('treino-nome-ativo').textContent = treino.nome;
+
+  document.getElementById('treino-visivel-portal').checked = !(treino.visivel_portal === 0 || treino.visivel_portal === false);
+  document.getElementById('treino-data-fim').value = treino.data_fim || '';
 
   const diasBox = document.getElementById('treino-dias-semana');
   diasBox.innerHTML = '';
@@ -1692,6 +1700,39 @@ function renderizarTreinoAtivo() {
     tbody.appendChild(tr);
   });
 }
+
+// Visibilidade do treino no portal do aluno (2026-08-15) — ver comentário em
+// schema.sql junto de "treinos". Os dois campos abaixo vivem na mesma linha
+// do treino ativo, então basta ler treinoAtivoId/treinosCache no momento do
+// evento (mesmo padrão dos checkboxes de dias da semana acima).
+document.getElementById('treino-visivel-portal').addEventListener('change', async (ev) => {
+  const treino = treinosCache.find((t) => t.id === treinoAtivoId);
+  if (!treino) return;
+  const visivel = ev.target.checked;
+  try {
+    await api(`/api/treinos/${treino.id}`, { method: 'PUT', body: JSON.stringify({ visivel_portal: visivel }) });
+    treino.visivel_portal = visivel;
+    mostrarToast(visivel ? 'Treino visível para o aluno no portal.' : 'Treino ocultado do portal do aluno.');
+  } catch (err) {
+    ev.target.checked = !visivel;
+    mostrarToast(err.message, true);
+  }
+});
+
+async function salvarTreinoDataFim(dataFim) {
+  const treino = treinosCache.find((t) => t.id === treinoAtivoId);
+  if (!treino) return;
+  try {
+    await api(`/api/treinos/${treino.id}`, { method: 'PUT', body: JSON.stringify({ data_fim: dataFim || null }) });
+    treino.data_fim = dataFim || null;
+    mostrarToast(dataFim ? `Treino some do portal do aluno após ${dataFim}.` : 'Sem data de fim — o treino não expira mais sozinho no portal.');
+  } catch (err) { mostrarToast(err.message, true); }
+}
+document.getElementById('treino-data-fim').addEventListener('change', (ev) => salvarTreinoDataFim(ev.target.value));
+document.getElementById('btn-limpar-treino-data-fim').addEventListener('click', () => {
+  document.getElementById('treino-data-fim').value = '';
+  salvarTreinoDataFim('');
+});
 
 document.getElementById('btn-novo-treino').addEventListener('click', async () => {
   const nome = prompt('Nome do treino (ex: Treino A):', `Treino ${String.fromCharCode(65 + treinosCache.length)}`);

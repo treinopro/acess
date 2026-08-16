@@ -498,6 +498,19 @@
                 <div id="treino-dias-semana" style="display:flex;gap:10px;flex-wrap:wrap"></div>
               </div>
 
+              <div style="display:flex;gap:24px;align-items:center;flex-wrap:wrap;margin:12px 0;padding:10px;background:#f9fafb;border-radius:8px">
+                <label style="display:flex;align-items:center;gap:8px;margin:0">
+                  <input type="checkbox" id="treino-visivel-portal" style="width:auto" checked />
+                  Visível no portal do aluno
+                </label>
+                <label style="display:flex;align-items:center;gap:8px;margin:0">
+                  Ocultar do aluno após
+                  <input type="date" id="treino-data-fim" style="width:auto" />
+                  <button type="button" class="btn-secundario" id="btn-limpar-treino-data-fim" title="Remover data de fim (treino nunca expira sozinho)" style="padding:4px 8px">✕</button>
+                </label>
+              </div>
+              <p style="font-size:12px;color:#667085;margin:-6px 0 12px">O treino continua aparecendo aqui pro professor mesmo depois de oculto/expirado — só some da tela do aluno.</p>
+
               <table class="tabela">
                 <thead>
                   <tr><th>Exercício</th><th>Séries</th><th>Carga</th><th>Intervalo</th><th>Observação</th><th>Ações</th></tr>

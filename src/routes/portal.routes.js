@@ -153,9 +153,18 @@ router.get('/aluno', limitadorSenhaPortal, async (req, res, next) => {
       args: [aluno.id],
     });
 
+    // Aba de treino só fica acessível com a mesma regra usada pra liberar a
+    // catraca (mensalidade em dia) — ver acessoTerminal.verificarAutorizacaoAluno
+    // e o bloqueio espelhado em GET/POST /treino abaixo (defesa em profundidade:
+    // o front usa esta flag pra nem mostrar o botão, mas as rotas de treino
+    // também recusam por conta própria caso alguém chame a API direto).
+    const autorizacaoTreino = await acessoTerminal.verificarAutorizacaoAluno(aluno);
+
     res.json({
       aluno_nome: aluno.nome,
       treino_modo: aluno.treino_modo || 'nativo',
+      treino_liberado: autorizacaoTreino.autorizado,
+      treino_bloqueado_motivo: autorizacaoTreino.autorizado ? null : autorizacaoTreino.motivo,
       tem_rosto_cadastrado: Boolean(aluno.face_descriptor),
       plano_atual: matricula.rows[0] || null,
       primeiro_acesso: primeiroAcesso,
@@ -228,8 +237,21 @@ router.get('/treino', limitadorSenhaPortal, async (req, res, next) => {
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
     const aluno = autenticado.aluno;
 
+    // Mesma regra de acesso da catraca (mensalidade em dia) — ver comentário
+    // em GET /aluno acima. Bloqueia a rota mesmo que o front (que já esconde
+    // o botão "Ver treino" nesse caso) seja contornado.
+    const autorizacaoTreino = await acessoTerminal.verificarAutorizacaoAluno(aluno);
+    if (!autorizacaoTreino.autorizado) {
+      return res.status(403).json({ erro: autorizacaoTreino.motivo || 'Acesso ao treino bloqueado.', bloqueado: true });
+    }
+
+    // visivel_portal = 0: professor ocultou este treino específico pro aluno
+    // (continua existindo/visível pro professor). data_fim vencido: fim do
+    // período do treino, mesma ideia mas automática — ver schema.sql.
     const treinos = await db.execute({
-      sql: `SELECT * FROM treinos WHERE aluno_id = ? AND ativo = 1 ORDER BY ordem, criado_em`,
+      sql: `SELECT * FROM treinos WHERE aluno_id = ? AND ativo = 1 AND visivel_portal = 1
+              AND (data_fim IS NULL OR data_fim >= date('now'))
+            ORDER BY ordem, criado_em`,
       args: [aluno.id],
     });
 
@@ -269,6 +291,11 @@ router.post('/treino/exercicio/:id/concluir', limitadorSenhaPortal, async (req, 
     const autenticado = await autenticarAlunoPortal(dados.cpf, dados.senha);
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
     const aluno = autenticado.aluno;
+
+    const autorizacaoTreino = await acessoTerminal.verificarAutorizacaoAluno(aluno);
+    if (!autorizacaoTreino.autorizado) {
+      return res.status(403).json({ erro: autorizacaoTreino.motivo || 'Acesso ao treino bloqueado.', bloqueado: true });
+    }
 
     const dono = await db.execute({
       sql: `SELECT te.id FROM treino_exercicios te

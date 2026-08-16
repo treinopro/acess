@@ -296,6 +296,8 @@ document.getElementById('btn-ir-cadastro-portal').addEventListener('click', () =
 let cpfHubAtual = null;
 let senhaHubAtual = null; // senha do portal (mesmo código do biometria_id) — ver análise de segurança 2026-07
 let alunoHubTreinoModo = 'nativo';
+let alunoHubTreinoLiberado = true; // mensalidade em dia? (ver GET /api/portal/aluno) — false esconde/desabilita o card de treino
+let alunoHubTreinoBloqueadoMotivo = null;
 let contasSelecionadasHub = {};
 let pixHubPollTimer = null;
 let infoHubPendentePrimeiroAcesso = null; // guarda os dados do dashboard enquanto a tela de "guarde sua senha" está aberta
@@ -356,9 +358,20 @@ function preencherDashboardHub(info) {
     ? `${info.plano_atual.plano_nome} — ${formatarMoeda(info.plano_atual.valor_centavos)}/ciclo`
     : 'Nenhum plano ativo no momento.';
 
-  document.getElementById('card-treino-resumo').textContent = alunoHubTreinoModo === 'app_externo'
-    ? 'Seu treino é acompanhado em outro aplicativo.'
-    : 'Toque para ver seus treinos cadastrados.';
+  alunoHubTreinoLiberado = info.treino_liberado !== false;
+  alunoHubTreinoBloqueadoMotivo = info.treino_bloqueado_motivo || null;
+
+  const btnAbrirTreino = document.getElementById('btn-abrir-treino');
+  if (!alunoHubTreinoLiberado) {
+    document.getElementById('card-treino-resumo').textContent = alunoHubTreinoBloqueadoMotivo
+      || 'Regularize sua mensalidade para ver o treino.';
+    btnAbrirTreino.disabled = true;
+  } else {
+    document.getElementById('card-treino-resumo').textContent = alunoHubTreinoModo === 'app_externo'
+      ? 'Seu treino é acompanhado em outro aplicativo.'
+      : 'Toque para ver seus treinos cadastrados.';
+    btnAbrirTreino.disabled = false;
+  }
 
   const cardFacial = document.getElementById('card-facial');
   if (info.tem_rosto_cadastrado) cardFacial.classList.add('oculto');

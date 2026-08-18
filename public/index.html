@@ -426,7 +426,7 @@
           <form id="form-conta-perfil" class="form-painel oculto">
             <div class="grid-2">
               <div>
-                <label>Plano</label>
+                <label>Plano / Produto ou Serviço</label>
                 <select id="conta-perfil-plano">
                   <option value="">Personalizado (digitar descrição/valor)</option>
                 </select>
@@ -966,7 +966,7 @@
               <select id="conta-aluno" required></select>
             </div>
             <div>
-              <label>Plano</label>
+              <label>Plano / Produto ou Serviço</label>
               <select id="conta-plano">
                 <option value="">Personalizado (digitar descrição/valor)</option>
               </select>
@@ -2245,8 +2245,12 @@
         <div id="pagamento-desconto-aviso" class="aviso-desconto oculto"></div>
         <label>Conta corrente</label>
         <input id="pagamento-conta-corrente" value="Caixa da empresa" />
+        <div id="pagamento-erro-persistente" class="aviso-erro-persistente oculto">
+          <span id="pagamento-erro-persistente-texto"></span>
+          <button type="button" id="btn-fechar-pagamento-erro" title="Fechar aviso">&times;</button>
+        </div>
         <div class="form-acoes">
-          <button type="submit" class="btn-primario">OK</button>
+          <button type="submit" class="btn-primario" id="btn-salvar-pagamento">OK</button>
           <button type="button" class="btn-secundario" id="btn-cancelar-modal-pagamento">Cancelar</button>
         </div>
       </form>

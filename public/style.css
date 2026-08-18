@@ -14,6 +14,19 @@ body {
   border-radius: 8px; padding: 8px 12px; margin: -6px 0 10px;
 }
 
+/* Erro de submit que precisa ficar visível até o usuário fechar (ver
+   fecharErroPersistente em app.js) — ao contrário do toast, que some sozinho
+   em 3.5s e pode passar despercebido num envio que falhou no meio do caminho. */
+.aviso-erro-persistente {
+  background: #fef3f2; color: #d92d20; font-size: 13px; font-weight: 600;
+  border: 1px solid #fda29b; border-radius: 8px; padding: 10px 12px; margin: 6px 0 10px;
+  display: flex; align-items: flex-start; gap: 8px; justify-content: space-between;
+}
+.aviso-erro-persistente button {
+  background: none; border: none; color: #d92d20; font-weight: 700; cursor: pointer;
+  font-size: 15px; line-height: 1; padding: 0 0 0 8px;
+}
+
 /* ---------- Login ---------- */
 .tela-login {
   min-height: 100vh;

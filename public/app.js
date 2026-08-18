@@ -1877,16 +1877,23 @@ document.getElementById('btn-cancelar-conta-perfil').addEventListener('click', (
 
 document.getElementById('form-conta-perfil').addEventListener('submit', async (ev) => {
   ev.preventDefault();
-  const dados = {
-    aluno_id: perfilAtualId,
-    descricao: document.getElementById('conta-perfil-descricao').value.trim() || 'Mensalidade',
-    valor_centavos: Math.round(parseFloat(document.getElementById('conta-perfil-valor').value) * 100),
-    vencimento: document.getElementById('conta-perfil-vencimento').value || null,
-    status: document.getElementById('conta-perfil-status').value,
-  };
   try {
-    await api('/api/pagamentos/cobrancas', { method: 'POST', body: JSON.stringify(dados) });
-    mostrarToast('Conta cadastrada.');
+    const vendeu = await tentarVenderProdutoServicoNaConta(
+      document.getElementById('conta-perfil-plano'),
+      perfilAtualId,
+      document.getElementById('conta-perfil-vencimento'),
+    );
+    if (!vendeu) {
+      const dados = {
+        aluno_id: perfilAtualId,
+        descricao: document.getElementById('conta-perfil-descricao').value.trim() || 'Mensalidade',
+        valor_centavos: Math.round(parseFloat(document.getElementById('conta-perfil-valor').value) * 100),
+        vencimento: document.getElementById('conta-perfil-vencimento').value || null,
+        status: document.getElementById('conta-perfil-status').value,
+      };
+      await api('/api/pagamentos/cobrancas', { method: 'POST', body: JSON.stringify(dados) });
+    }
+    mostrarToast(vendeu ? 'Venda registrada — conta gerada em Contas a Receber.' : 'Conta cadastrada.');
     ev.target.reset();
     document.getElementById('conta-perfil-descricao').value = 'Mensalidade';
     document.getElementById('form-conta-perfil').classList.add('oculto');
@@ -2567,24 +2574,67 @@ function popularSelectPlanos(select, planos) {
   select.innerHTML = planos.map((p) => `<option value="${p.id}">${escapeHtml(p.nome)} (${formatarMoeda(p.valor_centavos)})</option>`).join('');
 }
 
-// ---------------- Selecionar um plano existente ao incluir conta manual ----------------
+// ---------------- Selecionar um plano ou produto/serviço existente ao incluir conta manual ----------------
 // Em vez de digitar a descrição/valor de cabeça, o admin pode escolher um dos
-// planos cadastrados (ex: "Musculação") e a descrição/valor já vêm preenchidos
-// — "Personalizado" continua disponível pra contas avulsas sem plano.
+// planos cadastrados (ex: "Musculação") ou um item do catálogo de Produtos e
+// Serviços (ex: "Avaliação física"), e a descrição/valor já vêm preenchidos
+// — "Personalizado" continua disponível pra contas avulsas sem nenhum dos dois.
+// Selecionar um produto/serviço muda o que o submit do formulário faz (ver
+// selecaoProdutoServicoNaConta): em vez de só criar uma cobrança avulsa, ele
+// chama /api/produtos-servicos/vender, que também registra a venda — isso é
+// o que faz um serviço com duração (ex: avaliação física) continuar gerando
+// pendência de renovação quando vence (aba Pendências), igual à venda feita
+// direto pela tela de Produtos e Serviços.
 
 async function popularSelectPlanoParaConta(select) {
   try {
-    const planos = await api('/api/planos');
+    const [planos, itens] = await Promise.all([api('/api/planos'), api('/api/produtos-servicos')]);
+    const opcoesPlanos = planos.map((p) => `<option value="${p.id}" data-tipo="plano" data-nome="${escapeHtml(p.nome)}" data-valor="${p.valor_centavos}">${escapeHtml(p.nome)} (${formatarMoeda(p.valor_centavos)})</option>`).join('');
+    const opcoesItens = itens.map((it) => `<option value="${it.id}" data-tipo="produto_servico" data-produto-tipo="${it.tipo}" data-nome="${escapeHtml(it.nome)}" data-valor="${it.valor_centavos}" data-duracao="${it.duracao_dias || ''}">${escapeHtml(it.nome)} (${formatarMoeda(it.valor_centavos)})</option>`).join('');
     select.innerHTML = '<option value="">Personalizado (digitar descrição/valor)</option>'
-      + planos.map((p) => `<option value="${p.id}" data-nome="${escapeHtml(p.nome)}" data-valor="${p.valor_centavos}">${escapeHtml(p.nome)} (${formatarMoeda(p.valor_centavos)})</option>`).join('');
+      + (opcoesPlanos ? `<optgroup label="Planos (mensalidade)">${opcoesPlanos}</optgroup>` : '')
+      + (opcoesItens ? `<optgroup label="Produtos e Serviços">${opcoesItens}</optgroup>` : '');
   } catch (err) { mostrarToast(err.message, true); }
 }
 
 function aplicarPlanoNaConta(select, descricaoInput, valorInput) {
   const opt = select.selectedOptions[0];
-  if (!select.value || !opt) return; // "Personalizado" — não mexe no que já foi digitado
-  descricaoInput.value = `Mensalidade - ${opt.dataset.nome}`;
+  if (!select.value || !opt) { // "Personalizado" — não mexe no que já foi digitado, libera os campos
+    descricaoInput.readOnly = false;
+    valorInput.readOnly = false;
+    return;
+  }
+  const ehProdutoServico = opt.dataset.tipo === 'produto_servico';
+  descricaoInput.value = ehProdutoServico
+    ? `${opt.dataset.produtoTipo === 'servico' ? 'Serviço' : 'Produto'} - ${opt.dataset.nome}`
+    : `Mensalidade - ${opt.dataset.nome}`;
   valorInput.value = (Number(opt.dataset.valor) / 100).toFixed(2);
+  // Venda de produto/serviço sempre cobra o preço do catálogo (endpoint de
+  // venda não aceita valor customizado) — trava os campos pra não sugerir que
+  // dá pra editar aqui e o valor real cobrado ser outro.
+  descricaoInput.readOnly = ehProdutoServico;
+  valorInput.readOnly = ehProdutoServico;
+}
+
+// Se o item selecionado for um produto/serviço do catálogo, cadastrar a conta
+// deve passar pelo endpoint de venda (não pelo de cobrança avulsa) — assim
+// fica registrado em vendas_produtos_servicos e participa da pendência de
+// vencimento de serviços com duração. Retorna true se tratou a venda aqui
+// (o chamador não deve seguir com o POST genérico de cobrança avulsa).
+async function tentarVenderProdutoServicoNaConta(select, alunoId, vencimentoInput) {
+  const opt = select.selectedOptions[0];
+  if (!opt || opt.dataset.tipo !== 'produto_servico') return false;
+  const dataInicio = vencimentoInput.value || hojeLocalISO();
+  await api('/api/produtos-servicos/vender', {
+    method: 'POST',
+    body: JSON.stringify({
+      aluno_id: alunoId,
+      produto_servico_id: select.value,
+      data_inicio: dataInicio,
+      vencimento_cobranca: vencimentoInput.value || undefined,
+    }),
+  });
+  return true;
 }
 
 document.getElementById('conta-plano').addEventListener('change', (ev) => {
@@ -3818,6 +3868,46 @@ function atualizarValorPagamentoComDesconto() {
   }
 }
 
+// Verdadeiro enquanto o POST de lançar pagamento está em voo — usado pra impedir
+// duplo clique, travar o fechamento do modal (X/Cancelar/clique fora) e avisar se a
+// pessoa tentar fechar a aba nesse meio tempo. Existe porque um pagamento "lançado"
+// que na verdade falhou no meio do caminho (aba fechada, rede caiu) e passou
+// despercebido já causou um caso real de mensalidade marcada como atrasada mesmo
+// depois de paga (2026-08-17) — o erro não teve nada visível além de um toast que
+// some sozinho em poucos segundos.
+let pagamentoEmAndamento = false;
+
+function mostrarErroPersistentePagamento(mensagem) {
+  document.getElementById('pagamento-erro-persistente-texto').textContent = mensagem;
+  document.getElementById('pagamento-erro-persistente').classList.remove('oculto');
+}
+
+function esconderErroPersistentePagamento() {
+  document.getElementById('pagamento-erro-persistente').classList.add('oculto');
+}
+
+document.getElementById('btn-fechar-pagamento-erro').addEventListener('click', esconderErroPersistentePagamento);
+
+// Trava/destrava tudo que poderia fechar ou reenviar o modal enquanto o pagamento
+// está sendo salvo — o botão OK mostra "Salvando..." pra ficar óbvio que algo está
+// acontecendo, em vez de parecer travado.
+function definirPagamentoEmAndamento(emAndamento) {
+  pagamentoEmAndamento = emAndamento;
+  document.getElementById('btn-salvar-pagamento').disabled = emAndamento;
+  document.getElementById('btn-salvar-pagamento').textContent = emAndamento ? 'Salvando...' : 'OK';
+  document.getElementById('btn-cancelar-modal-pagamento').disabled = emAndamento;
+  document.getElementById('btn-fechar-modal-pagamento').disabled = emAndamento;
+}
+
+// Rede de segurança final: se por algum motivo a pessoa tentar fechar/recarregar a
+// aba com o POST ainda em voo, o navegador pergunta antes — evita o caso de fechar a
+// aba achando que já salvou, quando na verdade a requisição foi abortada no meio.
+window.addEventListener('beforeunload', (ev) => {
+  if (!pagamentoEmAndamento) return;
+  ev.preventDefault();
+  ev.returnValue = '';
+});
+
 function abrirModalPagamento() {
   pagamentoSaldoCentavos = Math.max(modalContaAtual.valor_centavos - modalContaTotalPagoCentavos, 0);
 
@@ -3825,11 +3915,16 @@ function abrirModalPagamento() {
   document.getElementById('pagamento-tipo').value = 'dinheiro';
   document.getElementById('pagamento-conta-corrente').value = 'Caixa da empresa';
   document.getElementById('pagamento-aplicar-desconto').checked = true;
+  esconderErroPersistentePagamento();
+  definirPagamentoEmAndamento(false);
   atualizarValorPagamentoComDesconto();
   document.getElementById('modal-pagamento').classList.remove('oculto');
 }
 
 function fecharModalPagamento() {
+  // Nunca fecha silenciosamente com um envio em andamento — a pessoa precisa ver o
+  // resultado (sucesso ou erro) antes de sair da tela.
+  if (pagamentoEmAndamento) return;
   document.getElementById('modal-pagamento').classList.add('oculto');
 }
 
@@ -3855,12 +3950,15 @@ document.getElementById('pagamento-aplicar-desconto').addEventListener('change',
 
 document.getElementById('form-modal-pagamento').addEventListener('submit', async (ev) => {
   ev.preventDefault();
+  if (pagamentoEmAndamento) return; // duplo clique/duplo submit — ignora
   const dados = {
     data: document.getElementById('pagamento-data').value,
     valor_centavos: Math.round(parseFloat(document.getElementById('pagamento-valor').value) * 100),
     tipo: document.getElementById('pagamento-tipo').value,
     conta_corrente: document.getElementById('pagamento-conta-corrente').value.trim() || null,
   };
+  esconderErroPersistentePagamento();
+  definirPagamentoEmAndamento(true);
   try {
     // Quando a caixinha "Aplicar desconto automático" está marcada, o desconto precisa
     // ser abatido do valor OFICIAL da conta também, não só do valor digitado do
@@ -3885,11 +3983,18 @@ document.getElementById('form-modal-pagamento').addEventListener('submit', async
       mostrarToast(resp.cobranca?.status === 'pago' ? 'Pagamento lançado — conta quitada!' : 'Pagamento lançado.');
     }
     if (resp.cobranca) atualizarBadgeStatusModal(resp.cobranca.status);
+    definirPagamentoEmAndamento(false);
     fecharModalPagamento();
     await carregarPagamentosModal();
     carregarContas();
       carregarFinanceiroPerfil();
-  } catch (err) { mostrarToast(err.message, true); }
+  } catch (err) {
+    // Erro persistente (não some sozinho) além do toast — o modal continua aberto e
+    // travado até a pessoa ler e decidir se tenta de novo ou fecha por conta própria.
+    definirPagamentoEmAndamento(false);
+    mostrarErroPersistentePagamento(`Não foi possível salvar o pagamento: ${err.message}`);
+    mostrarToast(err.message, true);
+  }
 });
 
 // ---------------- Modal "Parcelamentos" (Parcelar Conta / Incluir Conta Parcelada) ----------------
@@ -4095,16 +4200,24 @@ document.getElementById('form-modal-parcelamento').addEventListener('submit', as
 
 document.getElementById('form-conta-manual').addEventListener('submit', async (ev) => {
   ev.preventDefault();
-  const dados = {
-    aluno_id: document.getElementById('conta-aluno').value,
-    descricao: document.getElementById('conta-descricao').value.trim() || 'Mensalidade',
-    valor_centavos: Math.round(parseFloat(document.getElementById('conta-valor').value) * 100),
-    vencimento: document.getElementById('conta-vencimento').value || null,
-    status: document.getElementById('conta-status').value,
-  };
   try {
-    await api('/api/pagamentos/cobrancas', { method: 'POST', body: JSON.stringify(dados) });
-    mostrarToast('Conta cadastrada.');
+    const alunoId = document.getElementById('conta-aluno').value;
+    const vendeu = await tentarVenderProdutoServicoNaConta(
+      document.getElementById('conta-plano'),
+      alunoId,
+      document.getElementById('conta-vencimento'),
+    );
+    if (!vendeu) {
+      const dados = {
+        aluno_id: alunoId,
+        descricao: document.getElementById('conta-descricao').value.trim() || 'Mensalidade',
+        valor_centavos: Math.round(parseFloat(document.getElementById('conta-valor').value) * 100),
+        vencimento: document.getElementById('conta-vencimento').value || null,
+        status: document.getElementById('conta-status').value,
+      };
+      await api('/api/pagamentos/cobrancas', { method: 'POST', body: JSON.stringify(dados) });
+    }
+    mostrarToast(vendeu ? 'Venda registrada — conta gerada em Contas a Receber.' : 'Conta cadastrada.');
     ev.target.reset();
     document.getElementById('form-conta-manual').classList.add('oculto');
     carregarContas();

@@ -312,7 +312,18 @@ async function executarCadastroFacialGuiado({
     atualizarUI();
   }
 
-  async function concluirCaptura(deteccaoFinal, quadroFinal) {
+  // 2026-07-28: foto de perfil capturada durante o passo "centro" (pose
+  // confirmada como referência frontal — ver poseBase abaixo), guardada aqui
+  // pra servir de reserva quando o cadastro termina por TIMEOUT (rede de
+  // segurança que existe pra nunca travar o cadastro — ver "usarQuadroAtual
+  // ParaFoto" abaixo): nesses casos a pessoa pode não estar olhando de
+  // frente no quadro exato do timeout (ex.: ainda com o queixo baixo do
+  // passo anterior), e usar aquele quadro pra FOTO ficaria ruim mesmo que o
+  // embedding em si já tenha essa proteção (o valor real dela é só de
+  // reconhecimento, não de retrato).
+  let fotoReferenciaFrontal = null;
+
+  async function concluirCaptura(deteccaoFinal, quadroFinal, usarQuadroAtualParaFoto) {
     statusEl.textContent = 'Cadastrando...';
     try {
       // 2026-07-27: o descritor enviado ao servidor não é mais o do face-api
@@ -320,7 +331,14 @@ async function executarCadastroFacialGuiado({
       // (OpenCV Zoo), calculado em cima do mesmo rosto/landmarks já
       // detectados aqui. Ver facial-sface.js para o porquê da troca.
       const embedding = await obterEmbeddingSFace(quadroFinal, deteccaoFinal);
-      const foto = obterFotoRecorte(quadroFinal, deteccaoFinal);
+      // Só usa o quadro ATUAL pra foto quando a pose dele foi genuinamente
+      // confirmada como boa (passo "final" cumprido, ou o próprio passo
+      // "centro") — em qualquer captura por timeout/rede de segurança,
+      // prefere a foto de referência do "centro" (frontal, confirmada),
+      // já que não dá pra confiar na pose do quadro exato do timeout.
+      const foto = usarQuadroAtualParaFoto
+        ? obterFotoRecorte(quadroFinal, deteccaoFinal)
+        : (fotoReferenciaFrontal || obterFotoRecorte(quadroFinal, deteccaoFinal));
       await enviarDescritor(embedding, foto);
       statusEl.textContent = 'Rosto cadastrado com sucesso!';
       if (barraProgresso) barraProgresso.style.width = '100%';
@@ -373,10 +391,14 @@ async function executarCadastroFacialGuiado({
         quadrosConfirmandoPasso += 1;
         if (circulo) circulo.classList.add('guia-ativo');
         if (quadrosConfirmandoPasso >= QUADROS_PARA_CONFIRMAR_PASSO_FACIAL) {
+          fotoReferenciaFrontal = obterFotoRecorte(quadro, deteccao); // pose recém-confirmada como frontal
           marcarPassoOk();
           avancarPasso();
         } else if (Date.now() - inicioPassoEm > TIMEOUT_POR_PASSO_FACIAL_MS) {
-          await concluirCaptura(deteccao, quadro);
+          // Ainda não deu tempo de confirmar o "centro" — não existe uma foto
+          // de referência melhor ainda, então usa o quadro atual mesmo (a
+          // pessoa já está sendo instruída a centralizar desde o início).
+          await concluirCaptura(deteccao, quadro, true);
         }
         return;
       }
@@ -388,16 +410,18 @@ async function executarCadastroFacialGuiado({
           quadrosConfirmandoPasso += 1;
           if (circulo) circulo.classList.add('guia-ativo');
           if (quadrosConfirmandoPasso >= QUADROS_PARA_CONFIRMAR_PASSO_FACIAL) {
-            await concluirCaptura(deteccao, quadro);
+            await concluirCaptura(deteccao, quadro, true); // pose "final" genuinamente confirmada
           }
         } else {
           quadrosConfirmandoPasso = 0;
           if (circulo) circulo.classList.remove('guia-ativo');
           // Mesma rede de segurança dos passos de movimento: se a pessoa não
           // conseguir voltar exatamente pro centro, captura com a última
-          // detecção válida em vez de travar o cadastro na última tela.
+          // detecção válida em vez de travar o cadastro na última tela —
+          // mas para a FOTO, prefere a referência do "centro" (ver
+          // concluirCaptura) já que essa pose aqui não foi confirmada.
           if (Date.now() - inicioPassoEm > TIMEOUT_POR_PASSO_FACIAL_MS) {
-            await concluirCaptura(deteccao, quadro);
+            await concluirCaptura(deteccao, quadro, false);
           }
         }
         return;

@@ -131,6 +131,31 @@ document.getElementById('btn-liberar').addEventListener('click', async () => {
   }
 });
 
+// 2026-07-22: detecção simples de celular/tablet vs notebook — mesma
+// abordagem padrão de mercado (checar palavras-chave de SO móvel no user
+// agent), suficiente aqui porque não precisa ser à prova de falhas, só
+// distinguir o caso de uso real: recepção usando um celular/tablet vs o
+// dono acessando pelo notebook.
+function ehDispositivoMovel() {
+  return /Android|iPhone|iPad|iPod|Mobile|Windows Phone/i.test(navigator.userAgent || '');
+}
+
+// 2026-07-22 (pedido do dono do sistema): o link "Abrir painel completo"
+// não deve aparecer pro papel "recepção" quando acessado de um
+// celular/tablet — o painel completo (index.html) é pesado e não foi
+// pensado pra tela pequena; a ideia da tela de liberação rápida é
+// exatamente NÃO precisar abrir o painel inteiro num aparelho desses. Pelo
+// notebook (qualquer papel) ou pela conta admin (mesmo no celular), o link
+// continua disponível.
+function atualizarVisibilidadeLinkPainelCompleto() {
+  const link = document.getElementById('link-painel-completo');
+  if (!link) return;
+  const usuario = JSON.parse(localStorage.getItem('usuario') || 'null');
+  const ehAdmin = usuario?.papel === 'admin';
+  const esconder = ehDispositivoMovel() && !ehAdmin;
+  link.classList.toggle('oculto', esconder);
+}
+
 function iniciar() {
   const token = localStorage.getItem('token');
   if (!token) {
@@ -139,6 +164,7 @@ function iniciar() {
   }
   mostrarTela('tela-liberar');
   aplicarIdentidade();
+  atualizarVisibilidadeLinkPainelCompleto();
 }
 
 iniciar();

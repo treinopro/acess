@@ -16,11 +16,13 @@ Sistema de gestão pra academia: alunos, matrículas, cobranças (Pix via Mercad
 
 ## ⚠️ Regra de segurança mais importante deste projeto
 
-`npm start`/`npm run dev` neste PC caem por padrão no **`local.db`** (arquivo de teste local), NÃO em produção. Isso existe por causa de um incidente real (cobrança fantasma gerada em produção por engano, ver "Sessão 08/07/2026" em STATUS-PROJETO.md).
+`npm start`/`npm run dev` neste PC **deveriam** cair por padrão no **`local.db`** (arquivo de teste local), NÃO em produção. Isso existe por causa de um incidente real (cobrança fantasma gerada em produção por engano, ver "Sessão 08/07/2026" em STATUS-PROJETO.md).
 
 - Testar/desenvolver no dia a dia → `npm start` normal, sem se preocupar.
 - Mexer em produção de propósito (migração, diagnóstico, correção pontual) → `scripts/rodar-producao.ps1`, que pede confirmação digitada ("SIM") e avisa em vermelho enquanto estiver conectado.
 - **Nunca editar o `.env` na mão** pra alternar entre os dois.
+
+**⚠️ ATENÇÃO (achado em 11/08/2026, ainda não resolvido)**: conferido o `.env` deste PC e a linha `DATABASE_URL` ATIVA hoje é a do Turso de produção — a linha `file:./local.db` está comentada. Ou seja, **`npm start`/`npm run migrate` neste PC caem direto em produção agora**, contrariando a regra acima. Não mexi no `.env` (não é decisão técnica pra tomar sozinho — o comentário ao lado da linha sugere que foi proposital, "pra rodar localmente e acessar pela nuvem sempre refletirem os mesmos dados"). Confirme com o dono do sistema se é assim mesmo que deveria estar antes de rodar `npm start`/`migrate` achando que está em `local.db` — ver "Sessão 11/08/2026" em STATUS-PROJETO.md.
 
 ## Como trabalhar neste projeto (convenção já estabelecida com o dono do sistema)
 
@@ -29,16 +31,17 @@ Sistema de gestão pra academia: alunos, matrículas, cobranças (Pix via Mercad
 3. Perguntar explicitamente **"quer que eu envie pro GitHub?"** antes de `git push` — é um passo separado do commit, sempre confirmado à parte.
 4. Autorizações são por ação — uma confirmação não vale pras próximas.
 
-## Pendências reais agora (07/08/2026)
+## Pendências reais agora (atualizado 11/08/2026)
 
 **Mudanças locais não commitadas** (existem na pasta do projeto neste PC, mas nunca foram enviadas ao GitHub — então não estão em produção nem em nenhum outro clone do repositório):
 
 | Arquivo(s) | O que faz | De quando |
 |---|---|---|
 | `public/facial-guiado.js` | Corrige a foto de perfil capturada "olhando pra baixo" no cadastro facial guiado — usa a foto do passo "centro" (frontal confirmada) como referência em vez do quadro exato de um timeout | Sessão de reconhecimento facial (antes de 04/08) |
-| `src/db/migrate.js` | Descreve (código-fonte da migração) a coluna `contas_pagar.secullum_id` que **já existe em produção** — foi aplicada rodando o script direto contra o banco, só o código-fonte que descreve essa migração ainda não foi commitado | Sessão de Contas a Pagar/Balanço |
-| `scripts/migrar-contas-pagar-secullum.js` | Script (não rastreado pelo git) que migrou 1011 contas a pagar históricas do Secullum — **já rodado com sucesso em produção**, só o próprio script nunca foi commitado | Idem |
+| `scripts/migrar-contas-pagar-secullum.js` | Script (não rastreado pelo git) que migrou 1011 contas a pagar históricas do Secullum — **já rodado com sucesso em produção**, só o próprio script nunca foi commitado | Sessão de Contas a Pagar/Balanço |
 | `public/liberacao-rapida.html`/`.js` | Esconde o link "Abrir painel completo" pro papel recepção quando acessado por celular/tablet | Sessão 22/07/2026 (já documentada como pendente lá) |
+
+*(`src/db/migrate.js` saiu desta lista em 11/08/2026: a linha pendente `secullum_id` acabou commitada junto com o módulo de treinos, sem querer — mesmo padrão de bundling descrito abaixo. Sem risco, a coluna já existe em produção. Ver "Sessão 11/08/2026" em STATUS-PROJETO.md.)*
 
 **Atenção pra próxima sessão que for commitar algum desses arquivos**: `git add <arquivo>` sobe o arquivo INTEIRO, não só as linhas que você acabou de mexer — se o arquivo já tinha uma mudança pendente de outra sessão (como listado acima), ela vai junto no commit sem querer. **Isso já aconteceu** (07/08/2026): a correção do saldo do Balanço somando desde 1970, que estava nesta tabela, foi commitada/enviada junto com uma mudança não relacionada em `contasPagar.routes.js` porque ninguém rodou `git diff <arquivo>` antes — ver "Sessão 07/08/2026" item 5 em STATUS-PROJETO.md. Sempre rodar `git diff <arquivo>` ANTES de editar um arquivo que aparece nesta lista, pra saber exatamente o que já está pendente nele antes de somar uma mudança nova.
 

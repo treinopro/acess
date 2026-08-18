@@ -1,0 +1,675 @@
+diff --git a/public/app.js b/public/app.js
+index 6835ff2..96198dd 100644
+--- a/public/app.js
++++ b/public/app.js
+@@ -3866,8 +3866,9 @@ document.getElementById('btn-recup-ativos-enviar-selecionados').addEventListener
+ });
+ 
+ // ---------- Visitantes (2026-07) ----------
+-// Relatório de quem entrou como visitante — acessos usados (contra o limite
+-// configurável) e quem indicou (ver GET /api/recuperacao/visitantes) — mesmo
++// Relatório de quem entrou como visitante — período de acesso gratuito
++// (2026-07-19: dias corridos a partir da primeira liberação, não mais número
++// de acessos) e quem indicou (ver GET /api/recuperacao/visitantes) — mesmo
+ // mecanismo de envio de sempre pra tentar captar matrícula.
+ 
+ async function carregarVisitantes() {
+@@ -3893,14 +3894,23 @@ async function carregarVisitantes() {
+     linhas.forEach((linha) => {
+       recupEstado.visitantesCache.set(linha.aluno_id, linha);
+       const cadastradoEm = formatarDataOuDataHora(linha.criado_em);
+-      const acessosTexto = `${linha.acessos_usados}/${linha.limite_acessos}`;
++      // 2026-07-19: período gratuito em dias corridos, não mais número de
++      // acessos — ver comentário em GET /api/recuperacao/visitantes.
++      let statusTexto;
++      if (!linha.visitante_liberado_em) {
++        statusTexto = 'Ainda não entrou';
++      } else if (linha.expira_em) {
++        statusTexto = `Expira em ${formatarDataOuDataHora(linha.expira_em)}`;
++      } else {
++        statusTexto = `${linha.limite_dias} dia(s) a partir de ${formatarDataOuDataHora(linha.visitante_liberado_em)}`;
++      }
+       const tr = el(`
+         <tr style="${linha.limite_atingido ? 'background:#fff7ed' : ''}">
+           <td><input type="checkbox" class="recup-visitantes-check" style="width:auto" /></td>
+           <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${escapeHtml(linha.nome)}</span></td>
+           <td>${cadastradoEm}</td>
+           <td>${escapeHtml(linha.indicado_por_nome) || '—'}</td>
+-          <td>${acessosTexto}${linha.limite_atingido ? ' <span class="badge atrasado">Limite atingido</span>' : ''}</td>
++          <td>${statusTexto}${linha.limite_atingido ? ' <span class="badge atrasado">Período encerrado</span>' : ''}</td>
+         </tr>
+       `);
+       tr.querySelector('.nome-clicavel').addEventListener('click', () => abrirPerfilAluno(linha.aluno_id));
+diff --git a/public/index.html b/public/index.html
+index c18923c..3f2e5ae 100644
+--- a/public/index.html
++++ b/public/index.html
+@@ -1118,14 +1118,16 @@
+           <p id="recup-ativos-total" style="font-size:13px;color:#667085;margin-top:8px"></p>
+         </div>
+ 
+-        <!-- Painel: Visitantes (2026-07) — relatório de quem entrou como
+-             visitante (categoria='visitante'), quantos acessos já usou (contra
+-             o limite configurável) e quem indicou, pra campanha de "vire
+-             aluno" usando o mesmo mecanismo de envio de sempre. -->
++        <!-- Painel: Visitantes (2026-07, dias corridos desde 2026-07-19) —
++             relatório de quem entrou como visitante (categoria='visitante'),
++             até quando vale o período de acesso gratuito (contra o limite de
++             dias configurável) e quem indicou, pra campanha de "vire aluno"
++             usando o mesmo mecanismo de envio de sempre. -->
+         <div class="recup-painel oculto" data-recup-painel="visitantes">
+           <p style="font-size:13px;color:#667085;margin:0 0 14px">
+-            Quem já passou como visitante — acompanhe quantos acessos cada um já usou (contra o limite
+-            configurado em Configurações) e quem indicou, e use pra tentar captar matrícula.
++            Quem já passou como visitante — acompanhe até quando vale o período de acesso gratuito de cada um
++            (dias corridos a partir da primeira entrada, configurável em Configurações) e quem indicou, e use
++            pra tentar captar matrícula.
+           </p>
+           <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
+             <div style="flex:1;min-width:180px">
+@@ -1153,7 +1155,7 @@
+                 <th>Nome</th>
+                 <th>Cadastrado em</th>
+                 <th>Indicado por</th>
+-                <th>Acessos usados</th>
++                <th>Situação</th>
+               </tr>
+             </thead>
+             <tbody id="recup-visitantes-lista"></tbody>
+diff --git a/public/terminal.js b/public/terminal.js
+index 5a7bf5f..16e2b79 100644
+--- a/public/terminal.js
++++ b/public/terminal.js
+@@ -1179,8 +1179,9 @@ function mostrarSucessoCadastro(resp) {
+ // Sucesso do cadastro de VISITANTE (2026-07) — sem Pix/matrícula, então não
+ // passa pelo poll de pagamento. Busca (ou gera, se ainda não tiver) o QR
+ // pessoal do visitante pelo mesmo endpoint usado em "Primeira vez no totem",
+-// pra ele já sair daqui com seu acesso pra próximas visitas dentro do limite
+-// (ver acessoTerminal.limiteAcessosVisitanteEm/configuracoes.visitante_limite_acessos).
++// pra ele já sair daqui com seu acesso pra próximas visitas dentro do período
++// gratuito, contado em dias corridos a partir da primeira liberação (ver
++// acessoTerminal.limiteDiasVisitanteEm/configuracoes.visitante_limite_dias).
+ async function mostrarSucessoCadastroVisitante(resp) {
+   document.getElementById('painel-cadastro-form').classList.add('oculto');
+   document.getElementById('painel-cadastro-sucesso').classList.remove('oculto');
+diff --git a/src/db/migrate.js b/src/db/migrate.js
+index 733a25b..c7de10b 100644
+--- a/src/db/migrate.js
++++ b/src/db/migrate.js
+@@ -32,6 +32,9 @@ const ALTERACOES_INCREMENTAIS = [
+   // detalhado junto da definição de "alunos" em schema.sql.
+   "ALTER TABLE alunos ADD COLUMN categoria TEXT NOT NULL DEFAULT 'aluno'",
+   "ALTER TABLE alunos ADD COLUMN indicado_por_aluno_id TEXT",
++  // Data da primeira liberação do visitante (2026-07-19 — troca do limite de
++  // "N acessos" para "N dias corridos"). Ver comentário em schema.sql.
++  "ALTER TABLE alunos ADD COLUMN visitante_liberado_em TEXT",
+ ];
+ 
+ // Divide um arquivo .sql em statements individuais (o driver libsql nao aceita
+diff --git a/src/db/schema.sql b/src/db/schema.sql
+index e9a5084..2f34393 100644
+--- a/src/db/schema.sql
++++ b/src/db/schema.sql
+@@ -31,10 +31,10 @@ CREATE TABLE IF NOT EXISTS alunos (
+   -- que é outro conceito (tipo de aula). Valores: aluno | professor | visitante
+   -- | colaborador | bolsista. colaborador e bolsista têm acesso livre (não
+   -- dependem de mensalidade em dia) — ver CATEGORIA_ACESSO_LIVRE. visitante
+-  -- tem um limite de quantos acessos pode usar (configuracoes.chave =
+-  -- 'visitante_limite_acessos'), controlado por contagem de acessos_catraca,
+-  -- não por um contador separado. aluno e professor seguem a regra normal de
+-  -- mensalidade/status.
++  -- tem um período de acesso gratuito contado em DIAS corridos a partir da
++  -- primeira liberação (configuracoes.chave = 'visitante_limite_dias', padrão
++  -- 1 dia) — ver visitante_liberado_em logo abaixo. aluno e professor seguem a
++  -- regra normal de mensalidade/status.
+   categoria TEXT NOT NULL DEFAULT 'aluno',
+   -- Preenchido só quando categoria = 'visitante' e o cadastro foi feito por um
+   -- aluno indicando um amigo pelo totem (ver POST /api/terminal/auto-cadastro
+@@ -42,6 +42,13 @@ CREATE TABLE IF NOT EXISTS alunos (
+   -- visitantes (quem indicou quem) quanto pro limite mensal de indicações por
+   -- aluno (configuracoes.chave = 'indicacao_limite_mensal').
+   indicado_por_aluno_id TEXT REFERENCES alunos(id) ON DELETE SET NULL,
++  -- Data/hora (UTC, mesmo formato de criado_em) da PRIMEIRA liberação de
++  -- acesso deste visitante (2026-07 — antes o limite era contado por número
++  -- de acessos; agora é por dias corridos a partir desta data, ver
++  -- acessoTerminal.service.js/verificarAutorizacaoAluno). NULL até a primeira
++  -- liberação — nesse estado o visitante ainda está dentro do período
++  -- gratuito, mesmo sem nunca ter entrado. Só se aplica a categoria='visitante'.
++  visitante_liberado_em TEXT,
+   -- Senha do portal remoto (2026-07): a partir do 1o acesso do aluno ao
+   -- portal (GET /api/portal/aluno), ele passa a precisar de CPF + biometria_id
+   -- (o mesmo codigo sequencial da catraca) pra entrar. Esta flag marca se
+diff --git a/src/routes/config.routes.js b/src/routes/config.routes.js
+index d4bb5be..3e001f0 100644
+--- a/src/routes/config.routes.js
++++ b/src/routes/config.routes.js
+@@ -38,7 +38,13 @@ const PADROES = {
+   // Sistema de visitantes (2026-07) — ver acessoTerminal.service.js e
+   // terminal.routes.js. Guardados como string (igual todo o resto desta
+   // tabela chave/valor) mas sempre números inteiros ≥ 0 na prática.
+-  visitante_limite_acessos: '1',
++  //
++  // 2026-07-19: o limite do visitante deixou de ser contado por NÚMERO DE
++  // ACESSOS (visitante_limite_acessos, removida) e passou a ser por DIAS
++  // CORRIDOS a partir da primeira liberação (visitante_liberado_em, ver
++  // schema.sql) — motivo: um visitante limitado a "1 acesso" não conseguia
++  // nem sair e voltar a entrar no mesmo dia (ex.: foi buscar algo no carro).
++  visitante_limite_dias: '1',
+   indicacao_limite_mensal: '2',
+ };
+ 
+@@ -124,11 +130,12 @@ router.put('/', autenticar, apenasAdmin, async (req, res, next) => {
+         acessoLiberado: SomSituacaoSchema,
+         acessoNegado: SomSituacaoSchema,
+       }).optional(),
+-      // Sistema de visitantes (2026-07): quantos acessos grátis cada visitante
+-      // pode usar antes de precisar virar aluno pagante, e quantos amigos
+-      // cada aluno pode indicar (cadastrar como visitante) por mês. Ver
++      // Sistema de visitantes (2026-07): quantos DIAS corridos de acesso
++      // grátis cada visitante tem (a partir da primeira liberação) antes de
++      // precisar virar aluno pagante, e quantos amigos cada aluno pode
++      // indicar (cadastrar como visitante) por mês. Ver
+       // acessoTerminal.service.js / terminal.routes.js.
+-      visitante_limite_acessos: z.number().int().min(0).max(50).optional(),
++      visitante_limite_dias: z.number().int().min(0).max(90).optional(),
+       indicacao_limite_mensal: z.number().int().min(0).max(50).optional(),
+     });
+     const dados = schema.parse(req.body);
+@@ -137,7 +144,7 @@ router.put('/', autenticar, apenasAdmin, async (req, res, next) => {
+ 
+     for (const chave of chaves) {
+       let valor = (chave === 'menu_ordem' || chave === 'som_totem') ? JSON.stringify(dados[chave]) : dados[chave];
+-      if (chave === 'visitante_limite_acessos' || chave === 'indicacao_limite_mensal') valor = String(valor);
++      if (chave === 'visitante_limite_dias' || chave === 'indicacao_limite_mensal') valor = String(valor);
+       await db.execute({
+         sql: 'INSERT INTO configuracoes (chave, valor) VALUES (?, ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor',
+         args: [chave, valor],
+diff --git a/src/routes/portal.routes.js b/src/routes/portal.routes.js
+index 3ef7b9b..2019d63 100644
+--- a/src/routes/portal.routes.js
++++ b/src/routes/portal.routes.js
+@@ -361,7 +361,10 @@ router.post('/cadastro', async (req, res, next) => {
+         args: [alunoId, dados.nome, dados.email, dados.telefone, dados.cpf, dados.data_nascimento, indicadoPorAlunoId],
+       });
+ 
+-      emailBoasVindas.enviarBoasVindasSeguro({ id: alunoId, nome: dados.nome, email: dados.email }).catch(() => {});
++      // E-mail específico do visitante (2026-07-19, mesmo motivo do totem —
++      // ver terminal.routes.js e o comentário completo em
++      // emailBoasVindas.service.js): nunca manda a senha do Portal do Aluno.
++      emailBoasVindas.enviarBoasVindasVisitanteSeguro({ id: alunoId, nome: dados.nome, email: dados.email }).catch(() => {});
+ 
+       return res.status(201).json({
+         visitante: true,
+diff --git a/src/routes/recuperacao.routes.js b/src/routes/recuperacao.routes.js
+index 2146331..2cc0027 100644
+--- a/src/routes/recuperacao.routes.js
++++ b/src/routes/recuperacao.routes.js
+@@ -65,7 +65,17 @@ function obterOrigin(req) {
+   return base.replace(/\/+$/, '');
+ }
+ 
++// 2026-07-19: visitante NUNCA recebe o link do Portal do Aluno/QR de acesso
++// (meu-acesso.html) — o período de acesso gratuito dele já bate ou já
++// acabou, então esse link não tem função nenhuma pra essa pessoa. Em vez
++// disso, manda pra página pública de cadastro (mesma usada pelo QR "Usar seu
++// cel" do totem) — vira convite pra se matricular de verdade, sem exigir
++// senha nenhuma (página pública, sem login). Vale mesmo quando o admin
++// escolheu link_tipo='portal' pra campanha inteira (ex.: "Todos os ativos"
++// misturando alunos e visitantes) — visitante nunca deveria receber o link
++// de portal por engano.
+ function montarLinkPortal(aluno, origin) {
++  if ((aluno.categoria || 'aluno') === 'visitante') return `${origin}/cadastro-mobile.html`;
+   if (aluno.codigo_acesso) return `${origin}/meu-acesso.html?codigo=${aluno.codigo_acesso}`;
+   return `${origin}/portal.html`;
+ }
+@@ -325,8 +335,13 @@ router.post('/enviar', async (req, res, next) => {
+       // Só busca/gera a senha de acesso (código sequencial, ver
+       // acessoTerminal.atribuirCodigoAluno) quando o modelo realmente usa
+       // {senha} — evita gerar/gravar código pra quem nunca vai ver essa info.
++      // Visitante NUNCA recebe essa senha (2026-07-19): o código do portal só
++      // faz sentido pareado com o cadastro físico na catraca (cartão/digital
++      // do "sistema antigo"), e visitante nunca passa por esse cadastro —
++      // ver aviso em emailBoasVindas.service.js.
++      const ehVisitante = (aluno.categoria || 'aluno') === 'visitante';
+       // eslint-disable-next-line no-await-in-loop
+-      const senha = precisaSenha ? await acessoTerminal.atribuirCodigoAluno(aluno.id) : null;
++      const senha = (precisaSenha && !ehVisitante) ? await acessoTerminal.atribuirCodigoAluno(aluno.id) : null;
+ 
+       const mensagem = montarMensagem({
+         aluno, saudacao, corpo, linkTipo, linkOfertaUrl, linkOfertaTexto, origin, senha,
+@@ -490,11 +505,12 @@ router.get('/todos-ativos', async (req, res, next) => {
+ 
+ // ---------------- Relatório de visitantes (2026-07) ----------------
+ // GET /api/recuperacao/visitantes?busca=&indicado_por_aluno_id=
+-// Cada visitante (categoria='visitante'), quantos acessos liberados ele já
+-// usou (contra o limite configurável — ver acessoTerminal.service.js /
+-// configuracoes.visitante_limite_acessos), e quem indicou (se veio de
+-// indicação de um aluno). Também entra nesse mecanismo de recuperação pra
+-// campanha de "vire aluno" (usa o mesmo POST /enviar de sempre).
++// Cada visitante (categoria='visitante'), até quando o período de acesso
++// gratuito dele vale (2026-07-19 — contado em DIAS CORRIDOS a partir da
++// primeira liberação, não mais por número de acessos — ver
++// acessoTerminal.service.js / configuracoes.visitante_limite_dias), e quem
++// indicou (se veio de indicação de um aluno). Também entra nesse mecanismo de
++// recuperação pra campanha de "vire aluno" (usa o mesmo POST /enviar de sempre).
+ router.get('/visitantes', async (req, res, next) => {
+   try {
+     const { busca, indicado_por_aluno_id: indicadoPorAlunoId } = req.query;
+@@ -504,25 +520,37 @@ router.get('/visitantes', async (req, res, next) => {
+     if (indicadoPorAlunoId) { condicoes.push('a.indicado_por_aluno_id = ?'); args.push(indicadoPorAlunoId); }
+     const where = `WHERE ${condicoes.join(' AND ')}`;
+ 
+-    const [visitantesResult, limite] = await Promise.all([
++    const [visitantesResult, dias] = await Promise.all([
+       db.execute({
+-        sql: `SELECT a.id as aluno_id, a.nome, a.telefone, a.email, a.criado_em,
+-                a.indicado_por_aluno_id, ind.nome as indicado_por_nome,
+-                (SELECT COUNT(*) FROM acessos_catraca ac WHERE ac.aluno_id = a.id AND ac.resultado = 'liberado') as acessos_usados
++        sql: `SELECT a.id as aluno_id, a.nome, a.telefone, a.email, a.criado_em, a.visitante_liberado_em,
++                a.indicado_por_aluno_id, ind.nome as indicado_por_nome
+               FROM alunos a
+               LEFT JOIN alunos ind ON ind.id = a.indicado_por_aluno_id
+               ${where}
+               ORDER BY a.criado_em DESC`,
+         args,
+       }),
+-      acessoTerminal.limiteAcessosVisitanteEm(db),
++      acessoTerminal.limiteDiasVisitanteEm(db),
+     ]);
+ 
+-    const visitantes = visitantesResult.rows.map((v) => ({
+-      ...v,
+-      limite_acessos: limite,
+-      limite_atingido: v.acessos_usados >= limite,
+-    }));
++    const agoraMs = Date.now();
++    const visitantes = visitantesResult.rows.map((v) => {
++      let expiraEm = null;
++      let limiteAtingido = false;
++      if (v.visitante_liberado_em) {
++        const liberadoEm = parseDataHoraFlexivel(v.visitante_liberado_em);
++        if (liberadoEm && !Number.isNaN(liberadoEm.getTime())) {
++          expiraEm = new Date(liberadoEm.getTime() + dias * 86400000).toISOString();
++          limiteAtingido = agoraMs >= new Date(expiraEm).getTime();
++        }
++      }
++      return {
++        ...v,
++        limite_dias: dias,
++        expira_em: expiraEm,
++        limite_atingido: limiteAtingido,
++      };
++    });
+ 
+     res.json(visitantes);
+   } catch (err) {
+diff --git a/src/routes/terminal.routes.js b/src/routes/terminal.routes.js
+index 8425c61..7513ac2 100644
+--- a/src/routes/terminal.routes.js
++++ b/src/routes/terminal.routes.js
+@@ -423,7 +423,12 @@ terminal.post('/auto-cadastro', limitadorCadastro, autenticarTerminalOuCadastroP
+         args: [alunoId, dados.nome, dados.email, dados.telefone, dados.cpf, dados.data_nascimento, indicadoPorAlunoId],
+       });
+ 
+-      emailBoasVindas.enviarBoasVindasSeguro({ id: alunoId, nome: dados.nome, email: dados.email }).catch(() => {});
++      // E-mail específico do visitante (2026-07-19) — NUNCA o e-mail normal
++      // de boas-vindas: aquele gera/manda a senha do Portal do Aluno
++      // (biometria_id), que só faz sentido pareada com cadastro físico na
++      // catraca — o visitante não passa por isso. Ver comentário completo em
++      // emailBoasVindas.service.js.
++      emailBoasVindas.enviarBoasVindasVisitanteSeguro({ id: alunoId, nome: dados.nome, email: dados.email }).catch(() => {});
+ 
+       return res.status(201).json({
+         visitante: true,
+diff --git a/src/services/acessoTerminal.service.js b/src/services/acessoTerminal.service.js
+index bfd380b..a7b5f7a 100644
+--- a/src/services/acessoTerminal.service.js
++++ b/src/services/acessoTerminal.service.js
+@@ -281,26 +281,35 @@ async function possuiConcessaoAcessoAtiva(alunoId) {
+  */
+ const CATEGORIA_ACESSO_LIVRE = new Set(['colaborador', 'bolsista']);
+ 
+-const LIMITE_VISITANTE_PADRAO = 1;
+-
+-/** Lê o limite de acessos por visitante configurado (Configurações > Visitantes). */
+-async function limiteAcessosVisitanteEm(cliente) {
+-  const result = await cliente.execute("SELECT valor FROM configuracoes WHERE chave = 'visitante_limite_acessos'");
++// 2026-07-19: o período gratuito do visitante passou a ser contado em DIAS
++// CORRIDOS a partir da primeira liberação (visitante_liberado_em, ver
++// schema.sql), não mais por número de acessos — um visitante limitado a "1
++// acesso" não conseguia nem sair e voltar a entrar no mesmo dia (ex.: foi
++// buscar algo no carro). Ver visitanteDentroDoPeriodo abaixo.
++const LIMITE_DIAS_VISITANTE_PADRAO = 1;
++
++/** Lê o limite de dias de acesso gratuito por visitante (Configurações > Visitantes). */
++async function limiteDiasVisitanteEm(cliente) {
++  const result = await cliente.execute("SELECT valor FROM configuracoes WHERE chave = 'visitante_limite_dias'");
+   const n = Number(result.rows[0]?.valor);
+-  return Number.isFinite(n) && n >= 0 ? n : LIMITE_VISITANTE_PADRAO;
++  return Number.isFinite(n) && n >= 0 ? n : LIMITE_DIAS_VISITANTE_PADRAO;
+ }
+ 
+-/** Conta quantos acessos LIBERADOS esse aluno/visitante já usou (histórico completo). */
+-async function contarAcessosLiberadosEm(cliente, alunoId) {
+-  const result = await cliente.execute({
+-    sql: "SELECT COUNT(*) as total FROM acessos_catraca WHERE aluno_id = ? AND resultado = 'liberado'",
+-    args: [alunoId],
+-  });
+-  return Number(result.rows[0].total);
+-}
+-
+-async function contarAcessosLiberados(alunoId) {
+-  return contarAcessosLiberadosEm(db, alunoId);
++/**
++ * Decide se um visitante ainda está dentro do período de acesso gratuito.
++ * Antes da primeira liberação (visitanteLiberadoEm null/vazio) ele SEMPRE
++ * está dentro — ainda não começou a contar nada. A partir da primeira
++ * liberação, vale por `dias` dias corridos (24h * dias) a contar da data
++ * (não do horário exato) dessa primeira liberação, então o visitante sempre
++ * ganha o dia inteiro da liberação + os dias seguintes completos, em vez de
++ * expirar no meio do dia seguinte por causa do horário exato em que entrou.
++ */
++function visitanteDentroDoPeriodo(visitanteLiberadoEm, dias, agora = new Date()) {
++  if (!visitanteLiberadoEm) return true;
++  const dataBase = new Date(`${String(visitanteLiberadoEm).slice(0, 10)}T00:00:00Z`);
++  if (Number.isNaN(dataBase.getTime())) return true; // dado corrompido: nao bloqueia por causa disso
++  const limite = new Date(dataBase.getTime() + dias * 86400000);
++  return agora < limite;
+ }
+ 
+ const LIMITE_INDICACOES_PADRAO = 2;
+@@ -493,19 +502,17 @@ async function verificarAutorizacaoAluno(aluno) {
+     return { autorizado: true, motivo: null };
+   }
+ 
+-  // Visitante: não tem mensalidade pra checar — em vez disso, um limite de
+-  // quantas vezes pode entrar como visitante (configurável em Configurações
+-  // > Visitantes, padrão 1). Depois de atingir o limite, precisa virar aluno
+-  // pagante (matrícula de verdade) pra continuar acessando.
++  // Visitante: não tem mensalidade pra checar — em vez disso, um período de
++  // dias corridos de acesso gratuito a partir da primeira liberação
++  // (configurável em Configurações > Visitantes, padrão 1 dia — ver
++  // visitanteDentroDoPeriodo). Depois que o período acaba, precisa virar
++  // aluno pagante (matrícula de verdade) pra continuar acessando.
+   if (categoria === 'visitante') {
+-    const [limite, usados] = await Promise.all([
+-      dbResiliente.comFallback('limiteAcessosVisitante', () => limiteAcessosVisitanteEm(db), () => limiteAcessosVisitanteEm(dbOffline)),
+-      dbResiliente.comFallback('contarAcessosLiberadosVisitante', () => contarAcessosLiberadosEm(db, aluno.id), () => contarAcessosLiberadosEm(dbOffline, aluno.id)),
+-    ]);
+-    if (usados >= limite) {
++    const dias = await dbResiliente.comFallback('limiteDiasVisitante', () => limiteDiasVisitanteEm(db), () => limiteDiasVisitanteEm(dbOffline));
++    if (!visitanteDentroDoPeriodo(aluno.visitante_liberado_em, dias)) {
+       return {
+         autorizado: false,
+-        motivo: `Limite de ${limite} acesso${limite === 1 ? '' : 's'} como visitante atingido. Procure a recepção para se matricular.`,
++        motivo: `Período de ${dias} dia${dias === 1 ? '' : 's'} de acesso gratuito como visitante encerrado. Procure a recepção para se matricular.`,
+       };
+     }
+     return { autorizado: true, motivo: null };
+@@ -541,21 +548,19 @@ async function verificarAutorizacaoAluno(aluno) {
+  */
+ async function listarAutorizacoesBiometricas() {
+   const hojeISO = new Date().toISOString().slice(0, 10);
+-  const [resultAlunos, resultAtraso, resultConcessoes, resultAcessosPorAluno, limiteVisitante] = await Promise.all([
+-    db.execute("SELECT id, nome, status, biometria_id, categoria FROM alunos WHERE biometria_id IS NOT NULL AND biometria_id != ''"),
++  const [resultAlunos, resultAtraso, resultConcessoes, diasVisitante] = await Promise.all([
++    db.execute("SELECT id, nome, status, biometria_id, categoria, visitante_liberado_em FROM alunos WHERE biometria_id IS NOT NULL AND biometria_id != ''"),
+     db.execute(`SELECT DISTINCT aluno_id FROM cobrancas
+                 WHERE matricula_id IS NOT NULL AND (
+                   status = 'atrasado'
+                   OR (status = 'pendente' AND vencimento IS NOT NULL AND vencimento < date('now'))
+                 )`),
+     db.execute({ sql: 'SELECT DISTINCT aluno_id FROM concessoes_acesso WHERE valido_ate >= ?', args: [hojeISO] }),
+-    db.execute("SELECT aluno_id, COUNT(*) as total FROM acessos_catraca WHERE resultado = 'liberado' GROUP BY aluno_id"),
+-    limiteAcessosVisitanteEm(db),
++    limiteDiasVisitanteEm(db),
+   ]);
+ 
+   const idsEmAtraso = new Set(resultAtraso.rows.map((linha) => linha.aluno_id));
+   const idsComConcessao = new Set(resultConcessoes.rows.map((linha) => linha.aluno_id));
+-  const acessosLiberadosPorAluno = new Map(resultAcessosPorAluno.rows.map((linha) => [linha.aluno_id, Number(linha.total)]));
+ 
+   return resultAlunos.rows.map((aluno) => {
+     const motivoStatus = motivoBloqueioPorStatus(aluno);
+@@ -570,13 +575,12 @@ async function listarAutorizacoesBiometricas() {
+       return { biometria_id: aluno.biometria_id, autorizado: true, aluno_nome: aluno.nome, motivo: null };
+     }
+     if (categoria === 'visitante') {
+-      const usados = acessosLiberadosPorAluno.get(aluno.id) || 0;
+-      if (usados >= limiteVisitante) {
++      if (!visitanteDentroDoPeriodo(aluno.visitante_liberado_em, diasVisitante)) {
+         return {
+           biometria_id: aluno.biometria_id,
+           autorizado: false,
+           aluno_nome: aluno.nome,
+-          motivo: `Limite de ${limiteVisitante} acesso${limiteVisitante === 1 ? '' : 's'} como visitante atingido. Procure a recepção para se matricular.`,
++          motivo: `Período de ${diasVisitante} dia${diasVisitante === 1 ? '' : 's'} de acesso gratuito como visitante encerrado. Procure a recepção para se matricular.`,
+         };
+       }
+       return { biometria_id: aluno.biometria_id, autorizado: true, aluno_nome: aluno.nome, motivo: null };
+@@ -604,7 +608,7 @@ async function listarAutorizacoesBiometricas() {
+  */
+ async function notificarAgenteAtualizacaoAluno(alunoId) {
+   try {
+-    const result = await db.execute({ sql: 'SELECT id, nome, status, biometria_id, categoria FROM alunos WHERE id = ?', args: [alunoId] });
++    const result = await db.execute({ sql: 'SELECT id, nome, status, biometria_id, categoria, visitante_liberado_em FROM alunos WHERE id = ?', args: [alunoId] });
+     const aluno = result.rows[0];
+     if (!aluno || !aluno.biometria_id) return;
+ 
+@@ -698,7 +702,10 @@ async function registrarAcessoIdempotente(dados) {
+ /**
+  * Ponto único de acionamento físico da catraca. catracaGateway decide sozinho
+  * se fala TCP direto (deploy local, mesma rede da catraca) ou se repassa o
+- * comando para o agente local via WebSocket (deploy na nuvem).
++ * comando para o agente local via WebSocket (deploy na nuvem). O timeout de
++ * giro (quanto tempo a catraca fica liberada esperando a pessoa girar, antes
++ * de travar sozinha de novo) é configurado no lado do protocolo Henry — ver
++ * RELEASE_TIME_DECIMOS em henryCatraca.service.js.
+  */
+ async function liberarNaCatraca(mensagem) {
+   const ip = process.env.HENRY_CATRACA_IP;
+@@ -707,6 +714,30 @@ async function liberarNaCatraca(mensagem) {
+   await catracaGateway.liberarAcesso({ ip, port, mensagem });
+ }
+ 
++// 2026-07-19: dois cooldowns separados pra liberação por reconhecimento
++// facial — estado em memória do processo (não persiste em banco), reinicia
++// com o servidor. É uma trava de UX/anti-carona, não um controle de
++// segurança forte (ex.: não impede fisicamente duas pessoas passando na
++// mesma giro da catraca — ver RELEASE_TIME em henryCatraca.service.js pra
++// isso). Ambos configuráveis por variável de ambiente, sem redeploy de código:
++//
++//  - MESMO aluno: precisa esperar bem mais (padrão 1 minuto) antes de ser
++//    reconhecido de novo e liberar a catraca outra vez — é o que evita um
++//    aluno ficar na frente da câmera liberando repetidas vezes pra deixar
++//    outras pessoas passarem atrás dele.
++//  - Pessoas DIFERENTES: só precisa de um intervalo curto (padrão 3s) entre
++//    uma liberação e a próxima — o suficiente pra não confundir dois rostos
++//    no mesmo quadro de vídeo, mas sem segurar a fila. Logo depois da catraca
++//    girar, o próximo reconhecimento (de outra pessoa) já pode liberar.
++const COOLDOWN_FACIAL_MESMO_ALUNO_MS = Number(process.env.COOLDOWN_FACIAL_MESMO_ALUNO_MS || 60000);
++const COOLDOWN_FACIAL_ENTRE_PESSOAS_MS = Number(process.env.COOLDOWN_FACIAL_ENTRE_PESSOAS_MS || 3000);
++let ultimaLiberacaoFacialEm = 0; // qualquer aluno — cobre o cooldown "entre pessoas"
++// alunoId -> timestamp da última liberação facial DELE — cobre o cooldown
++// "mesmo aluno". Cresce no máximo 1 entrada por aluno com rosto cadastrado
++// que já usou reconhecimento facial alguma vez — irrelevante em memória
++// mesmo pra academias com milhares de alunos.
++const ultimaLiberacaoFacialPorAluno = new Map();
++
+ /**
+  * Fluxo completo: checa status, tenta abrir a catraca se autorizado, registra
+  * o log de acesso e retorna o resultado para a tela do totem.
+@@ -727,6 +758,29 @@ async function tentarLiberar({ aluno, metodo }) {
+     return { autorizado: false, motivo, aluno_nome: aluno ? aluno.nome : null, aluno_id: aluno ? aluno.id : null, cpf: aluno ? aluno.cpf : null, aviso_vencimento: avisoVencimento };
+   }
+ 
++  // Cooldowns entre liberações por face (2026-07-19, ver constantes acima) —
++  // só entram DEPOIS de confirmar que a pessoa está autorizada (não queremos
++  // "gastar" o cooldown numa tentativa que já seria negada de qualquer
++  // jeito), e só bloqueiam quem está tentando entrar por reconhecimento
++  // facial — CPF, QR e biometria da própria catraca não usam este cooldown,
++  // porque cada um já exige uma ação física distinta (digitar, mostrar QR,
++  // encostar o dedo) que naturalmente não se presta a "passar a liberação
++  // pra trás" do mesmo jeito que o scanner contínuo de rosto.
++  if (metodo === 'facial') {
++    const agoraMs = Date.now();
++    const ultimaDesteAluno = ultimaLiberacaoFacialPorAluno.get(aluno.id) || 0;
++    const faltamMesmoAluno = COOLDOWN_FACIAL_MESMO_ALUNO_MS - (agoraMs - ultimaDesteAluno);
++    const faltamEntrePessoas = COOLDOWN_FACIAL_ENTRE_PESSOAS_MS - (agoraMs - ultimaLiberacaoFacialEm);
++    const faltam = Math.max(faltamMesmoAluno, faltamEntrePessoas);
++    if (faltam > 0) {
++      const motivoCooldown = faltamMesmoAluno > 0
++        ? `Aguarde ${Math.ceil(faltamMesmoAluno / 1000)}s antes de liberar de novo pelo seu rosto.`
++        : 'Aguarde alguns segundos antes da próxima liberação por reconhecimento facial.';
++      await registrarAcesso({ alunoId: aluno.id, metodo, resultado: 'negado', mensagem: motivoCooldown });
++      return { autorizado: false, motivo: motivoCooldown, aluno_nome: aluno.nome, aluno_id: aluno.id, cpf: aluno.cpf, aviso_vencimento: avisoVencimento };
++    }
++  }
++
+   // Precisa ser calculado ANTES de registrarAcesso gravar o acesso de agora
+   // (ver comentário de verificarPrimeiroAcessoHojeSeguro acima).
+   const primeiroAcessoHoje = await verificarPrimeiroAcessoHojeSeguro(aluno.id);
+@@ -739,6 +793,24 @@ async function tentarLiberar({ aluno, metodo }) {
+     return { autorizado: false, motivo: motivoFalha, aluno_nome: aluno.nome, aluno_id: aluno.id, cpf: aluno.cpf, aviso_vencimento: avisoVencimento };
+   }
+ 
++  if (metodo === 'facial') {
++    const agoraMs = Date.now();
++    ultimaLiberacaoFacialEm = agoraMs;
++    ultimaLiberacaoFacialPorAluno.set(aluno.id, agoraMs);
++  }
++
++  // Primeira liberação de um visitante (2026-07-19): grava quando começou a
++  // contar o período de dias grátis (ver visitanteDentroDoPeriodo acima).
++  // Best-effort — se essa gravação falhar, não desfaz a liberação que já
++  // aconteceu de verdade; só significa que o período recomeça a contar na
++  // próxima liberação bem-sucedida.
++  if ((aluno.categoria || 'aluno') === 'visitante' && !aluno.visitante_liberado_em) {
++    db.execute({
++      sql: "UPDATE alunos SET visitante_liberado_em = datetime('now') WHERE id = ? AND visitante_liberado_em IS NULL",
++      args: [aluno.id],
++    }).catch(() => {});
++  }
++
+   await registrarAcesso({ alunoId: aluno.id, metodo, resultado: 'liberado', mensagem: null });
+   return { autorizado: true, motivo: null, aluno_nome: aluno.nome, aluno_id: aluno.id, cpf: aluno.cpf, aviso_vencimento: avisoVencimento, primeiro_acesso_hoje: primeiroAcessoHoje };
+ }
+@@ -762,8 +834,8 @@ module.exports = {
+   // Categorias/visitantes (2026-07) — reaproveitados pelo relatório de
+   // visitantes e pelas rotas de cadastro (terminal.routes.js/alunos.routes.js).
+   CATEGORIA_ACESSO_LIVRE,
+-  limiteAcessosVisitanteEm,
+-  contarAcessosLiberados,
++  limiteDiasVisitanteEm,
++  visitanteDentroDoPeriodo,
+   limiteIndicacoesMensalEm,
+   contarIndicacoesNoMes,
+   buscarAvisoVencimento,
+diff --git a/src/services/emailBoasVindas.service.js b/src/services/emailBoasVindas.service.js
+index 38d643a..c928352 100644
+--- a/src/services/emailBoasVindas.service.js
++++ b/src/services/emailBoasVindas.service.js
+@@ -96,9 +96,80 @@ async function enviarBoasVindasSeguro(aluno) {
+   }
+ }
+ 
++// ---------------------------------------------------------------------------
++// E-mail de boas-vindas do VISITANTE (2026-07-19) — deliberadamente diferente
++// do e-mail normal acima:
++//
++//  - NUNCA chama atribuirCodigoAluno/gera biometria_id: essa "senha" só faz
++//    sentido pareada com um cadastro físico de verdade na catraca (cartão ou
++//    digital cadastrados no leitor Henry, "sistema antigo") — o visitante
++//    nunca passa por esse cadastro, então gerar e mandar esse código pra ele
++//    é enganoso (parece um login válido pro Portal do Aluno, mas não abre
++//    nada de fato). Hoje ainda não existe uma função pra cadastrar biometria
++//    direto do nosso sistema na catraca — ver observação no README do
++//    agente-local; enquanto isso não existir, visitante não recebe esse código.
++//  - O link enviado é o de "Meu Acesso" (garantirCodigoAcesso/meu-acesso.html),
++//    que é DIRETO — sem CPF nem senha, só o código aleatório na própria URL
++//    (enviado por e-mail privado à pessoa, sem risco prático de outra pessoa
++//    usar o CPF dela pra adivinhar esse link). Mesmo QR que já aparece na tela
++//    do totem ao concluir o cadastro — o e-mail só serve de backup/lembrete.
++// ---------------------------------------------------------------------------
++const ASSUNTO_BOAS_VINDAS_VISITANTE = 'Seu acesso de visitante — Academia Superação!';
++
++function montarMensagemBoasVindasVisitante({ nome, linkAcesso, dias }) {
++  const linhas = [
++    `Olá ${primeiroNome(nome)}! Que bom te receber na Academia Superação.`,
++    '',
++    `Seu acesso gratuito de visitante vale por ${dias} dia${dias === 1 ? '' : 's'} a partir da sua primeira entrada.`,
++    'Guarde o link abaixo — ele mostra o QR code que você usa na catraca, sem precisar de senha:',
++    linkAcesso || 'Peça o QR de acesso na recepção.',
++    '',
++    'Depois que o período gratuito acabar, procure a recepção para conhecer nossos planos e continuar treinando com a gente!',
++  ];
++  return linhas.join('\n');
++}
++
++async function enviarBoasVindasVisitante({ id, nome, email }) {
++  if (!email) throw new Error('Visitante sem e-mail cadastrado.');
++  if (!emailService.emailConfigurado()) throw new Error('Envio de e-mail não configurado no servidor.');
++
++  const codigo = await acessoTerminal.garantirCodigoAcesso(id);
++  const appUrl = obterAppUrl();
++  const linkAcesso = appUrl ? `${appUrl}/meu-acesso.html?codigo=${codigo}` : null;
++  const dias = await acessoTerminal.limiteDiasVisitanteEm(db);
++  const mensagem = montarMensagemBoasVindasVisitante({ nome, linkAcesso, dias });
++
++  await emailService.enviarEmail({ para: email, assunto: ASSUNTO_BOAS_VINDAS_VISITANTE, texto: mensagem });
++  await db.execute({
++    sql: `INSERT INTO mensagens_enviadas (id, aluno_id, canal, assunto, mensagem, destino, status)
++          VALUES (?, ?, 'email', ?, ?, ?, 'enviado')`,
++    args: [uuid(), id, ASSUNTO_BOAS_VINDAS_VISITANTE, mensagem, email],
++  });
++}
++
++async function enviarBoasVindasVisitanteSeguro(aluno) {
++  try {
++    await enviarBoasVindasVisitante(aluno);
++  } catch (err) {
++    try {
++      await db.execute({
++        sql: `INSERT INTO mensagens_enviadas (id, aluno_id, canal, assunto, mensagem, destino, status, erro)
++              VALUES (?, ?, 'email', ?, '', ?, 'erro', ?)`,
++        args: [uuid(), aluno.id, ASSUNTO_BOAS_VINDAS_VISITANTE, aluno.email || null, err.message],
++      });
++    } catch {
++      // Best-effort de verdade, ver comentário em enviarBoasVindasSeguro.
++    }
++  }
++}
++
+ module.exports = {
+   ASSUNTO_BOAS_VINDAS,
+   montarMensagemBoasVindas,
+   enviarBoasVindas,
+   enviarBoasVindasSeguro,
++  ASSUNTO_BOAS_VINDAS_VISITANTE,
++  montarMensagemBoasVindasVisitante,
++  enviarBoasVindasVisitante,
++  enviarBoasVindasVisitanteSeguro,
+ };
+diff --git a/src/services/henryCatraca.service.js b/src/services/henryCatraca.service.js
+index e4b5155..e8a5c7e 100644
+--- a/src/services/henryCatraca.service.js
++++ b/src/services/henryCatraca.service.js
+@@ -22,8 +22,16 @@ const STX = 0x02;
+ const ETX = 0x03;
+ const MSG_MAX_LEN = 1024;
+ 
+-// Tempo padrão de liberação da catraca, em décimos de segundo (40 = 4s)
+-const RELEASE_TIME = '40';
++// Tempo de liberação da catraca (quanto tempo ela fica destravada esperando
++// a pessoa girar, antes de travar sozinha de novo), em décimos de segundo —
++// 100 = 10.0s. 2026-07-19: antes não havia um valor pensado de propósito
++// (ficava em 4s, "40", herdado do exemplo original) — 10s dá tempo suficiente
++// pra girar sem segurar a catraca aberta por tempo demais entre uma pessoa e
++// outra. Configurável via HENRY_RELEASE_TIME_DECIMOS (décimos de segundo) pra
++// ajustar sem precisar mexer em código, caso o equipamento físico se comporte
++// diferente do esperado — teste no equipamento real antes de confiar num
++// valor novo em produção.
++const RELEASE_TIME = String(Number(process.env.HENRY_RELEASE_TIME_DECIMOS) || 100);
+ 
+ function checksum(bytes) {
+   if (!bytes.length) return 0;

@@ -1,6 +1,46 @@
 # Status do projeto — Academia Gestão
 
-Última atualização: 07/08/2026 (ordenação por cabeçalho em Recuperação de Clientes, filtro de tipo/contagem no relatório de Acesso Diário, data de pagamento em Contas a Pagar com filtro por realizados, e destino/agendamento configuráveis do backup automático — ver seção logo abaixo). **Leia só a seção "ESTADO ATUAL" abaixo pra retomar o trabalho** — o resto do arquivo é histórico de sessões passadas, mantido só como referência de "por que as coisas são como são". Pra um resumo bem mais curto (só o essencial pra começar uma sessão nova), veja **[INICIO-RAPIDO.md](INICIO-RAPIDO.md)**.
+Última atualização: 11/08/2026 (módulo de treinos ganhou biblioteca de exercícios com vídeo, treinos salvos/modelos e vídeo de execução no portal do aluno — port do TreinoPro, ver seção logo abaixo). **Leia só a seção "ESTADO ATUAL" abaixo pra retomar o trabalho** — o resto do arquivo é histórico de sessões passadas, mantido só como referência de "por que as coisas são como são". Pra um resumo bem mais curto (só o essencial pra começar uma sessão nova), veja **[INICIO-RAPIDO.md](INICIO-RAPIDO.md)**.
+
+## Sessão 11/08/2026 — Módulo de treinos: biblioteca de exercícios, treinos salvos e vídeo de execução no portal (port do TreinoPro)
+
+**Pedido do dono do sistema**: trazer a parte de treinos do TreinoPro (`D:\Meus documentos\Downloads\treinopro\`, projeto separado — plataforma multi-tenant de personal trainer, backend `server.js` ~5300 linhas) pro `academia-gestao`, com todas as funções (salvar treinos, biblioteca de exercícios), e que no portal do aluno "Ver treinos" abra como hoje é no TreinoPro, inclusive com vídeo de execução.
+
+O `academia-gestao` já tinha um módulo de treino "nativo" bem mais simples (tabelas `treinos`/`treino_exercicios`, CRUD básico, sem biblioteca nem vídeo) — este trabalho enriqueceu esse módulo existente em vez de recriar do zero, e é **single-tenant** (uma biblioteca só, global, gerenciada pelo admin — diferente do TreinoPro, que tem uma biblioteca por personal trainer).
+
+### O que foi feito
+
+1. **Schema** (`src/db/schema.sql` + `src/db/migrate.js`): tabelas novas `exercicio_biblioteca`, `treino_templates`, `treino_template_exercicios`; colunas novas em `treino_exercicios` (`biblioteca_id`, `video_url`, `imagem_url`, `metodo`, `dica`, `concluido`). Seed com os **98 exercícios padrão do TreinoPro** (grupo muscular, vídeo do YouTube, equipamento, dificuldade, instruções), idempotente por (grupo_muscular, nome).
+2. **Backend**: `src/routes/bibliotecaExercicios.routes.js` (novo — CRUD da biblioteca, admin-only) e `src/routes/treinoTemplates.routes.js` (novo — CRUD de treinos salvos + `POST /:id/aplicar` que copia os exercícios do modelo pra um treino real do aluno). `treinos.routes.js` ganhou herança automática de vídeo/imagem da biblioteca quando o exercício referencia um `biblioteca_id` sem vídeo próprio. `portal.routes.js`: `GET /api/portal/treino` passou a devolver vídeo/imagem/método/dica/concluído; novo `POST /api/portal/treino/exercicio/:id/concluir` (autenticado por CPF+senha, valida que o exercício pertence a um treino do PRÓPRIO aluno — o TreinoPro original tinha essa checagem frouxa, aqui já nasceu corrigida).
+3. **Painel admin**: nova seção "Biblioteca de Exercícios" (grid com filtro por grupo muscular, vídeo inline, CRUD). Aba "Treino" do perfil do aluno ganhou seletor "escolher da biblioteca" (com preview de vídeo/imagem, autopreenche o nome), campo de método de treino e dica do instrutor, botão "💾 Salvar como modelo" e select "Aplicar modelo salvo".
+4. **Portal do aluno**: "Ver treino" passou a mostrar, por exercício, chip de método, dica, e o botão "▶ Ver execução" com embed do vídeo (YouTube reconhecido automaticamente, mesmo esquema do TreinoPro: `youtubeEmbedUrl`/`videoPreviewHtml`), mais um check de "concluído".
+
+**Deliberadamente não trazido** (fora do pedido explícito, mantém o escopo enxuto): assistente de IA, RPE/sugestão automática de carga (fórmula Epley/Brzycki do TreinoPro) e gamificação/badges. Podem ser portados depois se quiser.
+
+### Testado nesta sessão
+
+Ponta a ponta, sem tocar em produção: `node src/db/migrate.js` rodado com `DATABASE_URL` sobrescrito pra `file:./local.db`, servidor local numa porta separada (3901, HTTPS desligado por env pra não colidir com o processo PM2 real do PC), token JWT de admin gerado direto (sem depender de senha desconhecida de usuário legado). Testado via `curl` (biblioteca, criar treino, herdar vídeo da biblioteca, salvar/aplicar modelo, marcar concluído no portal) e via navegador (Biblioteca de Exercícios renderiza os 98 itens com filtro/vídeo, seletor de biblioteca na Aba Treino autopreenche nome e mostra preview, portal do aluno mostra vídeo embutido e o check de concluído funciona). Todos os dados de teste foram apagados do `local.db` ao final.
+
+Commit `665753a`, enviado (`git push origin main`) com aprovação do dono do sistema.
+
+### Pendências / achados desta sessão
+
+1. **Migração rodou contra produção (Turso), não só local**: o `.env` deste PC está configurado para apontar direto pro Turso de produção (`DATABASE_URL=libsql://acess-treinopro...`), não pro `local.db` — ver achado importante na seção "ATENÇÃO" abaixo, que contradiz a "regra de segurança mais importante" documentada em INICIO-RAPIDO.md. A migração em si é seguro (só `CREATE TABLE IF NOT EXISTS` + `ADD COLUMN` idempotente + linhas novas de seed, nada apagado/alterado), mas rodou direto em produção sem um `local.db` de verdade nesse meio.
+2. **Bundling sem querer, mesmo padrão já visto em 07/08/2026**: `src/db/migrate.js` já tinha uma linha pendente de sessão anterior (`ALTER TABLE contas_pagar ADD COLUMN secullum_id TEXT`, documentada em INICIO-RAPIDO.md como "coluna já existe em produção, só o código-fonte não tinha sido commitado ainda"). Como `git add src/db/migrate.js` sobe o arquivo inteiro, essa linha foi junto no commit `665753a`. Sem risco (a coluna já existe em produção, o `ALTER` cai no catch de "duplicate column name" que todo `ALTERACOES_INCREMENTAIS` já tem), mas registrando aqui pra não reaparecer como "pendência esquecida" — **já está commitada e em produção**, pode remover da tabela de pendências do INICIO-RAPIDO.md (feito).
+3. **Vídeos da biblioteca**: são os mesmos links de demonstração genérica (YouTube) que o TreinoPro já tinha levantado — não são vídeos gravados pela própria academia. Existe uma lista separada (`LISTA-GRAVACAO-VIDEOS-TREINO-PRO.md`, na pasta do TreinoPro) pra gravar vídeos próprios depois; se algum dia forem gravados, é só editar o `video_url` de cada exercício na Biblioteca (painel admin) — não precisa mexer em código.
+4. Nenhum teste rodou contra hardware real (não se aplica aqui, é uma feature 100% de software/web).
+
+---
+
+## ATENÇÃO — achado sobre o `.env` deste PC (11/08/2026), contradiz a "regra de segurança" do INICIO-RAPIDO.md
+
+Ao preparar este trabalho, conferi o `.env` deste PC (`academia-gestao/.env`) e a linha ativa é:
+```
+DATABASE_URL=libsql://acess-treinopro.aws-us-west-2.turso.io
+```
+A linha `DATABASE_URL=file:./local.db` está **comentada** (`# DATABASE_URL=...`). Ou seja, hoje, `npm start` / `npm run dev` / `npm run migrate` neste PC caem **direto em produção**, não em `local.db` como a seção "⚠️ Regra de segurança mais importante deste projeto" do INICIO-RAPIDO.md descreve. Não investiguei quando/por que isso mudou (o comentário ao lado da linha ativa no `.env` sugere que foi proposital — "para que rodar localmente e acessar pela nuvem sempre reflitam os mesmos dados"). Não alterei o `.env` nem a documentação da regra em si (não é uma decisão técnica minha pra tomar sozinho) — só deixando registrado aqui e um aviso em INICIO-RAPIDO.md, pra próxima sessão (ou você) confirmar se é assim mesmo que deveria estar, e ajustar a documentação (ou o `.env`) de propósito, não por acidente.
+
+---
 
 ## Sessão 07/08/2026 — Ordenação por cabeçalho, filtro/contagem no Acesso Diário, data de pagamento em Contas a Pagar, e backup com destino/agendamento
 

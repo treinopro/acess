@@ -23,6 +23,7 @@ const bibliotecaExerciciosRoutes = require('./routes/bibliotecaExercicios.routes
 const treinoTemplatesRoutes = require('./routes/treinoTemplates.routes');
 const recuperacaoRoutes = require('./routes/recuperacao.routes');
 const contasPagarRoutes = require('./routes/contasPagar.routes');
+const chamarInstrutorRoutes = require('./routes/chamar.routes');
 const { router: configRoutes } = require('./routes/config.routes');
 const { rodar: rodarBackup, verificarAgendamento: verificarAgendamentoBackup } = require('./jobs/backup');
 const { rodar: rodarMensagensAgendadas } = require('./jobs/mensagensAgendadas');
@@ -204,6 +205,10 @@ app.use(express.static(path.join(__dirname, '..', 'public'), {
 }));
 
 app.get('/health', (req, res) => res.json({ status: 'ok', servico: 'academia-gestao' }));
+
+// "Chamar instrutor" via tag NFC (2026-08) — fica fora do prefixo /api de
+// propósito, ver comentário completo em src/routes/chamar.routes.js.
+app.use(chamarInstrutorRoutes);
 
 app.use('/api/auth', authRoutes);
 app.use('/api/alunos', alunosRoutes);

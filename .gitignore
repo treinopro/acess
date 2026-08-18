@@ -7,3 +7,8 @@ dist/
 .DS_Store
 npm-debug.log*
 backups/
+
+# Fila local de conflitos de sincronização offline (modo totem) — contém dados
+# reais de alunos/pagamentos (nome, valor, forma de pagamento), não deve ir
+# pro histórico do git. Segue existindo normalmente no disco de cada máquina.
+fila-cadastro-totem.jsonl

@@ -693,6 +693,10 @@
             <div><label>Valor (R$) *</label><input id="produto-servico-valor" type="number" step="0.01" required /></div>
             <div id="campo-produto-servico-duracao"><label>Duração (dias)</label><input id="produto-servico-duracao" type="number" /></div>
           </div>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#667085;margin:8px 0 0">
+            <input type="checkbox" id="produto-servico-inicia-avaliacao" style="width:auto" />
+            Vender abre também o passo a passo de avaliação física (Confirmar realizada → Prescrever treino → Confirmar treino aplicado), em Pendências
+          </label>
           <div class="form-acoes">
             <button type="submit" class="btn-primario">Salvar</button>
             <button type="button" class="btn-secundario" id="btn-cancelar-produto-servico">Cancelar</button>
@@ -703,7 +707,7 @@
           <input type="checkbox" id="chk-produtos-servicos-todos" style="width:auto" /> Mostrar itens desativados também
         </label>
         <table class="tabela">
-          <thead><tr><th>Nome</th><th>Tipo</th><th>Valor</th><th>Duração</th><th>Status</th><th>Ações</th></tr></thead>
+          <thead><tr><th>Nome</th><th>Tipo</th><th>Valor</th><th>Duração</th><th>Avaliação física</th><th>Status</th><th>Ações</th></tr></thead>
           <tbody id="lista-produtos-servicos"></tbody>
         </table>
 

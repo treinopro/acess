@@ -2803,6 +2803,7 @@ async function carregarProdutosServicos() {
           <td>${item.tipo === 'servico' ? 'Serviço' : 'Produto'}</td>
           <td>${formatarMoeda(item.valor_centavos)}</td>
           <td>${item.duracao_dias ? item.duracao_dias + ' dias' : '—'}</td>
+          <td>${item.inicia_avaliacao_fisica ? 'Sim (com etapas)' : '—'}</td>
           <td><span class="badge ${item.ativo ? 'ativo' : 'inativo'}">${item.ativo ? 'ativo' : 'desativado'}</span></td>
           <td>
             <button class="btn-linha" data-acao="editar">Editar</button>
@@ -2853,6 +2854,7 @@ function abrirFormProdutoServico(item = null) {
   document.getElementById('produto-servico-tipo').value = item?.tipo || 'produto';
   document.getElementById('produto-servico-valor').value = item ? (item.valor_centavos / 100).toFixed(2) : '';
   document.getElementById('produto-servico-duracao').value = item?.duracao_dias || '';
+  document.getElementById('produto-servico-inicia-avaliacao').checked = Boolean(item?.inicia_avaliacao_fisica);
   atualizarCampoDuracaoProdutoServico();
   form.scrollIntoView({ behavior: 'smooth' });
 }
@@ -2876,6 +2878,7 @@ document.getElementById('form-produto-servico').addEventListener('submit', async
     tipo: document.getElementById('produto-servico-tipo').value,
     valor_centavos: Math.round(parseFloat(document.getElementById('produto-servico-valor').value) * 100),
     duracao_dias: document.getElementById('produto-servico-duracao').value ? Number(document.getElementById('produto-servico-duracao').value) : null,
+    inicia_avaliacao_fisica: document.getElementById('produto-servico-inicia-avaliacao').checked,
   };
   try {
     if (id) {

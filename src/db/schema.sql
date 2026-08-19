@@ -193,6 +193,13 @@ CREATE TABLE IF NOT EXISTS produtos_servicos (
   -- Só faz sentido pra tipo='servico' (ex.: pacote de 30 dias de personal).
   -- NULL = sem vencimento (típico de produto físico, comprado e pronto).
   duracao_dias INTEGER,
+  -- Quando marcado (2026-08-19), vender este item também abre um pipeline de
+  -- avaliação física (avaliacao_pipeline) pro aluno, com as mesmas etapas
+  -- (realizada -> prescrever treino -> treino ok) que aparecem em Pendências
+  -- — pensado pra itens tipo "Avaliação adipometria" venderem já disparando
+  -- o passo a passo, em vez de só o lembrete simples de vencimento. Ver
+  -- POST /api/produtos-servicos/vender.
+  inicia_avaliacao_fisica INTEGER NOT NULL DEFAULT 0,
   ativo INTEGER NOT NULL DEFAULT 1,
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );

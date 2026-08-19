@@ -21,6 +21,7 @@ const produtoServicoSchema = z.object({
   tipo: z.enum(['produto', 'servico']),
   valor_centavos: z.number().int().positive(),
   duracao_dias: z.number().int().positive().optional().nullable(),
+  inicia_avaliacao_fisica: z.boolean().optional().default(false),
 });
 
 // GET /api/produtos-servicos?todos=1 — por padrão só ativos
@@ -41,8 +42,8 @@ router.post('/', async (req, res, next) => {
     const dados = produtoServicoSchema.parse(req.body);
     const id = uuid();
     await db.execute({
-      sql: 'INSERT INTO produtos_servicos (id, nome, tipo, valor_centavos, duracao_dias) VALUES (?, ?, ?, ?, ?)',
-      args: [id, dados.nome, dados.tipo, dados.valor_centavos, dados.duracao_dias || null],
+      sql: 'INSERT INTO produtos_servicos (id, nome, tipo, valor_centavos, duracao_dias, inicia_avaliacao_fisica) VALUES (?, ?, ?, ?, ?, ?)',
+      args: [id, dados.nome, dados.tipo, dados.valor_centavos, dados.duracao_dias || null, dados.inicia_avaliacao_fisica ? 1 : 0],
     });
     res.status(201).json({ id, ...dados });
   } catch (err) {
@@ -54,8 +55,8 @@ router.put('/:id', async (req, res, next) => {
   try {
     const dados = produtoServicoSchema.parse(req.body);
     const result = await db.execute({
-      sql: 'UPDATE produtos_servicos SET nome = ?, tipo = ?, valor_centavos = ?, duracao_dias = ? WHERE id = ?',
-      args: [dados.nome, dados.tipo, dados.valor_centavos, dados.duracao_dias || null, req.params.id],
+      sql: 'UPDATE produtos_servicos SET nome = ?, tipo = ?, valor_centavos = ?, duracao_dias = ?, inicia_avaliacao_fisica = ? WHERE id = ?',
+      args: [dados.nome, dados.tipo, dados.valor_centavos, dados.duracao_dias || null, dados.inicia_avaliacao_fisica ? 1 : 0, req.params.id],
     });
     if (result.rowsAffected === 0) return res.status(404).json({ erro: 'Produto/serviço não encontrado.' });
     res.json({ ok: true });
@@ -144,6 +145,18 @@ router.post('/vender', async (req, res, next) => {
         cobrancaId, dados.data_inicio, dataVencimento, req.usuario?.id || null,
       ],
     });
+
+    // Item marcado como "inicia avaliação física" (ex.: "Avaliação adipometria")
+    // também abre um avaliacao_pipeline pro aluno, com as mesmas 3 etapas
+    // (realizada -> prescrever treino -> treino ok) que já existem pra
+    // avaliações lançadas na aba Avaliações — assim a venda aparece em
+    // Pendências com etapas, não só o lembrete simples de vencimento.
+    if (produtoServico.inicia_avaliacao_fisica) {
+      await db.execute({
+        sql: 'INSERT INTO avaliacao_pipeline (id, aluno_id, data_avaliacao, criado_por) VALUES (?, ?, ?, ?)',
+        args: [uuid(), dados.aluno_id, dados.data_inicio, req.usuario?.id || null],
+      });
+    }
 
     res.status(201).json({ id: vendaId, cobranca_id: cobrancaId, data_vencimento: dataVencimento });
   } catch (err) {

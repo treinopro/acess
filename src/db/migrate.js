@@ -58,6 +58,9 @@ const ALTERACOES_INCREMENTAIS = [
   // detalhado junto da definição de "treinos" em schema.sql.
   "ALTER TABLE treinos ADD COLUMN visivel_portal INTEGER NOT NULL DEFAULT 1",
   "ALTER TABLE treinos ADD COLUMN data_fim TEXT",
+  // Vender o item também abre um pipeline de avaliação física (2026-08-19) —
+  // ver comentário detalhado junto da definição de "produtos_servicos" em schema.sql.
+  "ALTER TABLE produtos_servicos ADD COLUMN inicia_avaliacao_fisica INTEGER NOT NULL DEFAULT 0",
 ];
 
 // Divide um arquivo .sql em statements individuais (o driver libsql nao aceita

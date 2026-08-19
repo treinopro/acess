@@ -19,12 +19,28 @@ router.use(autenticar);
 // não vale a complexidade de expor isso como configuração ainda).
 const CADENCIA_AVALIACAO_DIAS = 90;
 
-const ETAPAS_AVALIACAO = ['realizada', 'prescrever_treino', 'treino_ok'];
+// Teste de força (2026-08-19): só vira pendência a partir de N dias depois
+// de "prescrever treino" — antes disso o pipeline fica esperando, sem
+// aparecer pro professor (mesmo espírito do lembrete de aniversariante: só
+// aparece quando chega a hora).
+const TESTE_FORCA_DIAS_ESPERA = 20;
+
+const ETAPAS_AVALIACAO = ['realizada', 'prescrever_treino', 'teste_forca', 'treino_ok'];
 const PROXIMA_ETAPA_LABEL = {
   realizada: 'Confirmar que a avaliação foi realizada',
   prescrever_treino: 'Prescrever treino',
+  teste_forca: 'Fazer o teste de força e marcar concluído',
   treino_ok: 'Confirmar treino aplicado',
 };
+
+function diasDesde(dataHoraSql) {
+  // Colunas etapa_*_em são gravadas com datetime('now') (SQLite, UTC, sem
+  // timezone no texto) — new Date() do Node interpreta "YYYY-MM-DD HH:MM:SS"
+  // como horário local, então normaliza pra formato ISO com "Z" antes de
+  // parsear, senão o cálculo de dias fica errado dependendo do TZ do processo.
+  const iso = dataHoraSql.includes('T') ? dataHoraSql : `${dataHoraSql.replace(' ', 'T')}Z`;
+  return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+}
 
 /** A avaliação MAIS RECENTE de cada aluno (por data_avaliacao) — só essa entra em qualquer pendência. */
 async function listarPipelinesMaisRecentes() {
@@ -43,6 +59,7 @@ async function listarPipelinesMaisRecentes() {
 function proximaEtapaPendente(pipeline) {
   if (!pipeline.etapa_realizada_em) return 'realizada';
   if (!pipeline.etapa_prescrever_treino_em) return 'prescrever_treino';
+  if (!pipeline.etapa_teste_forca_em) return 'teste_forca';
   if (!pipeline.etapa_treino_ok_em) return 'treino_ok';
   return null; // pipeline completo
 }
@@ -67,19 +84,23 @@ router.get('/', async (req, res, next) => {
 
     const pendenciasAvaliacao = [];
     for (const p of pipelinesRecentes) {
-      const diasDesde = Math.floor((Date.now() - new Date(`${p.data_avaliacao}T12:00:00Z`).getTime()) / 86400000);
-      if (diasDesde > CADENCIA_AVALIACAO_DIAS) {
+      const diasDesdeAvaliacao = Math.floor((Date.now() - new Date(`${p.data_avaliacao}T12:00:00Z`).getTime()) / 86400000);
+      if (diasDesdeAvaliacao > CADENCIA_AVALIACAO_DIAS) {
         pendenciasAvaliacao.push({
           tipo: 'renovacao_avaliacao',
           id: p.id,
           aluno_id: p.aluno_id,
           aluno_nome: p.aluno_nome,
-          detalhe: `Avaliação de ${p.data_avaliacao} venceu há ${diasDesde - CADENCIA_AVALIACAO_DIAS} dia(s) — hora de renovar.`,
+          detalhe: `Avaliação de ${p.data_avaliacao} venceu há ${diasDesdeAvaliacao - CADENCIA_AVALIACAO_DIAS} dia(s) — hora de renovar.`,
           data_referencia: p.data_avaliacao,
         });
         continue; // renovação vencida já cobre o caso — não empilha "etapa pendente" da mesma avaliação velha
       }
       const proxima = proximaEtapaPendente(p);
+      // Teste de força só incomoda o professor a partir de
+      // TESTE_FORCA_DIAS_ESPERA dias depois de prescrever o treino — antes
+      // disso o pipeline fica "esperando" sem gerar pendência nenhuma.
+      if (proxima === 'teste_forca' && diasDesde(p.etapa_prescrever_treino_em) < TESTE_FORCA_DIAS_ESPERA) continue;
       if (proxima) {
         pendenciasAvaliacao.push({
           tipo: 'etapa_avaliacao',
@@ -102,7 +123,7 @@ router.get('/', async (req, res, next) => {
   }
 });
 
-// PATCH /api/pendencias/avaliacao/:pipelineId/etapa { etapa: 'realizada'|'prescrever_treino'|'treino_ok' }
+// PATCH /api/pendencias/avaliacao/:pipelineId/etapa { etapa: 'realizada'|'prescrever_treino'|'teste_forca'|'treino_ok' }
 router.patch('/avaliacao/:pipelineId/etapa', async (req, res, next) => {
   try {
     const { etapa } = z.object({ etapa: z.enum(ETAPAS_AVALIACAO) }).parse(req.body);

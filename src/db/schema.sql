@@ -129,7 +129,18 @@ CREATE TABLE IF NOT EXISTS avaliacao_pipeline (
   data_avaliacao TEXT NOT NULL,
   etapa_realizada_em TEXT,
   etapa_prescrever_treino_em TEXT,
+  -- Teste de força (2026-08-19): 4ª etapa do passo a passo, entre prescrever
+  -- treino e confirmar treino aplicado. Só vira pendência a partir de
+  -- TESTE_FORCA_DIAS_ESPERA dias depois de etapa_prescrever_treino_em (ver
+  -- pendencias.routes.js) — antes disso o pipeline fica "esperando" sem
+  -- incomodar o professor.
+  etapa_teste_forca_em TEXT,
   etapa_treino_ok_em TEXT,
+  -- Aviso automático (push) pro ALUNO de que a avaliação está vencendo, X
+  -- dias antes de completar a cadência de 90 dias — ver
+  -- src/jobs/avisoRenovacaoAvaliacao.js. Um envio só por pipeline, igual ao
+  -- padrão de cobrancas.aviso_vencimento_enviado.
+  aviso_renovacao_enviado INTEGER NOT NULL DEFAULT 0,
   criado_por TEXT REFERENCES usuarios(id),
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );

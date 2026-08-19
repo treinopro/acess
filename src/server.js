@@ -28,6 +28,7 @@ const { router: configRoutes } = require('./routes/config.routes');
 const { rodar: rodarBackup, verificarAgendamento: verificarAgendamentoBackup } = require('./jobs/backup');
 const { rodar: rodarMensagensAgendadas } = require('./jobs/mensagensAgendadas');
 const { rodar: rodarAvisoVencimento } = require('./jobs/avisoVencimento');
+const { rodar: rodarAvisoRenovacaoAvaliacao } = require('./jobs/avisoRenovacaoAvaliacao');
 const { atualizarCobrancasVencidas } = require('./services/cobrancas.service');
 const agenteGateway = require('./services/agenteGateway.service');
 const dbResiliente = require('./services/dbResiliente.service');
@@ -311,6 +312,16 @@ server.listen(PORT, () => {
     rodarAvisoVencimento().catch((err) => console.error('[avisoVencimento] erro na execução inicial:', err));
     setInterval(() => {
       rodarAvisoVencimento().catch((err) => console.error('[avisoVencimento] erro na execução agendada:', err));
+    }, 60 * 60 * 1000);
+  }
+
+  // Aviso de renovação de avaliação física por push (2026-08-19, ver
+  // src/jobs/avisoRenovacaoAvaliacao.js) — mesmo guard e cadência do aviso
+  // de vencimento de mensalidade.
+  if (EXECUTAR_JOBS_AGENDADOS) {
+    rodarAvisoRenovacaoAvaliacao().catch((err) => console.error('[avisoRenovacaoAvaliacao] erro na execução inicial:', err));
+    setInterval(() => {
+      rodarAvisoRenovacaoAvaliacao().catch((err) => console.error('[avisoRenovacaoAvaliacao] erro na execução agendada:', err));
     }, 60 * 60 * 1000);
   }
 

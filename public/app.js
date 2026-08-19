@@ -2957,6 +2957,7 @@ document.getElementById('btn-filtrar-vendas-produtos-servicos').addEventListener
 const ROTULO_PROXIMA_ETAPA = {
   realizada: { texto: 'Marcar avaliação como realizada', proximaEtapa: 'realizada' },
   prescrever_treino: { texto: 'Marcar treino como prescrito', proximaEtapa: 'prescrever_treino' },
+  teste_forca: { texto: 'Marcar teste de força como concluído', proximaEtapa: 'teste_forca' },
   treino_ok: { texto: 'Confirmar treino aplicado', proximaEtapa: 'treino_ok' },
 };
 
@@ -2998,6 +2999,15 @@ async function carregarPendencias() {
         const btn = el('<button class="btn-primario">Realizar avaliação</button>');
         btn.addEventListener('click', () => abrirPerfilAluno(p.aluno_id, 'avaliacoes'));
         acoes.appendChild(btn);
+        // O aluno já recebe um push automático sozinho (ver
+        // src/jobs/avisoRenovacaoAvaliacao.js) — este botão é só pro
+        // professor querer reforçar com uma mensagem própria por e-mail/WhatsApp.
+        const btnAviso = el('<button class="btn-secundario">Enviar aviso personalizado</button>');
+        btnAviso.addEventListener('click', () => {
+          recupEstado.diasCache.set(p.aluno_id, { aluno_id: p.aluno_id, nome: p.aluno_nome });
+          abrirModalRecupEnviar([p.aluno_id], 'avaliacao');
+        });
+        acoes.appendChild(btnAviso);
       } else if (p.tipo === 'etapa_avaliacao') {
         const rotulo = ROTULO_PROXIMA_ETAPA[p.etapa];
         if (p.etapa === 'prescrever_treino') {

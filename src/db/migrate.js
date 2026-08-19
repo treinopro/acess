@@ -61,6 +61,10 @@ const ALTERACOES_INCREMENTAIS = [
   // Vender o item também abre um pipeline de avaliação física (2026-08-19) —
   // ver comentário detalhado junto da definição de "produtos_servicos" em schema.sql.
   "ALTER TABLE produtos_servicos ADD COLUMN inicia_avaliacao_fisica INTEGER NOT NULL DEFAULT 0",
+  // Etapa "teste de força" + aviso de renovação pro aluno (2026-08-19) — ver
+  // comentário detalhado junto da definição de "avaliacao_pipeline" em schema.sql.
+  "ALTER TABLE avaliacao_pipeline ADD COLUMN etapa_teste_forca_em TEXT",
+  "ALTER TABLE avaliacao_pipeline ADD COLUMN aviso_renovacao_enviado INTEGER NOT NULL DEFAULT 0",
 ];
 
 // Divide um arquivo .sql em statements individuais (o driver libsql nao aceita

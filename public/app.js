@@ -1454,10 +1454,140 @@ function resumoAvaliacaoStaff(av) {
   return escapeHtml(partes.join(' · ') || 'sem valores');
 }
 
+// ---------------- Relatório completo de avaliação física (imprimir/PDF) ----------------
+// Mesmo padrão de imprimirRelatorioTabela (ver Relatórios): abre uma janela
+// em branco, escreve um HTML autocontido e chama print() — sem depender de
+// nenhuma lib de gráfico/PDF no servidor. Os gráficos são SVG desenhado à
+// mão (poucos pontos, não vale trazer uma biblioteca só pra isso).
+
+function svgGraficoLinhaAvaliacao(pontos, { largura = 480, altura = 170, cor = '#2563eb', unidade = '' } = {}) {
+  if (pontos.length < 2) return null;
+  const valores = pontos.map((p) => p.valor);
+  const min = Math.min(...valores);
+  const max = Math.max(...valores);
+  const margemX = 28;
+  const margemY = 26;
+  const faixaY = max - min || 1;
+  const passoX = (largura - margemX * 2) / (pontos.length - 1);
+  const coordX = (i) => margemX + i * passoX;
+  const coordY = (v) => altura - margemY - ((v - min) / faixaY) * (altura - margemY * 2);
+  const linha = pontos.map((p, i) => `${i === 0 ? 'M' : 'L'} ${coordX(i).toFixed(1)} ${coordY(p.valor).toFixed(1)}`).join(' ');
+  const marcadores = pontos.map((p, i) => `
+    <circle cx="${coordX(i).toFixed(1)}" cy="${coordY(p.valor).toFixed(1)}" r="3" fill="${cor}" />
+    <text x="${coordX(i).toFixed(1)}" y="${(coordY(p.valor) - 8).toFixed(1)}" font-size="10" text-anchor="middle" fill="#333">${p.valor}${unidade}</text>
+    <text x="${coordX(i).toFixed(1)}" y="${altura - 6}" font-size="9" text-anchor="middle" fill="#667085">${escapeHtml(p.rotulo)}</text>
+  `).join('');
+  return `<svg viewBox="0 0 ${largura} ${altura}" width="100%" height="${altura}" xmlns="http://www.w3.org/2000/svg">
+    <line x1="${margemX}" y1="${altura - margemY}" x2="${largura - margemX}" y2="${altura - margemY}" stroke="#e4e7ec" />
+    <path d="${linha}" fill="none" stroke="${cor}" stroke-width="2" />
+    ${marcadores}
+  </svg>`;
+}
+
+// Um mesmo envio de "Nova avaliação" pode gravar peso em mais de uma linha
+// (ex.: Antropometria E Bioimpedância, quando peso e % de gordura são
+// preenchidos juntos — ver POST /:id/avaliacoes) — sem isso, o gráfico
+// ganharia dois pontos sobrepostos na mesma data. Fica só um ponto por
+// data (o último encontrado, já que avaliacoesAsc está em ordem crescente).
+function extrairSerieAvaliacao(avaliacoesAsc, origem, campo) {
+  const porData = new Map();
+  avaliacoesAsc.forEach((av) => {
+    const v = av[origem] && av[origem][campo];
+    if (v == null || v === '') return;
+    porData.set(av.data, { valor: Number(v), rotulo: formatarDataOuDataHora(av.data) });
+  });
+  return [...porData.values()];
+}
+
+function imprimirRelatorioAvaliacaoFisica(aluno, avaliacoes) {
+  const janela = window.open('', '_blank');
+  if (!janela) {
+    mostrarToast('Não foi possível abrir a janela de impressão — verifique se o navegador bloqueou pop-ups.', true);
+    return;
+  }
+  const asc = [...avaliacoes].sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : 0));
+
+  const series = [
+    { titulo: 'Peso (kg)', dados: extrairSerieAvaliacao(asc, 'fields', 'peso'), cor: '#2563eb', unidade: '' },
+    { titulo: '% de gordura', dados: extrairSerieAvaliacao(asc, 'computed', 'bf'), cor: '#dc2626', unidade: '%' },
+    { titulo: 'IMC', dados: extrairSerieAvaliacao(asc, 'computed', 'imc'), cor: '#16a34a', unidade: '' },
+    { titulo: 'Cintura (cm)', dados: extrairSerieAvaliacao(asc, 'fields', 'cintura'), cor: '#d97706', unidade: '' },
+    { titulo: 'Quadril (cm)', dados: extrairSerieAvaliacao(asc, 'fields', 'quadril'), cor: '#7c3aed', unidade: '' },
+  ];
+  const graficosHtml = series
+    .map((s) => {
+      const svg = svgGraficoLinhaAvaliacao(s.dados, { cor: s.cor, unidade: s.unidade });
+      return svg ? `<div class="grafico"><h3>${escapeHtml(s.titulo)}</h3>${svg}</div>` : '';
+    })
+    .join('');
+
+  const linhasTabela = avaliacoes.map((av) => {
+    const f = av.fields || {};
+    const c = av.computed || {};
+    const detalhes = [];
+    if (f.peso != null) detalhes.push(`Peso ${f.peso} kg`);
+    if (f.altura != null) detalhes.push(`Altura ${f.altura} cm`);
+    if (c.imc != null) detalhes.push(`IMC ${c.imc}${c.imcLabel ? ` (${c.imcLabel})` : ''}`);
+    if (c.bf != null) detalhes.push(`% gordura ${c.bf}%${c.bfLabel ? ` (${c.bfLabel})` : ''}`);
+    if (c.massaGorda != null) detalhes.push(`Massa gorda ${c.massaGorda} kg`);
+    if (c.massaMagra != null) detalhes.push(`Massa magra ${c.massaMagra} kg`);
+    if (f.cintura != null) detalhes.push(`Cintura ${f.cintura} cm`);
+    if (f.quadril != null) detalhes.push(`Quadril ${f.quadril} cm`);
+    if (c.rcq != null) detalhes.push(`RCQ ${c.rcq}${c.rcqLabel ? ` (${c.rcqLabel})` : ''}`);
+    if (f.torax != null) detalhes.push(`Peito ${f.torax} cm`);
+    if (f.braco_d != null) detalhes.push(`Braço ${f.braco_d} cm`);
+    if (f.coxa_d != null) detalhes.push(`Coxa ${f.coxa_d} cm`);
+    if (av.observacoes) detalhes.push(`Obs.: ${av.observacoes}`);
+    return `<tr><td>${formatarDataOuDataHora(av.data)}</td><td>${escapeHtml(av.tipo)}</td><td>${escapeHtml(detalhes.join(' · ') || '—')}</td></tr>`;
+  }).join('');
+
+  janela.document.write(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
+<title>Relatório de avaliação física — ${escapeHtml(aluno.nome)}</title>
+<style>
+  body { font-family: Arial, Helvetica, sans-serif; padding: 24px; color: #111; }
+  h1 { font-size: 19px; margin: 0 0 4px; }
+  .subtitulo { font-size: 12px; color: #555; margin: 0 0 20px; }
+  h2 { font-size: 14px; margin: 24px 0 8px; }
+  .graficos { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  .grafico { border: 1px solid #e4e7ec; border-radius: 8px; padding: 10px 12px; }
+  .grafico h3 { margin: 0 0 6px; font-size: 12px; color: #344054; }
+  table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: #f2f2f2; }
+  @media print { body { padding: 0; } .grafico { break-inside: avoid; } }
+</style></head>
+<body>
+  <h1>Relatório de avaliação física — ${escapeHtml(aluno.nome)}</h1>
+  <p class="subtitulo">Gerado em ${formatarDataOuDataHora(new Date().toISOString())} · ${avaliacoes.length} avaliação(ões) registrada(s)</p>
+  ${graficosHtml
+    ? `<h2>Evolução</h2><div class="graficos">${graficosHtml}</div>`
+    : '<p style="color:#667085">Ainda não há avaliações suficientes (mínimo 2, com o mesmo campo preenchido) para gerar gráficos de evolução.</p>'}
+  <h2>Histórico completo</h2>
+  <table><thead><tr><th>Data</th><th>Tipo</th><th>Detalhes</th></tr></thead>
+  <tbody>${linhasTabela || '<tr><td colspan="3">Nenhuma avaliação registrada.</td></tr>'}</tbody></table>
+</body></html>`);
+  janela.document.close();
+  janela.focus();
+  setTimeout(() => janela.print(), 300);
+}
+
+document.getElementById('btn-imprimir-relatorio-avaliacao').addEventListener('click', () => {
+  if (!perfilAtualAlunoCache) return;
+  imprimirRelatorioAvaliacaoFisica(perfilAtualAlunoCache, perfilAtualAvaliacoesCache);
+});
+
+// Cache do aluno/avaliações do perfil aberto no momento — usado pelo botão
+// "Imprimir relatório completo" (ver imprimirRelatorioAvaliacaoFisica) pra
+// não precisar buscar tudo de novo só pra montar o relatório.
+let perfilAtualAlunoCache = null;
+let perfilAtualAvaliacoesCache = [];
+
 async function carregarPerfilAluno() {
   try {
     const perfil = await api(`/api/alunos/${perfilAtualId}/perfil`);
     const { aluno, anamnese, avaliacoes, matriculas, agendamentos, cobrancas } = perfil;
+    perfilAtualAlunoCache = aluno;
+    perfilAtualAvaliacoesCache = avaliacoes;
 
     document.getElementById('perfil-nome-aluno').textContent = `Perfil de ${aluno.nome}`;
     document.getElementById('perfil-aluno-id').value = aluno.id;

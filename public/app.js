@@ -1899,6 +1899,42 @@ document.getElementById('btn-excluir-treino').addEventListener('click', async ()
   } catch (err) { mostrarToast(err.message, true); }
 });
 
+// Ao criar exercícios novos (modo criação), o trainer pode marcar vários da
+// biblioteca de uma vez — esse Set guarda os ids marcados entre re-renders da
+// lista (ex: ao digitar na busca) pra não perder a seleção.
+let bibliotecaMultiSelecionados = new Set();
+
+function renderizarListaLibMulti(filtro) {
+  const box = document.getElementById('exercicio-lib-multi');
+  const termo = (filtro || '').trim().toLowerCase();
+  const lista = termo
+    ? bibliotecaCache.filter((ex) => ex.nome.toLowerCase().includes(termo) || ex.grupo_muscular.toLowerCase().includes(termo))
+    : bibliotecaCache;
+  if (!lista.length) { box.innerHTML = '<p style="color:#667085;font-size:13px;margin:4px 0">Nenhum exercício encontrado.</p>'; return; }
+  box.innerHTML = lista.map((ex) => `
+    <label style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #f2f4f7">
+      <input type="checkbox" class="exercicio-lib-check" value="${ex.id}" data-nome="${escapeHtml(ex.nome)}" style="width:auto" ${bibliotecaMultiSelecionados.has(ex.id) ? 'checked' : ''} />
+      <span style="flex:1">${escapeHtml(ex.nome)}</span>
+      <span class="tag">${escapeHtml(ex.grupo_muscular)}</span>
+    </label>
+  `).join('');
+  box.querySelectorAll('.exercicio-lib-check').forEach((chk) => {
+    chk.addEventListener('change', () => {
+      if (chk.checked) bibliotecaMultiSelecionados.add(chk.value); else bibliotecaMultiSelecionados.delete(chk.value);
+      atualizarContadorLibMulti();
+    });
+  });
+}
+
+function atualizarContadorLibMulti() {
+  const n = bibliotecaMultiSelecionados.size;
+  document.getElementById('exercicio-multi-contador').textContent = n
+    ? `${n} exercício(s) selecionado(s) — a metodologia preenchida abaixo será aplicada a todos eles.`
+    : '';
+}
+
+document.getElementById('exercicio-lib-busca').addEventListener('input', (ev) => renderizarListaLibMulti(ev.target.value));
+
 async function abrirFormExercicio(exercicio) {
   document.getElementById('exercicio-id').value = exercicio?.id || '';
   document.getElementById('exercicio-nome').value = exercicio?.exercicio || '';
@@ -1910,9 +1946,33 @@ async function abrirFormExercicio(exercicio) {
   document.getElementById('exercicio-dica').value = exercicio?.dica || '';
   document.getElementById('exercicio-video').value = exercicio?.video_url || '';
 
-  await popularSelectLibTreino();
-  document.getElementById('exercicio-lib-select').value = exercicio?.biblioteca_id || '';
-  document.getElementById('exercicio-lib-preview').innerHTML = exercicio?.video_url ? videoPreviewHtml(exercicio.video_url) : '';
+  const modoEdicao = document.getElementById('exercicio-modo-edicao');
+  const modoCriacao = document.getElementById('exercicio-modo-criacao');
+  const nomeLabel = document.getElementById('exercicio-nome-label');
+  const btnSalvar = document.getElementById('btn-salvar-exercicio-form');
+
+  if (exercicio) {
+    // Editando um exercício já existente do treino — continua sendo 1 por vez.
+    modoEdicao.classList.remove('oculto');
+    modoCriacao.classList.add('oculto');
+    await popularSelectLibTreino();
+    document.getElementById('exercicio-lib-select').value = exercicio.biblioteca_id || '';
+    document.getElementById('exercicio-lib-preview').innerHTML = exercicio.video_url ? videoPreviewHtml(exercicio.video_url) : '';
+    nomeLabel.textContent = 'Exercício *';
+    btnSalvar.textContent = 'Salvar exercício';
+  } else {
+    // Adicionando exercício(s) novo(s) — pode marcar vários da biblioteca.
+    modoEdicao.classList.add('oculto');
+    modoCriacao.classList.remove('oculto');
+    bibliotecaMultiSelecionados = new Set();
+    await garantirBibliotecaCarregada();
+    document.getElementById('exercicio-lib-busca').value = '';
+    renderizarListaLibMulti('');
+    atualizarContadorLibMulti();
+    document.getElementById('exercicio-lib-preview').innerHTML = '';
+    nomeLabel.textContent = 'Exercício avulso (opcional se já marcou algum acima)';
+    btnSalvar.textContent = 'Salvar exercício(s)';
+  }
 
   document.getElementById('form-exercicio').classList.remove('oculto');
 }
@@ -1925,24 +1985,47 @@ document.getElementById('btn-cancelar-exercicio').addEventListener('click', () =
 document.getElementById('form-exercicio').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const id = document.getElementById('exercicio-id').value;
-  const dados = {
-    exercicio: document.getElementById('exercicio-nome').value.trim(),
+  const metodologia = {
     series: document.getElementById('exercicio-series').value.trim() || null,
     carga: document.getElementById('exercicio-carga').value.trim() || null,
     intervalo: document.getElementById('exercicio-intervalo').value.trim() || null,
     observacao: document.getElementById('exercicio-observacao').value.trim() || null,
     metodo: document.getElementById('exercicio-metodo').value || null,
     dica: document.getElementById('exercicio-dica').value.trim() || null,
-    biblioteca_id: document.getElementById('exercicio-lib-select').value || null,
-    video_url: document.getElementById('exercicio-video').value.trim() || null,
   };
+  const nomeManual = document.getElementById('exercicio-nome').value.trim();
+  const videoManual = document.getElementById('exercicio-video').value.trim() || null;
+
   try {
     if (id) {
+      // Edição de um único exercício existente — comportamento de sempre.
+      if (!nomeManual) { mostrarToast('Informe o nome do exercício.', true); return; }
+      const dados = {
+        exercicio: nomeManual,
+        ...metodologia,
+        biblioteca_id: document.getElementById('exercicio-lib-select').value || null,
+        video_url: videoManual,
+      };
       await api(`/api/treinos/exercicios/${id}`, { method: 'PUT', body: JSON.stringify(dados) });
+      mostrarToast('Exercício salvo.');
     } else {
-      await api(`/api/treinos/${treinoAtivoId}/exercicios`, { method: 'POST', body: JSON.stringify(dados) });
+      // Criação — um ou mais exercícios de uma vez, todos com a mesma metodologia
+      // preenchida no formulário. Cada item da biblioteca herda seu próprio
+      // vídeo/imagem no backend (herdarMidiaDaBiblioteca), então o campo de
+      // vídeo manual só é usado no exercício avulso digitado.
+      const selecionados = [...document.querySelectorAll('.exercicio-lib-check:checked')].map((chk) => ({
+        exercicio: chk.dataset.nome,
+        biblioteca_id: chk.value,
+        video_url: null,
+      }));
+      if (nomeManual) selecionados.push({ exercicio: nomeManual, biblioteca_id: null, video_url: videoManual });
+      if (!selecionados.length) { mostrarToast('Selecione ao menos um exercício da biblioteca ou digite um nome.', true); return; }
+
+      for (const item of selecionados) {
+        await api(`/api/treinos/${treinoAtivoId}/exercicios`, { method: 'POST', body: JSON.stringify({ ...item, ...metodologia }) });
+      }
+      mostrarToast(selecionados.length > 1 ? `${selecionados.length} exercícios salvos com a mesma metodologia.` : 'Exercício salvo.');
     }
-    mostrarToast('Exercício salvo.');
     document.getElementById('form-exercicio').classList.add('oculto');
     await carregarTreinosPerfil();
   } catch (err) { mostrarToast(err.message, true); }
@@ -6590,10 +6673,76 @@ let treinoTemplatesCache = [];
 
 async function carregarTreinoTemplates() {
   treinoTemplatesCache = await api('/api/treino-templates');
-  const sel = document.getElementById('sel-treino-modelo');
-  sel.innerHTML = '<option value="">Aplicar modelo salvo…</option>'
-    + treinoTemplatesCache.map((t) => `<option value="${t.id}">${escapeHtml(t.nome)} (${t.exercicios.length} exerc.)</option>`).join('');
 }
+
+function templateExercicioPreviewHtml(ex) {
+  const partes = [ex.series, ex.carga, ex.intervalo, ex.metodo].filter(Boolean).join(' · ');
+  return `
+    <tr>
+      <td>${escapeHtml(ex.exercicio)}</td>
+      <td>${partes ? escapeHtml(partes) : '—'}</td>
+      <td>${ex.observacao ? escapeHtml(ex.observacao) : '—'}</td>
+    </tr>
+  `;
+}
+
+function abrirModalModelosTreino() {
+  const lista = document.getElementById('modelos-treino-lista');
+  if (!treinoTemplatesCache.length) {
+    lista.innerHTML = '<p style="color:#667085;font-size:13px">Nenhum modelo salvo ainda. Monte um treino e use "💾 Salvar como modelo" pra reaproveitar em outros alunos.</p>';
+  } else {
+    lista.innerHTML = treinoTemplatesCache.map((t, idx) => `
+      <div class="form-painel" style="margin-bottom:10px">
+        <div class="secao-topo" style="align-items:center">
+          <strong>${escapeHtml(t.nome)}</strong>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span style="font-size:12px;color:#667085">${t.exercicios.length} exercício(s)</span>
+            <button type="button" class="btn-secundario btn-ver-modelo" data-idx="${idx}" style="padding:4px 10px">Ver exercícios</button>
+            <button type="button" class="btn-primario btn-aplicar-modelo" data-id="${t.id}" style="padding:4px 10px">Aplicar a este aluno</button>
+          </div>
+        </div>
+        <div id="modelo-preview-${idx}" class="oculto" style="margin-top:10px">
+          <table class="tabela">
+            <thead><tr><th>Exercício</th><th>Metodologia</th><th>Observação</th></tr></thead>
+            <tbody>${t.exercicios.map(templateExercicioPreviewHtml).join('') || '<tr><td colspan="3">Sem exercícios.</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>
+    `).join('');
+
+    lista.querySelectorAll('.btn-ver-modelo').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const preview = document.getElementById(`modelo-preview-${btn.dataset.idx}`);
+        const abrindo = preview.classList.contains('oculto');
+        preview.classList.toggle('oculto');
+        btn.textContent = abrindo ? 'Ocultar exercícios' : 'Ver exercícios';
+      });
+    });
+    lista.querySelectorAll('.btn-aplicar-modelo').forEach((btn) => {
+      btn.addEventListener('click', () => aplicarTreinoTemplate(btn.dataset.id));
+    });
+  }
+  document.getElementById('modal-modelos-treino').classList.remove('oculto');
+}
+
+async function aplicarTreinoTemplate(templateId) {
+  const alunoId = document.getElementById('perfil-aluno-id').value;
+  try {
+    const resp = await api(`/api/treino-templates/${templateId}/aplicar`, {
+      method: 'POST',
+      body: JSON.stringify({ aluno_id: alunoId }),
+    });
+    treinoAtivoId = resp.id;
+    mostrarToast('Modelo aplicado — treino criado a partir do modelo.');
+    document.getElementById('modal-modelos-treino').classList.add('oculto');
+    await carregarTreinosPerfil();
+  } catch (err) { mostrarToast(err.message, true); }
+}
+
+document.getElementById('btn-abrir-modelos-treino').addEventListener('click', abrirModalModelosTreino);
+document.getElementById('btn-fechar-modal-modelos-treino').addEventListener('click', () => {
+  document.getElementById('modal-modelos-treino').classList.add('oculto');
+});
 
 document.getElementById('btn-salvar-treino-modelo').addEventListener('click', async () => {
   const treino = treinosCache.find((t) => t.id === treinoAtivoId);
@@ -6620,24 +6769,8 @@ document.getElementById('btn-salvar-treino-modelo').addEventListener('click', as
         })),
       }),
     });
-    mostrarToast('Modelo salvo. Já aparece em "Aplicar modelo salvo" em qualquer aluno.');
+    mostrarToast('Modelo salvo. Já aparece em "📋 Modelos salvos" em qualquer aluno.');
     await carregarTreinoTemplates();
-  } catch (err) { mostrarToast(err.message, true); }
-});
-
-document.getElementById('sel-treino-modelo').addEventListener('change', async (ev) => {
-  const templateId = ev.target.value;
-  if (!templateId) return;
-  const alunoId = document.getElementById('perfil-aluno-id').value;
-  try {
-    const resp = await api(`/api/treino-templates/${templateId}/aplicar`, {
-      method: 'POST',
-      body: JSON.stringify({ aluno_id: alunoId }),
-    });
-    treinoAtivoId = resp.id;
-    mostrarToast('Modelo aplicado — treino criado a partir do modelo.');
-    ev.target.value = '';
-    await carregarTreinosPerfil();
   } catch (err) { mostrarToast(err.message, true); }
 });
 

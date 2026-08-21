@@ -477,9 +477,7 @@
             <div class="secao-topo" style="align-items:center">
               <div id="treino-abas" style="display:flex;gap:6px;flex-wrap:wrap"></div>
               <div style="display:flex;gap:8px">
-                <select id="sel-treino-modelo" title="Aplicar um treino salvo (modelo) a este aluno" style="max-width:220px">
-                  <option value="">Aplicar modelo salvo…</option>
-                </select>
+                <button type="button" class="btn-secundario" id="btn-abrir-modelos-treino" title="Ver e aplicar um treino salvo (modelo) a este aluno">📋 Modelos salvos</button>
                 <button type="button" class="btn-secundario" id="btn-novo-treino">+ Novo treino</button>
               </div>
             </div>
@@ -524,13 +522,26 @@
               <button type="button" class="btn-secundario" id="btn-toggle-exercicio" style="margin-top:10px">+ Adicionar exercício</button>
               <form id="form-exercicio" class="form-painel oculto" style="margin-top:10px">
                 <input type="hidden" id="exercicio-id" />
-                <label>Escolher da biblioteca (opcional)</label>
-                <select id="exercicio-lib-select">
-                  <option value="">— digitar nome manualmente —</option>
-                </select>
+
+                <!-- Modo edição: editando 1 exercício já existente -->
+                <div id="exercicio-modo-edicao">
+                  <label>Escolher da biblioteca (opcional)</label>
+                  <select id="exercicio-lib-select">
+                    <option value="">— digitar nome manualmente —</option>
+                  </select>
+                </div>
+
+                <!-- Modo criação: pode selecionar vários exercícios da biblioteca de uma vez -->
+                <div id="exercicio-modo-criacao">
+                  <label>Escolher da biblioteca (selecione um ou mais)</label>
+                  <input type="text" id="exercicio-lib-busca" placeholder="Buscar por nome ou grupo muscular…" style="margin-bottom:6px" />
+                  <div id="exercicio-lib-multi" style="max-height:220px;overflow-y:auto;border:1px solid #d0d5dd;border-radius:8px;padding:8px 10px"></div>
+                  <p id="exercicio-multi-contador" style="font-size:12px;color:#667085;margin:6px 0 0"></p>
+                </div>
+
                 <div id="exercicio-lib-preview"></div>
                 <div class="grid-2" style="margin-top:8px">
-                  <div><label>Exercício *</label><input id="exercicio-nome" required /></div>
+                  <div><label id="exercicio-nome-label">Exercício *</label><input id="exercicio-nome" /></div>
                   <div><label>Séries</label><input id="exercicio-series" placeholder="ex: 4x12" /></div>
                   <div><label>Carga</label><input id="exercicio-carga" placeholder="ex: 20kg" /></div>
                   <div><label>Intervalo</label><input id="exercicio-intervalo" placeholder="ex: 60s" /></div>
@@ -554,7 +565,7 @@
                 <label>Dica do instrutor</label>
                 <textarea id="exercicio-dica" rows="2"></textarea>
                 <div class="form-acoes">
-                  <button type="submit" class="btn-primario">Salvar exercício</button>
+                  <button type="submit" class="btn-primario" id="btn-salvar-exercicio-form">Salvar exercício</button>
                   <button type="button" class="btn-secundario" id="btn-cancelar-exercicio">Cancelar</button>
                 </div>
               </form>
@@ -2339,6 +2350,17 @@
   </div>
 
   <!-- MODAL: Modelo de mensagem (Recuperação de Clientes) -->
+  <!-- MODAL: Modelos de treino salvos (prévia + aplicar ao aluno) -->
+  <div id="modal-modelos-treino" class="modal-overlay oculto">
+    <div class="modal-card">
+      <div class="modal-topo">
+        <h3>Modelos de treino salvos</h3>
+        <button type="button" class="btn-fechar-painel" id="btn-fechar-modal-modelos-treino" title="Fechar">&times;</button>
+      </div>
+      <div id="modelos-treino-lista"></div>
+    </div>
+  </div>
+
   <div id="modal-recup-template" class="modal-overlay oculto">
     <div class="modal-card">
       <div class="modal-topo">

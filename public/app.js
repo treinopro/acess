@@ -1803,10 +1803,11 @@ function renderizarTreinoAtivo() {
   });
 
   const tbody = document.getElementById('treino-lista-exercicios');
-  tbody.innerHTML = treino.exercicios.length ? '' : '<tr><td colspan="6">Nenhum exercício cadastrado ainda.</td></tr>';
+  tbody.innerHTML = treino.exercicios.length ? '' : '<tr><td colspan="7">Nenhum exercício cadastrado ainda.</td></tr>';
   treino.exercicios.forEach((ex) => {
     const tr = el(`
-      <tr>
+      <tr draggable="true" data-id="${ex.id}">
+        <td class="arrastar-alca" title="Arraste para reordenar" style="cursor:grab;color:#98a2b3;user-select:none">⠿</td>
         <td>${escapeHtml(ex.exercicio)}</td>
         <td>${escapeHtml(ex.series) || '—'}</td>
         <td>${escapeHtml(ex.carga) || '—'}</td>
@@ -1828,6 +1829,45 @@ function renderizarTreinoAtivo() {
       } catch (err) { mostrarToast(err.message, true); }
     });
     tbody.appendChild(tr);
+  });
+  ativarReordenacaoExercicios(tbody, treino);
+}
+
+// Arrastar e soltar pra reordenar os exercícios de um treino — grava a nova
+// ordem em treino_exercicios.ordem (coluna que já existia, usada até aqui só
+// pra sequência de inserção). Reordena a linha na tela em tempo real durante
+// o arraste (dragover) e só grava no servidor quando solta (drop), pra não
+// martelar a API a cada pixel movido.
+function ativarReordenacaoExercicios(tbody, treino) {
+  let linhaArrastada = null;
+  tbody.querySelectorAll('tr[draggable="true"]').forEach((tr) => {
+    tr.addEventListener('dragstart', () => {
+      linhaArrastada = tr;
+      tr.style.opacity = '0.4';
+    });
+    tr.addEventListener('dragend', () => {
+      tr.style.opacity = '';
+      linhaArrastada = null;
+    });
+    tr.addEventListener('dragover', (ev) => {
+      ev.preventDefault();
+      if (!linhaArrastada || linhaArrastada === tr) return;
+      const rect = tr.getBoundingClientRect();
+      const depois = (ev.clientY - rect.top) / rect.height > 0.5;
+      tbody.insertBefore(linhaArrastada, depois ? tr.nextSibling : tr);
+    });
+    tr.addEventListener('drop', async (ev) => {
+      ev.preventDefault();
+      const idsNaOrdemNova = [...tbody.querySelectorAll('tr[data-id]')].map((r) => r.dataset.id);
+      try {
+        await Promise.all(idsNaOrdemNova.map((exId, idx) =>
+          api(`/api/treinos/exercicios/${exId}`, { method: 'PUT', body: JSON.stringify({ ordem: idx }) })));
+        treino.exercicios.sort((a, b) => idsNaOrdemNova.indexOf(a.id) - idsNaOrdemNova.indexOf(b.id));
+      } catch (err) {
+        mostrarToast(err.message, true);
+        carregarTreinosPerfil();
+      }
+    });
   });
 }
 
@@ -2013,11 +2053,14 @@ document.getElementById('form-exercicio').addEventListener('submit', async (ev) 
       // preenchida no formulário. Cada item da biblioteca herda seu próprio
       // vídeo/imagem no backend (herdarMidiaDaBiblioteca), então o campo de
       // vídeo manual só é usado no exercício avulso digitado.
-      const selecionados = [...document.querySelectorAll('.exercicio-lib-check:checked')].map((chk) => ({
-        exercicio: chk.dataset.nome,
-        biblioteca_id: chk.value,
-        video_url: null,
-      }));
+      // Usa o Set persistido (bibliotecaMultiSelecionados), não o DOM: a lista é
+      // filtrada pela busca, então um exercício marcado numa busca anterior já
+      // não está mais no DOM quando o formulário é enviado — só o Set sobrevive
+      // às trocas de filtro (bug real: só o último marcado era salvo).
+      const selecionados = [...bibliotecaMultiSelecionados].map((idBiblioteca) => {
+        const ex = bibliotecaCache.find((e) => e.id === idBiblioteca);
+        return { exercicio: ex ? ex.nome : 'Exercício', biblioteca_id: idBiblioteca, video_url: null };
+      });
       if (nomeManual) selecionados.push({ exercicio: nomeManual, biblioteca_id: null, video_url: videoManual });
       if (!selecionados.length) { mostrarToast('Selecione ao menos um exercício da biblioteca ou digite um nome.', true); return; }
 

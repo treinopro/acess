@@ -29,6 +29,7 @@ const { rodar: rodarBackup, verificarAgendamento: verificarAgendamentoBackup } =
 const { rodar: rodarMensagensAgendadas } = require('./jobs/mensagensAgendadas');
 const { rodar: rodarAvisoVencimento } = require('./jobs/avisoVencimento');
 const { rodar: rodarAvisoRenovacaoAvaliacao } = require('./jobs/avisoRenovacaoAvaliacao');
+const { rodar: rodarReconciliarPagamentosPix } = require('./jobs/reconciliarPagamentosPix');
 const { atualizarCobrancasVencidas } = require('./services/cobrancas.service');
 const agenteGateway = require('./services/agenteGateway.service');
 const dbResiliente = require('./services/dbResiliente.service');
@@ -323,6 +324,20 @@ server.listen(PORT, () => {
     setInterval(() => {
       rodarAvisoRenovacaoAvaliacao().catch((err) => console.error('[avisoRenovacaoAvaliacao] erro na execução agendada:', err));
     }, 60 * 60 * 1000);
+  }
+
+  // Reconciliação de pagamentos Pix "esquecidos" (2026-08-20, ver
+  // src/jobs/reconciliarPagamentosPix.js) — o polling ao vivo do totem/portal
+  // só confirma um Pix enquanto a pessoa está com a tela do QR code aberta;
+  // se ela sair antes da confirmação chegar, a cobrança fica "pendente" pra
+  // sempre sem este job. Checagem a cada 10 min é suficiente (não é um aviso
+  // que precisa ser instantâneo, e evita martelar a API do Mercado Pago).
+  // Mesmo guard dos outros jobs.
+  if (EXECUTAR_JOBS_AGENDADOS) {
+    rodarReconciliarPagamentosPix().catch((err) => console.error('[reconciliarPagamentosPix] erro na execução inicial:', err));
+    setInterval(() => {
+      rodarReconciliarPagamentosPix().catch((err) => console.error('[reconciliarPagamentosPix] erro na execução agendada:', err));
+    }, 10 * 60 * 1000);
   }
 
   // "Modo totem offline-resiliente" (2026-07): só ativa quando

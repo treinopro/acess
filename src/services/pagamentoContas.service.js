@@ -88,9 +88,18 @@ async function criarPagamentoAgregado({ cpf, cobrancaIds, liberarAcesso }) {
  * (idempotente) todas as cobrancas cobertas — com registro em
  * pagamentos_cobranca, pro histórico/relatórios ficarem consistentes com um
  * pagamento lançado manualmente — e, só se o pagamento foi criado com
- * liberarAcesso=true, tenta abrir a catraca.
+ * liberarAcesso=true E permitirLiberarAcesso não foi desligado, tenta abrir a
+ * catraca.
+ *
+ * permitirLiberarAcesso=false (2026-08-20): usado pelo job de reconciliação em
+ * segundo plano (src/jobs/reconciliarPagamentosPix.js), que reconsulta
+ * pagamentos "esquecidos" minutos/horas depois — nesse momento a pessoa já não
+ * está mais na catraca esperando, então o job nunca deve mandar sinal de
+ * abertura, só confirmar o lado financeiro (quitar a cobrança). O polling ao
+ * vivo do totem/portal (que chama esta função sem o segundo argumento) continua
+ * podendo abrir a catraca normalmente.
  */
-async function consultarStatusPagamento(pagamentoId) {
+async function consultarStatusPagamento(pagamentoId, { permitirLiberarAcesso = true } = {}) {
   const result = await db.execute({ sql: 'SELECT * FROM pagamentos_totem WHERE id = ?', args: [pagamentoId] });
   let p = result.rows[0];
   if (!p) throw Object.assign(new Error('Pagamento não encontrado.'), { status: 404 });
@@ -139,7 +148,7 @@ async function consultarStatusPagamento(pagamentoId) {
 
   let autorizado = null;
   let motivo = null;
-  if (p.liberar_acesso) {
+  if (p.liberar_acesso && permitirLiberarAcesso) {
     const resultadoLiberacao = await acessoTerminal.tentarLiberar({ aluno, metodo: 'pagamento_contas' });
     autorizado = resultadoLiberacao.autorizado;
     motivo = resultadoLiberacao.motivo;

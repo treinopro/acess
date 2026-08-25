@@ -38,10 +38,20 @@ function quantidadeClientesConectados() {
   return clientes.size;
 }
 
-/** Notifica todo totem conectado agora que uma liberação acabou de acontecer. */
-function emitirLiberado({ metodo } = {}) {
+/**
+ * Notifica todo totem conectado agora que uma liberação acabou de acontecer.
+ * `alunoNome`/`motivo` (2026-08-24): usados só pela liberação manual pela
+ * recepção sobre um acesso antes negado (ver /catraca/liberar-aluno em
+ * terminal.routes.js e o botão "Negado ↻" em Acompanhamento de acessos,
+ * public/app.js) — deixam o totem mostrar por escrito quem foi liberado e o
+ * motivo original da negação (ex.: mensalidade em atraso). NUNCA são lidos em
+ * voz alta (ver terminal.js) — só aparecem escritos na tela.
+ */
+function emitirLiberado({ metodo, alunoNome, motivo } = {}) {
   if (clientes.size === 0) return;
-  const payload = JSON.stringify({ metodo: metodo || null, em: Date.now() });
+  const payload = JSON.stringify({
+    metodo: metodo || null, alunoNome: alunoNome || null, motivo: motivo || null, em: Date.now(),
+  });
   for (const res of clientes) {
     try {
       res.write(`event: liberado\ndata: ${payload}\n\n`);

@@ -897,6 +897,7 @@ async function abrirPainelTreino() {
           ${ex.video_url ? `<button type="button" class="btn-ver-video-ex" data-video="${ex.video_url}" data-target="vid_${ex.id}">▶ Ver execução</button><div id="vid_${ex.id}"></div>` : ''}
         </div>
       `).join('') || '<p style="color:#94a3b8;font-size:13px">Nenhum exercício adicionado ainda.</p>'}
+      ${t.exercicios.length ? `<button type="button" class="btn-concluir-treino" data-tid="${t.id}" style="margin-top:14px;width:100%">Concluir treino</button>` : ''}
     </div>
   `).join('');
 
@@ -919,6 +920,30 @@ async function abrirPainelTreino() {
         btn.textContent = marcarComo ? '✓' : '';
         btn.closest('.exercicio-linha').classList.toggle('concluido', marcarComo);
       } catch (err) { alert(err.message); }
+    });
+  });
+
+  // "Concluir treino" (2026-08-24): fecha a sessão de hoje — o check de cada
+  // exercício já é só visual-do-dia (some sozinho amanhã, ver GET /treino),
+  // mas este botão limpa na hora, sem esperar virar o dia, pra quem treina
+  // mais de uma vez no mesmo dia conseguir marcar de novo. O registro
+  // permanente de que o aluno treinou (pro professor) já foi gravado a cada
+  // exercício marcado — este botão só ADICIONA um evento "treino concluído"
+  // a mais nesse histórico, nunca substitui os anteriores.
+  alvo.querySelectorAll('.btn-concluir-treino').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try {
+        await api(`/api/portal/treino/${btn.dataset.tid}/concluir-treino`, {
+          method: 'POST',
+          body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual }),
+        });
+        alert('Parabéns! Treino concluído. 💪');
+        await abrirPainelTreino();
+      } catch (err) {
+        alert(err.message);
+        btn.disabled = false;
+      }
     });
   });
 }

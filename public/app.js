@@ -4816,6 +4816,7 @@ async function buscarRelatorioFinanceiro() {
     const vencAte = document.getElementById('rel-fin-vencimento-ate').value;
     const alunoId = document.getElementById('rel-fin-aluno').value;
     const status = document.getElementById('rel-fin-status').value;
+    const tipoPagamento = document.getElementById('rel-fin-tipo-pagamento').value;
     const ordenarPor = document.getElementById('rel-fin-ordenar').value;
     const decrescente = document.getElementById('rel-fin-decrescente').checked;
     const mostrarInativos = document.getElementById('rel-fin-mostrar-inativos').checked;
@@ -4823,6 +4824,7 @@ async function buscarRelatorioFinanceiro() {
     if (vencAte) params.set('vencimento_ate', vencAte);
     if (alunoId) params.set('aluno_id', alunoId);
     if (status) params.set('status', status);
+    if (tipoPagamento) params.set('tipo_pagamento', tipoPagamento);
     if (ordenarPor) params.set('ordenar_por', ordenarPor);
     if (decrescente) params.set('decrescente', 'true');
     if (mostrarInativos) params.set('incluir_inativos', 'true');
@@ -4833,6 +4835,7 @@ async function buscarRelatorioFinanceiro() {
     if (vencDe || vencAte) descricaoFiltros.push(`Vencimento de ${vencDe ? formatarDataOuDataHora(vencDe) : '—'} até ${vencAte ? formatarDataOuDataHora(vencAte) : '—'}`);
     if (alunoId) descricaoFiltros.push(`Aluno: ${document.getElementById('rel-fin-aluno').selectedOptions[0]?.textContent || ''}`);
     if (status) descricaoFiltros.push(`Status: ${status}`);
+    if (tipoPagamento) descricaoFiltros.push(`Tipo de pagamento: ${document.getElementById('rel-fin-tipo-pagamento').selectedOptions[0]?.textContent || ''}`);
     ultimoRelatorioFinanceiroFiltros = descricaoFiltros.join(' | ') || 'Todos os lançamentos';
 
     const tbody = document.getElementById('rel-fin-lista');
@@ -4967,7 +4970,12 @@ document.getElementById('btn-rel-matriculas-imprimir').addEventListener('click',
 // só que devolvendo a chave em vez do HTML, pra poder filtrar e contar por tipo.
 function tipoDeAcesso(a) {
   if (a.resultado === 'liberado') return 'liberado';
-  return a.mensagem && /venc/i.test(a.mensagem) ? 'vencido' : 'negado';
+  // 2026-08-24 (bug real: filtro "Só vencidos" do relatório Acesso Diário sempre
+  // vazio): o motivo de verdade gravado por mensalidade em atraso é literalmente
+  // "Existem mensalidades em atraso." (ver acessoTerminal.service.js) — nunca
+  // contém a palavra "venc", então o teste antigo (/venc/i) nunca batia com o caso
+  // real, só com um texto que não existe em nenhum caminho do código.
+  return a.mensagem && /atraso/i.test(a.mensagem) ? 'vencido' : 'negado';
 }
 
 const LABEL_TIPO_ACESSO = { liberado: 'liberado(s)', negado: 'negado(s)', vencido: 'vencido(s)' };
@@ -5277,7 +5285,38 @@ let acessosRecentesTimer = null;
 
 function formatarTipoAcesso(a) {
   if (a.resultado === 'liberado') return '<span class="badge ativo">Liberado</span>';
-  return `<span class="badge inadimplente">${a.mensagem && /venc/i.test(a.mensagem) ? 'Vencido' : 'Negado'}</span>`;
+  // Mesmo motivo/correção de tipoDeAcesso() acima: o texto real de negação por
+  // mensalidade em atraso é "Existem mensalidades em atraso.", não algo com "venc".
+  const rotulo = a.mensagem && /atraso/i.test(a.mensagem) ? 'Vencido' : 'Negado';
+  // Só oferece o botão de liberar quando dá pra saber QUEM foi negado (aluno_id
+  // presente) — sem isso não tem quem indicar pra /catraca/liberar-aluno.
+  if (a.aluno_id) {
+    return `<span class="badge inadimplente negado-liberar" style="cursor:pointer" title="Clique para liberar o acesso manualmente pela recepção">${rotulo} ↻</span>`;
+  }
+  return `<span class="badge inadimplente">${rotulo}</span>`;
+}
+
+// Libera manualmente, pela recepção, um acesso que a catraca/totem negou — clique no
+// badge "Negado"/"Vencido" no painel "Acompanhamento de acessos" (2026-08-24, pedido
+// do dono do sistema). Reaproveita a mesma rota admin já usada pelo perfil do aluno
+// (/catraca/liberar-aluno), só que passando o motivo original da negação (`a.mensagem`)
+// no campo `motivo` — ele entra só no registro/log do novo acesso liberado, nunca no
+// texto mostrado na tela física da catraca (ver comentário em terminal.routes.js).
+async function liberarAcessoNegadoPelaRecepcao(a) {
+  const motivoOriginal = a.mensagem || 'não informado';
+  const motivo = window.prompt(
+    `Liberar acesso de ${a.aluno_nome} pela recepção?\n\nMotivo original da negação: ${motivoOriginal}\n\nConfirme ou ajuste o motivo que ficará registrado:`,
+    motivoOriginal,
+  );
+  if (motivo === null) return; // cancelou o prompt
+  try {
+    await api('/api/terminal/catraca/liberar-aluno', {
+      method: 'POST',
+      body: JSON.stringify({ aluno_id: a.aluno_id, motivo }),
+    });
+    mostrarToast(`Acesso de ${a.aluno_nome} liberado pela recepção.`);
+    carregarAcessosRecentes();
+  } catch (err) { mostrarToast(err.message, true); }
 }
 
 async function carregarAcessosRecentes() {
@@ -5299,6 +5338,7 @@ async function carregarAcessosRecentes() {
         </tr>
       `);
       tr.querySelector('.nome-clicavel')?.addEventListener('click', () => abrirPerfilAluno(a.aluno_id));
+      tr.querySelector('.negado-liberar')?.addEventListener('click', () => liberarAcessoNegadoPelaRecepcao(a));
       tbody.appendChild(tr);
     });
   } catch (err) {

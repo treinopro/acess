@@ -429,7 +429,31 @@ CREATE TABLE IF NOT EXISTS treino_exercicios (
   imagem_url TEXT,
   metodo TEXT, -- ex: Bi-set, Tri-set, Superset, Pirâmide, Drop-set, Rest-pause, Circuito
   dica TEXT, -- dica do instrutor sobre a execução (distinta da "observacao")
-  concluido INTEGER NOT NULL DEFAULT 0 -- aluno marca como feito no portal
+  -- concluido/concluido_em (2026-08-24): o aluno marca/desmarca no portal, mas
+  -- essa marcação é só um indicador VISUAL do dia (ver GET /api/portal/treino
+  -- em portal.routes.js, que só devolve concluido=1 pro front se
+  -- date(concluido_em) = date('now')) — sem isso, o check ficava "preso"
+  -- marcado pra sempre, mesmo dias depois. O registro permanente de que o
+  -- aluno treinou (pro professor ver) mora em `treino_execucoes` abaixo, que
+  -- nunca é apagado por esse reset visual.
+  concluido INTEGER NOT NULL DEFAULT 0,
+  concluido_em TEXT
+);
+
+-- Log permanente (nunca apagado pelo reset visual do check de "concluído" nem
+-- pelo botão "Concluir treino") de que o aluno interagiu com o treino — um
+-- exercício marcado como feito, ou o treino inteiro finalizado. É o que
+-- garante que o professor continua enxergando que o aluno treinou mesmo
+-- depois do check da tela ter sumido no dia seguinte (ou sido limpo pelo
+-- botão "Concluir treino"). Ver POST /treino/exercicio/:id/concluir e POST
+-- /treino/:id/concluir-treino em portal.routes.js.
+CREATE TABLE IF NOT EXISTS treino_execucoes (
+  id TEXT PRIMARY KEY,
+  aluno_id TEXT NOT NULL REFERENCES alunos(id) ON DELETE CASCADE,
+  treino_id TEXT NOT NULL REFERENCES treinos(id) ON DELETE CASCADE,
+  treino_exercicio_id TEXT REFERENCES treino_exercicios(id) ON DELETE CASCADE,
+  tipo TEXT NOT NULL DEFAULT 'exercicio', -- 'exercicio' (marcou 1 exercício) | 'treino_concluido' (clicou "Concluir treino")
+  criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- Biblioteca de exercícios (2026-08, port do TreinoPro) — catálogo único e
@@ -637,6 +661,7 @@ CREATE INDEX IF NOT EXISTS idx_treinos_aluno ON treinos(aluno_id);
 CREATE INDEX IF NOT EXISTS idx_treino_exercicios_treino ON treino_exercicios(treino_id);
 CREATE INDEX IF NOT EXISTS idx_exercicio_biblioteca_grupo ON exercicio_biblioteca(grupo_muscular);
 CREATE INDEX IF NOT EXISTS idx_treino_template_exercicios_template ON treino_template_exercicios(template_id);
+CREATE INDEX IF NOT EXISTS idx_treino_execucoes_aluno ON treino_execucoes(aluno_id, criado_em);
 -- Trava em nível de banco contra corrida entre execuções sobrepostas de
 -- gerarCobrancasRecorrentes (ex.: dois reinícios do servidor muito próximos)
 -- -- a checagem em código já evita isso no caminho normal, esse índice é o

@@ -101,7 +101,14 @@ carregarConfigSomTotem();
 // (servidor -> aqui), com reconexão automática nativa do EventSource — não
 // precisa de nenhum código extra de retry aqui.
 // ---------------------------------------------------------------------------
-function mostrarConfirmacaoLiberacaoExterna() {
+// alunoNome/motivo (2026-08-24): só vêm preenchidos quando a liberação
+// externa foi manual pela recepção sobre um acesso antes negado (botão
+// "Negado ↻" em Acompanhamento de acessos, ver totemEventos.service.js) —
+// mostra os dois por escrito na tela, deixando claro pra quem entra (e pra
+// quem revisar depois) por que o acesso foi liberado apesar do motivo
+// original. `metodo === 'admin'` é o mesmo usado nesse fluxo (ver
+// /catraca/liberar-aluno em terminal.routes.js).
+function mostrarConfirmacaoLiberacaoExterna({ metodo, alunoNome, motivo } = {}) {
   const overlay = document.getElementById('overlay-resultado');
   if (!overlay) return;
   // Se o próprio totem já está mostrando o resultado de uma identificação
@@ -115,12 +122,23 @@ function mostrarConfirmacaoLiberacaoExterna() {
   document.body.classList.add('tela-flash-liberado');
   document.getElementById('overlay-icone').textContent = '✅';
   document.getElementById('overlay-titulo').textContent = 'Acesso liberado!';
-  document.getElementById('overlay-msg').textContent = 'Pode entrar.';
+  document.getElementById('overlay-msg').textContent = motivo
+    ? `${alunoNome ? `${alunoNome} — ` : ''}Liberado pela recepção. Motivo: ${motivo}`
+    : 'Pode entrar.';
   const btnPagarContas = document.getElementById('btn-overlay-pagar-contas');
   if (btnPagarContas) btnPagarContas.classList.add('oculto');
   const vencEl = document.getElementById('overlay-vencimento');
   if (vencEl) vencEl.classList.add('oculto');
-  const promessaSom = tocarAvisoSonoro(configSomTotem.acessoLiberado);
+
+  // 2026-08-24 (pedido explícito): quando a liberação foi manual pela
+  // recepção (metodo 'admin'), a voz fala só a frase fixa "Liberado pela
+  // recepção" — NUNCA o motivo em voz alta (pode ser longo, ex.: "existem
+  // mensalidades em atraso"; o motivo já fica escrito bem visível acima).
+  // Qualquer outra liberação externa (biometria da própria catraca, pânico,
+  // liberar rápido sem motivo) continua com o aviso sonoro padrão configurado.
+  const promessaSom = metodo === 'admin'
+    ? falarTexto('Liberado pela recepção')
+    : tocarAvisoSonoro(configSomTotem.acessoLiberado);
 
   aguardarDuracaoResultado(promessaSom).then(() => {
     overlay.classList.remove('visivel');
@@ -132,7 +150,11 @@ function iniciarEscutaLiberacoesExternas() {
   if (!('EventSource' in window)) return; // navegador muito antigo — segue sem esse aviso extra, sem quebrar o resto
   try {
     const fonte = new EventSource(`/api/terminal/eventos/stream?token=${encodeURIComponent(TERMINAL_TOKEN)}`);
-    fonte.addEventListener('liberado', () => mostrarConfirmacaoLiberacaoExterna());
+    fonte.addEventListener('liberado', (evento) => {
+      let dados = {};
+      try { dados = JSON.parse(evento.data); } catch { /* payload malformado — segue com objeto vazio, cai no aviso genérico */ }
+      mostrarConfirmacaoLiberacaoExterna(dados);
+    });
     // Sem handler de erro customizado de propósito: o EventSource já tenta
     // reconectar sozinho (comportamento nativo do navegador) — um totem que
     // fica minutos sem rede volta a receber eventos assim que a rede volta,

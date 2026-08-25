@@ -65,6 +65,10 @@ const ALTERACOES_INCREMENTAIS = [
   // comentário detalhado junto da definição de "avaliacao_pipeline" em schema.sql.
   "ALTER TABLE avaliacao_pipeline ADD COLUMN etapa_teste_forca_em TEXT",
   "ALTER TABLE avaliacao_pipeline ADD COLUMN aviso_renovacao_enviado INTEGER NOT NULL DEFAULT 0",
+  // Reset visual diário do check "concluído" no portal + botão "Concluir
+  // treino" (2026-08-24) — ver comentário detalhado junto da definição de
+  // "treino_exercicios"/"treino_execucoes" em schema.sql.
+  "ALTER TABLE treino_exercicios ADD COLUMN concluido_em TEXT",
 ];
 
 // Divide um arquivo .sql em statements individuais (o driver libsql nao aceita

@@ -106,7 +106,7 @@ router.post('/cobrancas', autenticar, async (req, res, next) => {
   }
 });
 
-// GET /api/pagamentos/cobrancas?aluno_id=&status=&busca=&vencimento_de=&vencimento_ate=&pagamento_de=&pagamento_ate=&ordenar_por=&decrescente=&incluir_inativos=
+// GET /api/pagamentos/cobrancas?aluno_id=&status=&busca=&vencimento_de=&vencimento_ate=&pagamento_de=&pagamento_ate=&tipo_pagamento=&ordenar_por=&decrescente=&incluir_inativos=
 // busca/lista contas a receber (busca = filtro por nome do aluno). Os parâmetros de
 // vencimento/ordenação são usados pelo relatório "Contas a Receber" (Relatórios > Financeiro),
 // mas funcionam em qualquer chamada — inclusive a tela normal de Contas a Receber, que
@@ -124,6 +124,7 @@ router.get('/cobrancas', autenticar, async (req, res, next) => {
       aluno_id: alunoId, status, busca,
       vencimento_de: vencimentoDe, vencimento_ate: vencimentoAte,
       pagamento_de: pagamentoDe, pagamento_ate: pagamentoAte,
+      tipo_pagamento: tipoPagamento,
       ordenar_por: ordenarPor, decrescente, incluir_inativos: incluirInativos,
     } = req.query;
     const condicoes = [];
@@ -137,6 +138,26 @@ router.get('/cobrancas', autenticar, async (req, res, next) => {
     const dataPagaEfetiva = `date(COALESCE((SELECT MAX(p.data) FROM pagamentos_cobranca p WHERE p.cobranca_id = c.id), c.pago_em))`;
     if (pagamentoDe) { condicoes.push(`${dataPagaEfetiva} >= ?`); args.push(pagamentoDe); }
     if (pagamentoAte) { condicoes.push(`${dataPagaEfetiva} <= ?`); args.push(pagamentoAte); }
+    // tipo_pagamento (2026-08-24, filtro do Relatório Financeiro): a forma de
+    // pagamento de uma cobrança mora em DOIS lugares dependendo de como foi
+    // paga — cobrancas.metodo_pagamento (gravado direto pelo webhook do
+    // Mercado Pago, ou por uma edição manual via PUT) OU pagamentos_cobranca.tipo
+    // (gravado pelo fluxo normal "lançar pagamento", ver POST .../pagamentos
+    // acima) — por isso checa os dois em vez de só a coluna de cobrancas.
+    // "cartao" agrupa cartao_credito + cartao_debito (o filtro no painel só
+    // oferece Pix/Cartão/Dinheiro, sem distinguir crédito de débito).
+    if (tipoPagamento === 'cartao') {
+      condicoes.push(`(
+        c.metodo_pagamento IN ('credit_card', 'debit_card')
+        OR EXISTS (SELECT 1 FROM pagamentos_cobranca p WHERE p.cobranca_id = c.id AND p.tipo IN ('cartao_credito', 'cartao_debito'))
+      )`);
+    } else if (tipoPagamento === 'pix' || tipoPagamento === 'dinheiro') {
+      condicoes.push(`(
+        c.metodo_pagamento = ?
+        OR EXISTS (SELECT 1 FROM pagamentos_cobranca p WHERE p.cobranca_id = c.id AND p.tipo = ?)
+      )`);
+      args.push(tipoPagamento, tipoPagamento);
+    }
     const where = condicoes.length ? `WHERE ${condicoes.join(' AND ')}` : '';
 
     const colunasOrdenacao = { vencimento: 'c.vencimento', valor: 'c.valor_centavos', aluno: 'a.nome', status: 'c.status' };

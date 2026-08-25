@@ -3,6 +3,7 @@ const { v4: uuid } = require('uuid');
 const { z } = require('zod');
 const db = require('../db/client');
 const { autenticar } = require('../middleware/auth');
+const notificacaoTreino = require('../services/notificacaoTreino.service');
 
 const router = express.Router();
 router.use(autenticar);
@@ -108,6 +109,26 @@ router.post('/', async (req, res, next) => {
       sql: `INSERT INTO treinos (id, aluno_id, nome, dias_semana, ordem, visivel_portal, data_fim) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       args: [id, dados.aluno_id, dados.nome, JSON.stringify(dados.dias_semana), ordem, visivelPortal, dados.data_fim || null],
     });
+
+    // Aviso automático (push + e-mail) pro aluno — best-effort, disparado sem
+    // `await` de propósito (fire-and-forget) pra não atrasar a resposta da
+    // criação do treino em si por causa de push/e-mail lento. Só dispara
+    // quando o treino já nasce visível no portal — um treino criado
+    // visivel_portal=false (ainda em montagem) não deveria avisar o aluno de
+    // nada até o professor decidir mostrar de verdade.
+    if (visivelPortal) {
+      db.execute({ sql: 'SELECT nome, email FROM alunos WHERE id = ?', args: [dados.aluno_id] })
+        .then((alunoResult) => {
+          const aluno = alunoResult.rows[0];
+          if (!aluno) return;
+          notificacaoTreino.notificarNovoTreinoSeguro(
+            { id: dados.aluno_id, nome: aluno.nome, email: aluno.email },
+            { treinoNome: dados.nome },
+          );
+        })
+        .catch(() => { /* best-effort — não deve afetar a resposta da criação do treino */ });
+    }
+
     res.status(201).json({
       id, ...dados, ordem, exercicios: [], visivel_portal: Boolean(visivelPortal), data_fim: dados.data_fim || null,
     });

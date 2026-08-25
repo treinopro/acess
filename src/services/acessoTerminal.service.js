@@ -744,7 +744,9 @@ async function notificarAgenteAtualizacaoAluno(alunoId) {
  * assim que o Turso voltar a responder. Por isso esta função NUNCA lança
  * nesse modo — quem chama não precisa (nem deve) tratar erro daqui.
  */
-async function registrarAcesso({ alunoId, metodo, resultado, mensagem }) {
+async function registrarAcesso({
+  alunoId, metodo, resultado, mensagem, alunoNome, motivoLiberacao,
+}) {
   // 2026-07-22: notifica qualquer totem conectado agora (tela verde + som de
   // "acesso liberado" — ver totemEventos.service.js) sempre que uma
   // liberação de verdade acontece, não importa qual ferramenta a disparou
@@ -753,8 +755,12 @@ async function registrarAcesso({ alunoId, metodo, resultado, mensagem }) {
   // Best-effort e síncrono (não é `await`ado de propósito): nunca deve
   // atrasar nem quebrar o registro do acesso em si, que é o que realmente
   // importa se algo der errado.
+  //
+  // alunoNome/motivoLiberacao (2026-08-24): opcionais, só preenchidos por
+  // quem já os tem em mãos (ex.: /catraca/liberar-aluno) — usados pelo totem
+  // pra mostrar por escrito quem foi liberado e o motivo original da negação.
   if (resultado === 'liberado') {
-    try { totemEventos.emitirLiberado({ metodo }); } catch { /* nunca deve derrubar o registro do acesso */ }
+    try { totemEventos.emitirLiberado({ metodo, alunoNome, motivo: motivoLiberacao }); } catch { /* nunca deve derrubar o registro do acesso */ }
   }
 
   if (!dbResiliente.MODO_TOTEM_OFFLINE) {

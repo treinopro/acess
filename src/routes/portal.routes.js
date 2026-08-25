@@ -261,13 +261,21 @@ router.get('/treino', limitadorSenhaPortal, async (req, res, next) => {
       try { dias = t.dias_semana ? JSON.parse(t.dias_semana) : []; } catch { dias = []; }
       // Inclui vídeo/imagem/método/dica/concluído (port do TreinoPro, 2026-08)
       // pra o portal poder mostrar o vídeo de execução e o check de concluído.
+      // 2026-08-24: "concluido" devolvido aqui é só o estado VISUAL do dia —
+      // só vem 1 se foi marcado HOJE (date(concluido_em) = date('now')); um
+      // exercício marcado ontem (ou antes) volta a aparecer desmarcado pro
+      // aluno, mesmo com a linha ainda tendo concluido=1 no banco (o registro
+      // permanente pro professor fica em treino_execucoes, nunca é afetado
+      // por isso). Ver também POST /treino/:id/concluir-treino, que reseta
+      // esse estado na hora (sem esperar virar o dia).
       const exercicios = await db.execute({
         sql: `SELECT id, exercicio, series, carga, intervalo, observacao, metodo, dica,
-                     video_url, imagem_url, concluido
+                     video_url, imagem_url,
+                     CASE WHEN concluido = 1 AND date(concluido_em) = date('now') THEN 1 ELSE 0 END AS concluido
               FROM treino_exercicios WHERE treino_id = ? ORDER BY ordem, criado_em`,
         args: [t.id],
       });
-      resultado.push({ nome: t.nome, dias_semana: dias, exercicios: exercicios.rows });
+      resultado.push({ id: t.id, nome: t.nome, dias_semana: dias, exercicios: exercicios.rows });
     }
     res.json(resultado);
   } catch (err) {
@@ -298,18 +306,77 @@ router.post('/treino/exercicio/:id/concluir', limitadorSenhaPortal, async (req, 
     }
 
     const dono = await db.execute({
-      sql: `SELECT te.id FROM treino_exercicios te
+      sql: `SELECT te.id, t.id as treino_id FROM treino_exercicios te
             JOIN treinos t ON t.id = te.treino_id
             WHERE te.id = ? AND t.aluno_id = ?`,
       args: [req.params.id, aluno.id],
     });
     if (!dono.rows[0]) return res.status(404).json({ erro: 'Exercício não encontrado.' });
 
+    // concluido_em (2026-08-24): grava QUANDO foi marcado — é o que permite o
+    // portal mostrar o check só no dia em que foi feito (ver GET /treino
+    // acima), sem precisar de nenhum job agendado de reset. Desmarcar limpa
+    // os dois campos e não grava nada em treino_execucoes (só marcar =
+    // "treinou de verdade" conta pro log permanente do professor). Usa
+    // datetime('now') do próprio SQLite (em vez de gerar a string em JS) pelo
+    // mesmo motivo documentado em todo o resto do projeto: uma string ISO
+    // gerada aqui ("...T...Z") ordena/compara errado contra as gravadas pelo
+    // banco — ver src/utils/data.js e o comentário de corrigirFormatoDatasAcessosAntigos em migrate.js.
+    const concluidoInt = dados.concluido ? 1 : 0;
     await db.execute({
-      sql: 'UPDATE treino_exercicios SET concluido = ? WHERE id = ?',
-      args: [dados.concluido ? 1 : 0, req.params.id],
+      sql: `UPDATE treino_exercicios SET concluido = ?, concluido_em = CASE WHEN ? = 1 THEN datetime('now') ELSE NULL END WHERE id = ?`,
+      args: [concluidoInt, concluidoInt, req.params.id],
     });
+
+    if (dados.concluido) {
+      await db.execute({
+        sql: `INSERT INTO treino_execucoes (id, aluno_id, treino_id, treino_exercicio_id, tipo)
+              VALUES (?, ?, ?, ?, 'exercicio')`,
+        args: [uuid(), aluno.id, dono.rows[0].treino_id, req.params.id],
+      });
+    }
+
     res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/portal/treino/:id/concluir-treino { cpf, senha } — botão "Concluir
+// treino" do portal: registra no log permanente (treino_execucoes, tipo
+// 'treino_concluido') que o aluno terminou a sessão de hoje, e IMEDIATAMENTE
+// limpa o check de todos os exercícios desse treino (concluido/concluido_em),
+// sem esperar virar o dia — pra ele poder marcar de novo na próxima vez que
+// treinar, mesmo se for ainda hoje (ex.: aluno que treina 2x no mesmo dia).
+router.post('/treino/:id/concluir-treino', limitadorSenhaPortal, async (req, res, next) => {
+  try {
+    const dados = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(req.body);
+    const autenticado = await autenticarAlunoPortal(dados.cpf, dados.senha);
+    if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
+    const aluno = autenticado.aluno;
+
+    const autorizacaoTreino = await acessoTerminal.verificarAutorizacaoAluno(aluno);
+    if (!autorizacaoTreino.autorizado) {
+      return res.status(403).json({ erro: autorizacaoTreino.motivo || 'Acesso ao treino bloqueado.', bloqueado: true });
+    }
+
+    const dono = await db.execute({
+      sql: 'SELECT id FROM treinos WHERE id = ? AND aluno_id = ?',
+      args: [req.params.id, aluno.id],
+    });
+    if (!dono.rows[0]) return res.status(404).json({ erro: 'Treino não encontrado.' });
+
+    await db.execute({
+      sql: `INSERT INTO treino_execucoes (id, aluno_id, treino_id, treino_exercicio_id, tipo)
+            VALUES (?, ?, ?, NULL, 'treino_concluido')`,
+      args: [uuid(), aluno.id, req.params.id],
+    });
+    await db.execute({
+      sql: 'UPDATE treino_exercicios SET concluido = 0, concluido_em = NULL WHERE treino_id = ?',
+      args: [req.params.id],
+    });
+
+    res.json({ ok: true, aluno_nome: aluno.nome });
   } catch (err) {
     next(err);
   }

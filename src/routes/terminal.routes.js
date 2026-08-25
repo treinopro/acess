@@ -853,10 +853,20 @@ admin.get('/catraca/panico/status', (req, res) => {
   res.json({ ativo: Boolean(panicoInterval), config: panicoConfig });
 });
 
-// POST /api/terminal/catraca/liberar-aluno { aluno_id, ip?, port?, mensagem? }
+// POST /api/terminal/catraca/liberar-aluno { aluno_id, ip?, port?, mensagem?, motivo? }
 // Libera a catraca manualmente indicando o aluno — diferente de /catraca/liberar
 // (teste de campo anônimo), este fica registrado em acessos_catraca com o
 // aluno_id, então aparece no histórico e no painel de "Acessos recentes".
+//
+// `motivo` (2026-08-24): usado pelo botão "liberar" que aparece em cima de um
+// acesso NEGADO no painel "Acompanhamento de acessos" (ver public/app.js) —
+// carrega o motivo original da negação (ex.: "Existem mensalidades em
+// atraso."), pra ficar registrado no log que a recepção liberou por fora,
+// apesar do motivo. Só entra no log (registrarAcesso); NUNCA é usado como
+// `mensagem` mostrada no display físico da catraca — aquele campo tem um
+// limite curto de caracteres que trava o comando sem erro se estourado (ver
+// mensagemBoasVindasCatraca em acessoTerminal.service.js), e o motivo aqui
+// pode ser bem mais longo que isso.
 admin.post('/catraca/liberar-aluno', async (req, res, next) => {
   try {
     const schema = z.object({
@@ -864,6 +874,7 @@ admin.post('/catraca/liberar-aluno', async (req, res, next) => {
       ip: z.string().optional(),
       port: z.number().optional(),
       mensagem: z.string().optional(),
+      motivo: z.string().optional(),
     });
     const body = schema.parse(req.body || {});
     const { ip, port } = configCatraca(body);
@@ -873,9 +884,14 @@ admin.post('/catraca/liberar-aluno', async (req, res, next) => {
     if (!aluno) return res.status(404).json({ erro: 'Aluno não encontrado.' });
 
     await catracaGateway.liberarAcesso({ ip, port, mensagem: body.mensagem || acessoTerminal.mensagemBoasVindasCatraca(aluno.nome) });
+    const mensagemLog = body.motivo
+      ? `Liberação manual pela recepção (${req.usuario?.email || 'admin'}) — motivo: ${body.motivo}`
+      : `Liberação manual pelo painel (${req.usuario?.email || 'admin'})`;
     await acessoTerminal.registrarAcesso({
       alunoId: aluno.id, metodo: 'admin', resultado: 'liberado',
-      mensagem: `Liberação manual pelo painel (${req.usuario?.email || 'admin'})`,
+      mensagem: mensagemLog,
+      alunoNome: aluno.nome,
+      motivoLiberacao: body.motivo || null,
     });
 
     res.json({ ok: true });

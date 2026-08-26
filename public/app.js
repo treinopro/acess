@@ -1167,7 +1167,12 @@ async function carregarAlunos() {
     if (busca) params.set('busca', busca);
     if (mostrarInativos) params.set('incluir_inativos', 'true');
     const alunosBrutos = await api(`/api/alunos${params.toString() ? '?' + params.toString() : ''}`);
-    const alunos = ordenarAlunos(alunosBrutos);
+    // "Só sem rosto cadastrado" (2026-08-25): filtro só no front — GET /api/alunos já
+    // devolve face_descriptor (SELECT * na rota), então não precisa de outro round-trip
+    // nem de parâmetro novo na API pra isso.
+    const somenteSemRosto = document.getElementById('filtro-sem-rosto-alunos').checked;
+    const alunosFiltrados = somenteSemRosto ? alunosBrutos.filter((a) => !a.face_descriptor) : alunosBrutos;
+    const alunos = ordenarAlunos(alunosFiltrados);
     atualizarSetasOrdenacaoAlunos();
     const tbody = document.getElementById('lista-alunos');
     const resumoEl = document.getElementById('alunos-total-resumo');
@@ -1229,6 +1234,7 @@ document.getElementById('busca-aluno').addEventListener('input', () => {
   clearTimeout(buscaAlunoTimeout);
   buscaAlunoTimeout = setTimeout(carregarAlunos, 300);
 });
+document.getElementById('filtro-sem-rosto-alunos').addEventListener('change', carregarAlunos);
 document.getElementById('mostrar-inativos-alunos').addEventListener('change', () => {
   carregarAlunos();
 });

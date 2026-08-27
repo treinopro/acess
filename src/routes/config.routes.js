@@ -198,9 +198,25 @@ router.put('/', autenticar, apenasAdmin, async (req, res, next) => {
 // (src/jobs/backup.js, salva local no servidor) quanto por este endpoint
 // (baixado direto pelo admin — mais confiável, porque não depende do disco
 // do servidor continuar existindo entre deploys).
+// 2026-08-27: lista estava desatualizada desde antes do módulo de treinos
+// existir — 18 das 31 tabelas do schema.sql nunca entravam em NENHUM backup
+// (nem manual nem agendado), incluindo treinos/treino_exercicios/
+// treino_execucoes, biblioteca de exercícios, produtos/serviços e vendas,
+// concessões de acesso, avaliação física em pipeline e mensagens. Achado ao
+// investigar uma restauração de emergência (bloqueio de leitura do Turso) e
+// perceber que o backup de e-mail mais recente não tinha essas tabelas.
+// Preferi listar tudo explicitamente (em vez de "SELECT name FROM
+// sqlite_master" dinâmico) pra manter o comportamento previsível e o mesmo
+// padrão do resto do arquivo — só not exportar de propósito: `usuarios`
+// (tratada à parte abaixo, sem o hash da senha) e `pagamentos_totem` (dados
+// de pagamento em trânsito do gateway, não é preciso reconstruir histórico).
 const TABELAS_BACKUP = [
-  'alunos', 'anamneses', 'avaliacoes_fisicas', 'planos', 'matriculas', 'turmas',
-  'agendamentos', 'checkins', 'cobrancas', 'pagamentos_cobranca', 'contas_pagar', 'acessos_catraca', 'configuracoes',
+  'alunos', 'anamneses', 'anamnese_perguntas', 'anamnese_respostas', 'avaliacoes_fisicas', 'avaliacao_pipeline',
+  'planos', 'matriculas', 'turmas', 'agendamentos', 'checkins', 'cobrancas', 'pagamentos_cobranca', 'contas_pagar',
+  'acessos_catraca', 'configuracoes', 'concessoes_acesso', 'banners_portal', 'produtos_servicos',
+  'vendas_produtos_servicos', 'exercicio_biblioteca', 'treinos', 'treino_exercicios', 'treino_execucoes',
+  'treino_templates', 'treino_template_exercicios', 'mensagens_templates', 'mensagens_agendadas',
+  'mensagens_enviadas', 'push_subscriptions',
 ];
 
 // Tamanho do lote de leitura por tabela — evita carregar uma tabela inteira

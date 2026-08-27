@@ -295,6 +295,61 @@ async function atualizarVideosBibliotecaExercicios() {
   return atualizados;
 }
 
+// 2026-08-27: achado ao investigar "os vídeos novos não aparecem pro aluno"
+// — atualizarVideosBibliotecaExercicios() acima só corrige a BIBLIOTECA
+// (exercicio_biblioteca), que é só o catálogo de onde o professor escolhe.
+// Quando um exercício é adicionado a uma ficha de treino, o video_url é
+// COPIADO pra treino_exercicios naquele momento (ver herdarMidiaDaBiblioteca
+// em treinos.routes.js) — não fica referenciado ao vivo. Então toda ficha
+// montada ANTES da troca de vídeos continuava com a cópia antiga do Leandro
+// Twin, com o mesmo bug de origem (vários exercícios diferentes
+// compartilhando o mesmo vídeo de compilação, ex.: 4 variações de
+// agachamento todas com o vídeo zgk71dUUt0Y).
+//
+// Corrige só as linhas que ainda têm um vídeo antigo CONHECIDO (a lista
+// abaixo é exatamente o conjunto de URLs do Leandro Twin substituídas em
+// 2026-08-25) E que têm biblioteca_id preenchido (pra saber com certeza qual
+// é o vídeo novo correto, via JOIN) — nunca toca num video_url que um
+// professor tenha trocado manualmente depois (esse já não está mais nessa
+// lista de "antigos conhecidos", então passa batido).
+const VIDEOS_LEANDRO_TWIN_ANTIGOS = new Set([
+  'https://youtu.be/EZMYCLKuGow', 'https://youtu.be/WP1VLAt8hbM', 'https://youtu.be/uDMmccuPVPQ',
+  'https://youtu.be/jqTlJt3JXzQ', 'https://youtu.be/dHgoYiCraCw', 'https://youtu.be/FzCnfD0gOXo',
+  'https://youtu.be/J2g6qPBJfqo', 'https://youtu.be/uy9Xk3SVrms', 'https://youtu.be/-KaMXMMIVrU',
+  'https://youtu.be/pJM_rHhluK8', 'https://youtu.be/TfxJMertfsw', 'https://youtu.be/m4h4jT9patY',
+  'https://youtu.be/HpWWreyaBN0', 'https://youtu.be/thg6cGXSlvY', 'https://youtu.be/v6-QIOY0nW0',
+  'https://youtu.be/50AkPBZwACQ', 'https://youtu.be/QyvIEdEHzHc', 'https://youtu.be/EuQAfhXBEvs',
+  'https://youtu.be/IwWvZ0rlNXs', 'https://youtu.be/NxSuojHZa8k', 'https://youtu.be/5HDkxzxe400',
+  'https://youtu.be/sKPJdvVvHuI', 'https://youtu.be/_ZQhDiONpZA', 'https://youtu.be/AevNFIX7lV4',
+  'https://youtu.be/vN9_Bw_yZGA', 'https://youtu.be/RhGjwIUe16E', 'https://youtu.be/tm0IywBhIYM',
+  'https://youtu.be/Q8TqfD8E7BU', 'https://youtu.be/S1HAcTVQVYE', 'https://youtu.be/0qkQy8V2FC0',
+  'https://youtu.be/zpTK6eihdSA', 'https://youtu.be/EEpvOQAAtRo', 'https://youtu.be/dTqDKC0D6P4',
+  'https://youtu.be/zznCYBVZOVA', 'https://youtu.be/TCVj8cliLNo', 'https://youtu.be/YJ4kGE3eemY',
+  'https://youtu.be/PyKv23F-fVM', 'https://youtu.be/LJz40nTE_sI', 'https://youtu.be/ZiemT4r4DcU',
+  'https://youtu.be/nTTTjbA0TSU', 'https://youtu.be/3PDPiCoWF-Y', 'https://youtu.be/Kx8rg0MJX_c',
+  'https://youtu.be/jbSr9CzJPmA', 'https://youtu.be/XVlGHmeISEQ', 'https://youtu.be/zgk71dUUt0Y',
+  'https://youtu.be/nY8UsiAqwds', 'https://youtu.be/el3oHblB5DM', 'https://youtu.be/Zss6E3VU6X0',
+  'https://youtu.be/u1E3_u2gJYE', 'https://youtu.be/Umzor-_g-tQ', 'https://youtu.be/IGf9fR4Y7Iw',
+  'https://youtu.be/syfDrU220FU', 'https://youtu.be/sQ5RjbpPirY', 'https://youtu.be/XBJtM2phDDM',
+  'https://youtu.be/2-ULaRrQa7c', 'https://youtu.be/KomsEmm5oxA', 'https://youtu.be/Wf602gn_9zU',
+  'https://youtu.be/ptK0azwOXwM', 'https://youtu.be/JdHbXlggr6Q', 'https://youtu.be/O6Cmxez6D0k',
+  'https://youtu.be/e4RuZ1NVYqA', 'https://youtu.be/JhodVO0l1vw', 'https://youtu.be/e2gmqTG1OgQ',
+  'https://youtu.be/824pMjvGXgc', 'https://youtu.be/jMWs_p-W9gY', 'https://youtu.be/wCXvfH_-BLg',
+  'https://youtu.be/7YxVRiATugo', 'https://youtu.be/qNRqGqESAWU', 'https://youtu.be/Smr8ipkN5A0',
+  'https://youtu.be/ixJcUH8AlL8', 'https://youtu.be/z0rx9swRDR0', 'https://youtu.be/qvdiga5sQvQ',
+]);
+
+async function atualizarVideosTreinosExistentes() {
+  const placeholders = [...VIDEOS_LEANDRO_TWIN_ANTIGOS].map(() => '?').join(', ');
+  const result = await db.execute({
+    sql: `UPDATE treino_exercicios
+          SET video_url = (SELECT eb.video_url FROM exercicio_biblioteca eb WHERE eb.id = treino_exercicios.biblioteca_id)
+          WHERE biblioteca_id IS NOT NULL AND video_url IN (${placeholders})`,
+    args: [...VIDEOS_LEANDRO_TWIN_ANTIGOS],
+  });
+  return result.rowsAffected || 0;
+}
+
 async function seedBibliotecaExercicios() {
   let criados = 0;
   for (const [grupoMuscular, nome, videoUrl, equipamento, dificuldade, musculosSecundarios, instrucoes] of BIBLIOTECA_SEED) {
@@ -373,8 +428,9 @@ async function migrate() {
   const bibliotecaSeedCriados = await seedBibliotecaExercicios();
   const acessosCorrigidos = await corrigirFormatoDatasAcessosAntigos();
   const videosAtualizados = await atualizarVideosBibliotecaExercicios();
+  const videosTreinosAtualizados = await atualizarVideosTreinosExistentes();
 
-  console.log(`Migração concluída: ${statements.length} statements de schema + ${aplicadas} alteração(ões) incremental(is) nova(s)${templatesSeedCriados ? ` + ${templatesSeedCriados} modelo(s) de mensagem novo(s) criado(s)` : ''}${bibliotecaSeedCriados ? ` + ${bibliotecaSeedCriados} exercício(s) novo(s) na biblioteca` : ''}${acessosCorrigidos ? ` + ${acessosCorrigidos} registro(s) de acesso com data corrigida` : ''}${videosAtualizados ? ` + ${videosAtualizados} vídeo(s) de exercício atualizado(s)` : ''}.`);
+  console.log(`Migração concluída: ${statements.length} statements de schema + ${aplicadas} alteração(ões) incremental(is) nova(s)${templatesSeedCriados ? ` + ${templatesSeedCriados} modelo(s) de mensagem novo(s) criado(s)` : ''}${bibliotecaSeedCriados ? ` + ${bibliotecaSeedCriados} exercício(s) novo(s) na biblioteca` : ''}${acessosCorrigidos ? ` + ${acessosCorrigidos} registro(s) de acesso com data corrigida` : ''}${videosAtualizados ? ` + ${videosAtualizados} vídeo(s) de exercício atualizado(s)` : ''}${videosTreinosAtualizados ? ` + ${videosTreinosAtualizados} vídeo(s) em fichas de treino já existentes atualizado(s)` : ''}.`);
 }
 
 migrate()

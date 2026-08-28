@@ -1,9 +1,10 @@
 /**
  * Pendências (2026-08-14) — um só lugar pro professor ver tudo que precisa
- * de atenção: serviços vencidos (ver produtosServicos.routes.js) e
- * avaliações físicas (renovação vencida, ou etapa do passo a passo ainda
- * não concluída). Nunca bloqueia acesso do aluno — é só uma lista de
- * lembretes internos pro staff.
+ * de atenção: serviços vencidos (ver produtosServicos.routes.js), avaliações
+ * físicas (renovação vencida, ou etapa do passo a passo ainda não
+ * concluída), e ajuste de carga (2026-08-27 — ver treino_exercicios.
+ * precisa_ajuste_carga em schema.sql). Nunca bloqueia acesso do aluno — é só
+ * uma lista de lembretes internos pro staff.
  */
 const express = require('express');
 const { z } = require('zod');
@@ -64,14 +65,42 @@ function proximaEtapaPendente(pipeline) {
   return null; // pipeline completo
 }
 
+// Exercícios que o aluno reportou mais de 13 repetições no portal (ver
+// LIMITE_REPETICOES_SEM_AJUSTE em portal.routes.js) — sinal de que a carga
+// prescrita ficou fácil demais. Some sozinho da lista quando o professor
+// atualiza o campo "carga" desse exercício (ver PUT /exercicios/:id em
+// treinos.routes.js, que zera precisa_ajuste_carga nesse momento).
+async function listarPendenciasAjusteCarga() {
+  const result = await db.execute(`
+    SELECT te.id, te.exercicio, te.ultimo_peso_usado, te.ultimo_repeticoes_max, te.concluido_em,
+           t.aluno_id, a.nome as aluno_nome
+    FROM treino_exercicios te
+    JOIN treinos t ON t.id = te.treino_id
+    JOIN alunos a ON a.id = t.aluno_id
+    WHERE te.precisa_ajuste_carga = 1
+  `);
+  return result.rows;
+}
+
 // GET /api/pendencias — junta serviços vencidos + avaliações (renovação
-// vencida OU etapa do passo a passo pendente), mais recentes primeiro.
+// vencida OU etapa do passo a passo pendente) + ajuste de carga, mais
+// recentes primeiro.
 router.get('/', async (req, res, next) => {
   try {
-    const [servicos, pipelinesRecentes] = await Promise.all([
+    const [servicos, pipelinesRecentes, ajustesCarga] = await Promise.all([
       listarPendenciasServicosVencidos(),
       listarPipelinesMaisRecentes(),
+      listarPendenciasAjusteCarga(),
     ]);
+
+    const pendenciasAjusteCarga = ajustesCarga.map((e) => ({
+      tipo: 'ajuste_carga',
+      id: e.id,
+      aluno_id: e.aluno_id,
+      aluno_nome: e.aluno_nome,
+      detalhe: `${e.exercicio}: aluno fez ${e.ultimo_repeticoes_max} repetições${e.ultimo_peso_usado ? ` com ${e.ultimo_peso_usado}` : ''} — considere aumentar a carga.`,
+      data_referencia: (e.concluido_em || '').slice(0, 10) || new Date().toISOString().slice(0, 10),
+    }));
 
     const pendenciasServicos = servicos.map((s) => ({
       tipo: 'servico_vencido',
@@ -114,7 +143,7 @@ router.get('/', async (req, res, next) => {
       }
     }
 
-    const pendencias = [...pendenciasServicos, ...pendenciasAvaliacao]
+    const pendencias = [...pendenciasServicos, ...pendenciasAvaliacao, ...pendenciasAjusteCarga]
       .sort((a, b) => (a.data_referencia < b.data_referencia ? -1 : 1));
 
     res.json({ pendencias });

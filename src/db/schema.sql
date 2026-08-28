@@ -437,7 +437,21 @@ CREATE TABLE IF NOT EXISTS treino_exercicios (
   -- aluno treinou (pro professor ver) mora em `treino_execucoes` abaixo, que
   -- nunca é apagado por esse reset visual.
   concluido INTEGER NOT NULL DEFAULT 0,
-  concluido_em TEXT
+  concluido_em TEXT,
+  -- ultimo_peso_usado/ultimo_repeticoes_max (2026-08-27): o que o aluno
+  -- reportou na última vez que marcou este exercício como feito no portal —
+  -- mostrado direto na aba Treinos do perfil pro professor bater o olho sem
+  -- precisar consultar o histórico em treino_execucoes (mesmo padrão de
+  -- concluido/concluido_em acima: campo "último valor" na própria linha,
+  -- histórico completo fica no log). precisa_ajuste_carga liga sozinho
+  -- quando o aluno reporta mais de 13 repetições (sinal de que a carga
+  -- ficou fácil demais — ver POST /treino/exercicio/:id/concluir em
+  -- portal.routes.js) e desliga quando o professor atualiza a carga desse
+  -- exercício (ver PUT /exercicios/:id em treinos.routes.js); é o que
+  -- alimenta a pendência "ajustar carga" em GET /api/pendencias.
+  ultimo_peso_usado TEXT,
+  ultimo_repeticoes_max INTEGER,
+  precisa_ajuste_carga INTEGER NOT NULL DEFAULT 0
 );
 
 -- Log permanente (nunca apagado pelo reset visual do check de "concluído" nem
@@ -453,6 +467,11 @@ CREATE TABLE IF NOT EXISTS treino_execucoes (
   treino_id TEXT NOT NULL REFERENCES treinos(id) ON DELETE CASCADE,
   treino_exercicio_id TEXT REFERENCES treino_exercicios(id) ON DELETE CASCADE,
   tipo TEXT NOT NULL DEFAULT 'exercicio', -- 'exercicio' (marcou 1 exercício) | 'treino_concluido' (clicou "Concluir treino")
+  -- peso_usado/repeticoes_max (2026-08-27): só preenchidos quando tipo =
+  -- 'exercicio' — o que o aluno reportou nessa marcação específica (ver
+  -- comentário de ultimo_peso_usado/ultimo_repeticoes_max acima).
+  peso_usado TEXT,
+  repeticoes_max INTEGER,
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

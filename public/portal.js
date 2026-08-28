@@ -295,6 +295,67 @@ document.getElementById('btn-ir-cadastro-portal').addEventListener('click', () =
 
 let cpfHubAtual = null;
 let senhaHubAtual = null; // senha do portal (mesmo código do biometria_id) — ver análise de segurança 2026-07
+
+// ---------------- Login persistente (2026-08-27) ----------------
+// Pedido explícito do dono do sistema: quem já tem o app instalado no
+// celular não deveria precisar digitar CPF+senha toda vez que abre — só na
+// primeira vez. Guarda as credenciais em localStorage (privado a este
+// dispositivo/navegador) e tenta logar sozinho ao abrir a página (ver
+// tentarAutoLoginHub, chamada lá embaixo em "Inicialização"). Continua
+// mandando CPF+senha em toda chamada de API como sempre (o portal nunca
+// teve sessão/token — ver comentário de senhaHubAtual acima); isso só evita
+// o aluno ter que redigitar a cada vez que reabre o app.
+const CHAVE_CPF_SALVO = 'portal_cpf_salvo';
+const CHAVE_SENHA_SALVA = 'portal_senha_salva';
+
+function salvarCredenciaisHub(cpf, senha) {
+  try {
+    localStorage.setItem(CHAVE_CPF_SALVO, cpf);
+    localStorage.setItem(CHAVE_SENHA_SALVA, senha);
+  } catch { /* localStorage indisponível (modo privado etc.) — só significa que vai pedir login de novo na próxima vez */ }
+}
+
+function limparCredenciaisHub() {
+  try {
+    localStorage.removeItem(CHAVE_CPF_SALVO);
+    localStorage.removeItem(CHAVE_SENHA_SALVA);
+  } catch { /* idem acima */ }
+}
+
+function lerCredenciaisSalvasHub() {
+  try {
+    const cpf = localStorage.getItem(CHAVE_CPF_SALVO);
+    const senha = localStorage.getItem(CHAVE_SENHA_SALVA);
+    return cpf && senha ? { cpf, senha } : null;
+  } catch {
+    return null;
+  }
+}
+
+// Tenta logar sozinho com as credenciais salvas deste dispositivo, direto
+// na tela inicial (sem o aluno digitar nada). Se falhar por qualquer motivo
+// (senha mudou, cadastro removido, etc.), apaga o que estava salvo e deixa
+// a tela normal de CPF/senha aparecer — nunca trava o portal num estado
+// quebrado por causa disso.
+async function tentarAutoLoginHub() {
+  const salvo = lerCredenciaisSalvasHub();
+  if (!salvo) return;
+  // Esconde a tela de CPF/senha (visível por padrão no HTML) enquanto o
+  // login automático está em andamento, pra evitar o "flash" dela aparecer
+  // e sumir rápido de novo antes do dashboard carregar.
+  const painelCpf = document.getElementById('painel-hub-cpf');
+  painelCpf.classList.add('oculto');
+  try {
+    const info = await api(`/api/portal/aluno?${new URLSearchParams({ cpf: salvo.cpf, senha: salvo.senha }).toString()}`);
+    if (info.primeiro_acesso) { limparCredenciaisHub(); painelCpf.classList.remove('oculto'); return; } // credencial salva não devia cair nesse caso; por segurança, não assume nada
+    cpfHubAtual = salvo.cpf;
+    senhaHubAtual = salvo.senha;
+    preencherDashboardHub(info);
+  } catch {
+    limparCredenciaisHub();
+    painelCpf.classList.remove('oculto');
+  }
+}
 let alunoHubTreinoModo = 'nativo';
 let alunoHubTreinoLiberado = true; // mensalidade em dia? (ver GET /api/portal/aluno) — false esconde/desabilita o card de treino
 let alunoHubTreinoBloqueadoMotivo = null;
@@ -665,6 +726,7 @@ document.getElementById('btn-buscar-hub').addEventListener('click', async () => 
     }
 
     senhaHubAtual = senhaDigitada;
+    salvarCredenciaisHub(cpfHubAtual, senhaHubAtual);
     preencherDashboardHub(info);
   } catch (err) {
     // Sempre garante o campo visível quando a senha é o problema (faltando
@@ -679,10 +741,17 @@ document.getElementById('btn-buscar-hub').addEventListener('click', async () => 
   }
 });
 
+document.getElementById('btn-hub-sair').addEventListener('click', () => {
+  if (!confirm('Sair desta conta? Da próxima vez você vai precisar digitar CPF e senha de novo.')) return;
+  limparCredenciaisHub();
+  resetHub();
+});
+
 document.getElementById('btn-primeiro-acesso-continuar').addEventListener('click', () => {
   if (!infoHubPendentePrimeiroAcesso) return;
   const info = infoHubPendentePrimeiroAcesso;
   infoHubPendentePrimeiroAcesso = null;
+  salvarCredenciaisHub(cpfHubAtual, senhaHubAtual);
   preencherDashboardHub(info);
 });
 
@@ -895,6 +964,10 @@ async function abrirPainelTreino() {
           ${ex.dica ? `<div class="detalhe">💡 ${ex.dica}</div>` : ''}
           ${ex.imagem_url && !ex.video_url ? `<img class="exercicio-imagem" src="${ex.imagem_url}" loading="lazy">` : ''}
           ${ex.video_url ? `<button type="button" class="btn-ver-video-ex" data-video="${ex.video_url}" data-target="vid_${ex.id}">▶ Ver execução</button><div id="vid_${ex.id}"></div>` : ''}
+          <div class="registro-carga" style="display:flex;gap:8px;margin-top:8px">
+            <input type="text" class="input-peso-usado" data-eid="${ex.id}" placeholder="Peso usado (ex: 20kg)" value="${escapeHtml(ex.ultimo_peso_usado || '')}" style="flex:1;min-width:0;padding:8px;border:1px solid #30384a;border-radius:8px;background:transparent;color:inherit" />
+            <input type="number" class="input-reps-max" data-eid="${ex.id}" placeholder="Repetições" min="0" max="999" value="${ex.ultimo_repeticoes_max ?? ''}" style="width:100px;padding:8px;border:1px solid #30384a;border-radius:8px;background:transparent;color:inherit" />
+          </div>
         </div>
       `).join('') || '<p style="color:#94a3b8;font-size:13px">Nenhum exercício adicionado ainda.</p>'}
       ${t.exercicios.length ? `<button type="button" class="btn-concluir-treino" data-tid="${t.id}" style="margin-top:14px;width:100%">Concluir treino</button>` : ''}
@@ -908,17 +981,36 @@ async function abrirPainelTreino() {
       else { box.innerHTML = videoPreviewHtml(btn.dataset.video); btn.textContent = '▲ Fechar vídeo'; }
     });
   });
+  // Peso usado/repetições (2026-08-27): só vão junto quando o aluno está
+  // MARCANDO como feito (não ao desmarcar) — lidos dos dois campos ao lado
+  // do exercício no momento do clique, então o aluno pode preencher antes
+  // ou depois de tocar o check, tanto faz. Mais de 13 repetições manda o
+  // exercício pras Pendências do professor (ver LIMITE_REPETICOES_SEM_AJUSTE
+  // em portal.routes.js) — avisa o aluno na hora também, só pra ele saber
+  // que o professor vai revisar a carga.
   alvo.querySelectorAll('.check-concluido').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const marcarComo = !btn.classList.contains('marcado');
+      const linha = btn.closest('.exercicio-linha');
+      const inputPeso = linha.querySelector('.input-peso-usado');
+      const inputReps = linha.querySelector('.input-reps-max');
+      const pesoUsado = marcarComo ? inputPeso.value.trim() : '';
+      const repsTexto = marcarComo ? inputReps.value.trim() : '';
+      const repeticoesMax = repsTexto ? Number(repsTexto) : null;
       try {
         await api(`/api/portal/treino/exercicio/${btn.dataset.eid}/concluir`, {
           method: 'POST',
-          body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, concluido: marcarComo }),
+          body: JSON.stringify({
+            cpf: cpfHubAtual, senha: senhaHubAtual, concluido: marcarComo,
+            peso_usado: pesoUsado || null, repeticoes_max: repeticoesMax,
+          }),
         });
         btn.classList.toggle('marcado', marcarComo);
         btn.textContent = marcarComo ? '✓' : '';
-        btn.closest('.exercicio-linha').classList.toggle('concluido', marcarComo);
+        linha.classList.toggle('concluido', marcarComo);
+        if (marcarComo && repeticoesMax != null && repeticoesMax > 13) {
+          alert('Boa! Como você conseguiu mais de 13 repetições, seu professor vai revisar a carga desse exercício.');
+        }
       } catch (err) { alert(err.message); }
     });
   });
@@ -1347,3 +1439,4 @@ document.getElementById('btn-portal-cadastro-concluir').addEventListener('click'
 // ---------------- Inicialização ----------------
 
 carregarConfigPublica();
+tentarAutoLoginHub();

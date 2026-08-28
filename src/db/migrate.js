@@ -69,6 +69,14 @@ const ALTERACOES_INCREMENTAIS = [
   // treino" (2026-08-24) — ver comentário detalhado junto da definição de
   // "treino_exercicios"/"treino_execucoes" em schema.sql.
   "ALTER TABLE treino_exercicios ADD COLUMN concluido_em TEXT",
+  // Peso/repetições reportados pelo aluno + sinalizador de ajuste de carga
+  // (2026-08-27) — ver comentário detalhado junto da definição de
+  // "treino_exercicios"/"treino_execucoes" em schema.sql.
+  "ALTER TABLE treino_exercicios ADD COLUMN ultimo_peso_usado TEXT",
+  "ALTER TABLE treino_exercicios ADD COLUMN ultimo_repeticoes_max INTEGER",
+  "ALTER TABLE treino_exercicios ADD COLUMN precisa_ajuste_carga INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE treino_execucoes ADD COLUMN peso_usado TEXT",
+  "ALTER TABLE treino_execucoes ADD COLUMN repeticoes_max INTEGER",
 ];
 
 // Divide um arquivo .sql em statements individuais (o driver libsql nao aceita

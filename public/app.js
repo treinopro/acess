@@ -1809,16 +1809,28 @@ function renderizarTreinoAtivo() {
   });
 
   const tbody = document.getElementById('treino-lista-exercicios');
-  tbody.innerHTML = treino.exercicios.length ? '' : '<tr><td colspan="7">Nenhum exercício cadastrado ainda.</td></tr>';
+  tbody.innerHTML = treino.exercicios.length ? '' : '<tr><td colspan="8">Nenhum exercício cadastrado ainda.</td></tr>';
   treino.exercicios.forEach((ex) => {
+    // "Aluno reportou" (2026-08-27): peso/repetições da última vez que o
+    // aluno marcou este exercício como feito no portal (ver
+    // ultimo_peso_usado/ultimo_repeticoes_max em schema.sql). Quando
+    // precisa_ajuste_carga estiver ligado (aluno passou de 13 repetições),
+    // a linha inteira fica destacada — mesmo sinal já visível em Pendências,
+    // só que aqui, direto na ficha, pro professor bater o olho e já ajustar.
+    const temReporte = ex.ultimo_repeticoes_max != null || ex.ultimo_peso_usado;
+    const reporteTexto = temReporte
+      ? `${ex.ultimo_peso_usado ? escapeHtml(ex.ultimo_peso_usado) : '—'} · ${ex.ultimo_repeticoes_max ?? '—'} rep.`
+      : '—';
+    const precisaAjuste = Boolean(ex.precisa_ajuste_carga);
     const tr = el(`
-      <tr draggable="true" data-id="${ex.id}">
+      <tr draggable="true" data-id="${ex.id}"${precisaAjuste ? ' style="background:#fff7ed"' : ''}>
         <td class="arrastar-alca" title="Arraste para reordenar" style="cursor:grab;color:#98a2b3;user-select:none">⠿</td>
         <td>${escapeHtml(ex.exercicio)}</td>
         <td>${escapeHtml(ex.series) || '—'}</td>
         <td>${escapeHtml(ex.carga) || '—'}</td>
         <td>${escapeHtml(ex.intervalo) || '—'}</td>
         <td>${escapeHtml(ex.observacao) || '—'}</td>
+        <td title="${precisaAjuste ? 'Aluno passou de 13 repetições — considere aumentar a carga.' : ''}">${reporteTexto}${precisaAjuste ? ' ⚠️' : ''}</td>
         <td>
           <button type="button" class="btn-linha" data-acao="editar">Editar</button>
           <button type="button" class="btn-linha perigo" data-acao="excluir">Excluir</button>
@@ -3286,6 +3298,10 @@ async function carregarPendencias() {
           } catch (err) { mostrarToast(err.message, true); }
         });
         acoes.appendChild(btnAvancar);
+      } else if (p.tipo === 'ajuste_carga') {
+        const btnAjustar = el('<button class="btn-primario">Ajustar treino</button>');
+        btnAjustar.addEventListener('click', () => abrirPerfilAluno(p.aluno_id, 'treino'));
+        acoes.appendChild(btnAjustar);
       }
       container.appendChild(card);
     });

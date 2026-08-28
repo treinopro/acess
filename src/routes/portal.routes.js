@@ -270,7 +270,7 @@ router.get('/treino', limitadorSenhaPortal, async (req, res, next) => {
       // esse estado na hora (sem esperar virar o dia).
       const exercicios = await db.execute({
         sql: `SELECT id, exercicio, series, carga, intervalo, observacao, metodo, dica,
-                     video_url, imagem_url,
+                     video_url, imagem_url, ultimo_peso_usado, ultimo_repeticoes_max,
                      CASE WHEN concluido = 1 AND date(concluido_em) = date('now') THEN 1 ELSE 0 END AS concluido
               FROM treino_exercicios WHERE treino_id = ? ORDER BY ordem, criado_em`,
         args: [t.id],
@@ -283,18 +283,34 @@ router.get('/treino', limitadorSenhaPortal, async (req, res, next) => {
   }
 });
 
-// POST /api/portal/treino/exercicio/:id/concluir { cpf, senha, concluido } —
+// Acima de quantas repetições o aluno consegue fazer o exercício sinaliza
+// que a carga ficou fácil demais — pedido explícito do dono do sistema
+// (2026-08-27): manda pro professor revisar via GET /api/pendencias (ver
+// listarPendenciasAjusteCarga em pendencias.routes.js).
+const LIMITE_REPETICOES_SEM_AJUSTE = 13;
+
+// POST /api/portal/treino/exercicio/:id/concluir { cpf, senha, concluido, peso_usado?, repeticoes_max? } —
 // o aluno marca/desmarca um exercício como feito, direto do portal. Só é
 // permitido se o exercício pertencer a um treino do PRÓPRIO aluno
 // autenticado (JOIN treino_exercicios -> treinos -> valida aluno_id) — o
 // TreinoPro original tinha essa checagem frouxa (ver observação do relatório
 // de port), então aqui já nasce corrigido.
+//
+// peso_usado/repeticoes_max (2026-08-27): opcionais, só fazem sentido junto
+// com concluido=true — o aluno reporta quanto peso usou e o máximo de
+// repetições que conseguiu, pro professor acompanhar evolução e ajustar a
+// carga prescrita. Ficam gravados tanto na própria linha de
+// treino_exercicios (ultimo_peso_usado/ultimo_repeticoes_max — pro professor
+// bater o olho na aba Treinos sem consultar histórico) quanto em
+// treino_execucoes (histórico completo, nunca apagado).
 router.post('/treino/exercicio/:id/concluir', limitadorSenhaPortal, async (req, res, next) => {
   try {
     const dados = z.object({
       cpf: z.string().min(1),
       senha: z.string().min(1),
       concluido: z.boolean(),
+      peso_usado: z.string().trim().min(1).optional().nullable(),
+      repeticoes_max: z.number().int().min(0).max(999).optional().nullable(),
     }).parse(req.body);
     const autenticado = await autenticarAlunoPortal(dados.cpf, dados.senha);
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
@@ -323,16 +339,28 @@ router.post('/treino/exercicio/:id/concluir', limitadorSenhaPortal, async (req, 
     // gerada aqui ("...T...Z") ordena/compara errado contra as gravadas pelo
     // banco — ver src/utils/data.js e o comentário de corrigirFormatoDatasAcessosAntigos em migrate.js.
     const concluidoInt = dados.concluido ? 1 : 0;
+    const precisaAjuste = dados.concluido && dados.repeticoes_max != null && dados.repeticoes_max > LIMITE_REPETICOES_SEM_AJUSTE;
     await db.execute({
-      sql: `UPDATE treino_exercicios SET concluido = ?, concluido_em = CASE WHEN ? = 1 THEN datetime('now') ELSE NULL END WHERE id = ?`,
-      args: [concluidoInt, concluidoInt, req.params.id],
+      sql: `UPDATE treino_exercicios
+            SET concluido = ?, concluido_em = CASE WHEN ? = 1 THEN datetime('now') ELSE NULL END,
+                ultimo_peso_usado = CASE WHEN ? = 1 THEN ? ELSE ultimo_peso_usado END,
+                ultimo_repeticoes_max = CASE WHEN ? = 1 THEN ? ELSE ultimo_repeticoes_max END,
+                precisa_ajuste_carga = CASE WHEN ? THEN 1 ELSE precisa_ajuste_carga END
+            WHERE id = ?`,
+      args: [
+        concluidoInt, concluidoInt,
+        concluidoInt, dados.peso_usado || null,
+        concluidoInt, dados.repeticoes_max ?? null,
+        precisaAjuste ? 1 : 0,
+        req.params.id,
+      ],
     });
 
     if (dados.concluido) {
       await db.execute({
-        sql: `INSERT INTO treino_execucoes (id, aluno_id, treino_id, treino_exercicio_id, tipo)
-              VALUES (?, ?, ?, ?, 'exercicio')`,
-        args: [uuid(), aluno.id, dono.rows[0].treino_id, req.params.id],
+        sql: `INSERT INTO treino_execucoes (id, aluno_id, treino_id, treino_exercicio_id, tipo, peso_usado, repeticoes_max)
+              VALUES (?, ?, ?, ?, 'exercicio', ?, ?)`,
+        args: [uuid(), aluno.id, dono.rows[0].treino_id, req.params.id, dados.peso_usado || null, dados.repeticoes_max ?? null],
       });
     }
 

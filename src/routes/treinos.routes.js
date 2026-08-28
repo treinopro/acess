@@ -58,6 +58,31 @@ async function herdarMidiaDaBiblioteca(dados) {
   };
 }
 
+// Dispara notificacaoTreino.notificarAtualizacaoTreinoSeguro pro aluno DONO
+// do treino identificado por treinoId — busca aluno_id/nome/email/nome do
+// treino via JOIN (nenhuma das rotas abaixo tem isso à mão de propósito,
+// treino_exercicios só guarda treino_id). Fire-and-forget: nunca é
+// `await`ado por quem chama, pra não atrasar a resposta HTTP por causa de
+// push/e-mail lento (mesmo padrão de POST / acima). Pedido explícito do
+// dono do sistema (2026-08-27): qualquer atualização em um treino já
+// existente avisa o aluno.
+function dispararNotificacaoAtualizacao(treinoId, detalhe) {
+  db.execute({
+    sql: `SELECT t.nome as treino_nome, a.id as aluno_id, a.nome as aluno_nome, a.email as aluno_email
+          FROM treinos t JOIN alunos a ON a.id = t.aluno_id WHERE t.id = ?`,
+    args: [treinoId],
+  })
+    .then((r) => {
+      const row = r.rows[0];
+      if (!row) return;
+      notificacaoTreino.notificarAtualizacaoTreinoSeguro(
+        { id: row.aluno_id, nome: row.aluno_nome, email: row.aluno_email },
+        { treinoNome: row.treino_nome, detalhe },
+      );
+    })
+    .catch(() => { /* best-effort — não deve afetar a resposta da rota que chamou */ });
+}
+
 function linhaParaTreino(row) {
   let dias = [];
   try {
@@ -153,6 +178,14 @@ router.put('/:id', async (req, res, next) => {
     args.push(req.params.id);
 
     await db.execute({ sql: `UPDATE treinos SET ${sets.join(', ')} WHERE id = ?`, args });
+    // Só avisa o aluno quando algo que ele realmente vê no portal mudou —
+    // reordenar (ordem, editado em outra rota) ou trocar visivel_portal pra
+    // false não deveria gerar "seu treino foi atualizado" (no 2o caso o
+    // treino nem aparece mais pra ele ver o que mudou).
+    if (dados.nome !== undefined || dados.dias_semana !== undefined || dados.data_fim !== undefined
+      || dados.visivel_portal === true) {
+      dispararNotificacaoAtualizacao(req.params.id, 'informações do treino atualizadas');
+    }
     res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -187,6 +220,7 @@ router.post('/:id/exercicios', async (req, res, next) => {
         dados.intervalo || null, dados.observacao || null, ordem, dados.biblioteca_id || null,
         dados.video_url || null, dados.imagem_url || null, dados.metodo || null, dados.dica || null],
     });
+    dispararNotificacaoAtualizacao(req.params.id, `exercício "${dados.exercicio}" adicionado`);
     res.status(201).json({ id, treino_id: req.params.id, ...dados, ordem });
   } catch (err) {
     next(err);
@@ -200,9 +234,32 @@ router.put('/exercicios/:id', async (req, res, next) => {
     const campos = Object.keys(dados);
     if (!campos.length) return res.status(400).json({ erro: 'Nenhum campo informado.' });
 
+    // Precisa do treino_id (pra notificar o aluno certo) e do nome atual do
+    // exercício (pra mensagem, caso `exercicio` não venha no PATCH) ANTES do
+    // UPDATE — depois não dá mais pra buscar de forma confiável.
+    const atual = await db.execute({
+      sql: 'SELECT treino_id, exercicio FROM treino_exercicios WHERE id = ?',
+      args: [req.params.id],
+    });
+    if (!atual.rows[0]) return res.status(404).json({ erro: 'Exercício não encontrado.' });
+    const nomeExercicio = dados.exercicio || atual.rows[0].exercicio;
+
     const sets = campos.map((c) => `${c} = ?`).join(', ');
     const args = [...campos.map((c) => (typeof dados[c] === 'boolean' ? (dados[c] ? 1 : 0) : dados[c])), req.params.id];
-    await db.execute({ sql: `UPDATE treino_exercicios SET ${sets} WHERE id = ?`, args });
+    // carga (2026-08-27): o professor está ajustando a carga em resposta ao
+    // aluno ter reportado muitas repetições no portal — desliga o
+    // sinalizador de pendência (ver POST /treino/exercicio/:id/concluir em
+    // portal.routes.js e listarPendenciasAjusteCarga em pendencias.routes.js).
+    const sqlFinal = dados.carga !== undefined
+      ? `UPDATE treino_exercicios SET ${sets}, precisa_ajuste_carga = 0 WHERE id = ?`
+      : `UPDATE treino_exercicios SET ${sets} WHERE id = ?`;
+    await db.execute({ sql: sqlFinal, args });
+
+    const detalhe = dados.carga !== undefined
+      ? `carga do exercício "${nomeExercicio}" ajustada para ${dados.carga || '—'}`
+      : `exercício "${nomeExercicio}" atualizado`;
+    dispararNotificacaoAtualizacao(atual.rows[0].treino_id, detalhe);
+
     res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -212,7 +269,14 @@ router.put('/exercicios/:id', async (req, res, next) => {
 // DELETE /api/treinos/exercicios/:id
 router.delete('/exercicios/:id', async (req, res, next) => {
   try {
+    const atual = await db.execute({
+      sql: 'SELECT treino_id, exercicio FROM treino_exercicios WHERE id = ?',
+      args: [req.params.id],
+    });
     await db.execute({ sql: 'DELETE FROM treino_exercicios WHERE id = ?', args: [req.params.id] });
+    if (atual.rows[0]) {
+      dispararNotificacaoAtualizacao(atual.rows[0].treino_id, `exercício "${atual.rows[0].exercicio}" removido`);
+    }
     res.json({ ok: true });
   } catch (err) {
     next(err);

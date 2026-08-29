@@ -41,7 +41,12 @@
 // (não pode sofrer rubber-band, é física do WebKit) e todo o scroll de
 // verdade passou pra um wrapper interno novo (#scroll-raiz). Ver comentário
 // grande em portal.html.
-const CACHE_NAME = 'academia-shell-v11';
+// v12 (2026-08-29): "notificações ativadas" mas nunca chegava no celular —
+// notificar_vencimento é preferência do CADASTRO (um valor só, qualquer
+// aparelho), não prova que ESTE aparelho tem PushSubscription própria.
+// Card de notificações agora confere com o service worker e mostra um
+// botão "Ativar neste aparelho" quando faltar (portal.html/portal.js).
+const CACHE_NAME = 'academia-shell-v12';
 
 self.addEventListener('install', () => {
   self.skipWaiting();

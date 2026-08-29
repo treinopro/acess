@@ -472,9 +472,29 @@ function preencherDashboardHub(info) {
 
 // ---- Notificações de vencimento (2026-08-13) ----
 
+// 2026-08-29 (achado investigando "push não chega, mas aparece Ativado"):
+// notificar_vencimento é uma preferência do CADASTRO do aluno (um valor só,
+// compartilhado por qualquer aparelho/navegador que ele use) — não indica
+// se ESTE aparelho específico tem uma PushSubscription de verdade ativa.
+// Um aluno que ativou no computador da recepção, ou no celular antigo, vê
+// "Ativadas" aqui de cara no celular novo — sem nunca ter concedido
+// permissão nem assinado push NESSE aparelho. Confirma direto com o
+// service worker (única fonte de verdade sobre o aparelho atual) em vez de
+// confiar só no que veio do servidor.
+async function esteAparelhoTemPushAtivo() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return false;
+  try {
+    const registro = await navigator.serviceWorker.ready;
+    const sub = await registro.pushManager.getSubscription();
+    return Boolean(sub);
+  } catch {
+    return false;
+  }
+}
+
 // notificar_vencimento: null = nunca perguntado (mostra o convite) — 0/1 =
 // já respondeu (só reflete no card, sem convite de novo).
-function atualizarCardNotificacoes(info) {
+async function atualizarCardNotificacoes(info) {
   const convite = document.getElementById('convite-notificacoes-hub');
   const diasAntesAtual = info.notificar_vencimento_dias_antes || 3;
 
@@ -484,12 +504,50 @@ function atualizarCardNotificacoes(info) {
     convite.classList.add('oculto');
   }
 
-  document.getElementById('card-notificacoes-resumo').textContent = info.notificar_vencimento
-    ? `Ativadas — avisamos ${diasAntesAtual} dia${diasAntesAtual === 1 ? '' : 's'} antes do vencimento.`
-    : 'Desativadas. Toque para ativar o aviso de vencimento.';
   document.getElementById('input-notif-dias-antes').value = diasAntesAtual;
   document.getElementById('input-notif-ativar').checked = Boolean(info.notificar_vencimento);
+
+  const resumoEl = document.getElementById('card-notificacoes-resumo');
+  const btnAtivarAparelho = document.getElementById('btn-notif-ativar-aparelho');
+  if (!info.notificar_vencimento) {
+    resumoEl.textContent = 'Desativadas. Toque para ativar o aviso de vencimento.';
+    btnAtivarAparelho.classList.add('oculto');
+    return;
+  }
+
+  // Preferência ligada — mas só sabemos se ESTE aparelho vai receber o
+  // aviso depois de checar a subscription local (async, por isso o card
+  // mostra "Ativadas" na hora e só ajusta o aviso extra logo em seguida).
+  resumoEl.textContent = `Ativadas — avisamos ${diasAntesAtual} dia${diasAntesAtual === 1 ? '' : 's'} antes do vencimento.`;
+  const temPushAqui = await esteAparelhoTemPushAtivo();
+  if (!temPushAqui && Notification.permission !== 'denied') {
+    resumoEl.textContent += ' Ativadas em outro aparelho — toque abaixo pra também receber neste.';
+    btnAtivarAparelho.classList.remove('oculto');
+  } else {
+    btnAtivarAparelho.classList.add('oculto');
+  }
 }
+
+document.getElementById('btn-notif-ativar-aparelho').addEventListener('click', async (ev) => {
+  const btn = ev.currentTarget;
+  btn.disabled = true;
+  const textoOriginal = btn.textContent;
+  btn.textContent = 'Ativando...';
+  const resultado = await ativarNotificacoesPush();
+  if (resultado === 'subscribed') {
+    btn.classList.add('oculto');
+    document.getElementById('card-notificacoes-resumo').textContent = document.getElementById('card-notificacoes-resumo').textContent.replace(' Ativadas em outro aparelho — toque abaixo pra também receber neste.', '');
+    alert('Pronto! Este aparelho também vai receber os avisos.');
+  } else if (resultado === 'denied') {
+    alert('O navegador bloqueou a permissão de notificação. Ative manualmente nas configurações do navegador/celular e tente de novo.');
+    btn.disabled = false;
+    btn.textContent = textoOriginal;
+  } else {
+    alert('Não deu pra ativar agora. Tente de novo em alguns instantes.');
+    btn.disabled = false;
+    btn.textContent = textoOriginal;
+  }
+});
 
 document.getElementById('btn-convite-notif-sim').addEventListener('click', async () => {
   const resultado = await ativarNotificacoesPush();

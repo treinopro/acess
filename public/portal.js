@@ -29,8 +29,16 @@ function mostrarPagina(id) {
 // aluno rolou até o fim do dashboard) faz o painel novo abrir com a
 // rolagem ainda lá embaixo — pro aluno parece que a tela abriu vazia, tendo
 // que rolar pra cima pra ver o conteúdo de verdade.
+// 2026-08-27: chama duas vezes de propósito (agora, e de novo depois que o
+// navegador terminar o próximo frame de layout) — relato real de PWA
+// instalado no iOS ficando com o scroll horizontal "travado" depois de uma
+// troca de painel, mesmo com o CSS anti-scroll-lateral (ver comentário
+// grande em portal.html). Uma só chamada síncrona pode rodar ANTES do
+// reflow da troca de painel terminar; a segunda, via requestAnimationFrame,
+// garante que o reset aconteça depois que o layout já assentou.
 function irParaTopo() {
   window.scrollTo(0, 0);
+  requestAnimationFrame(() => window.scrollTo(0, 0));
 }
 
 function formatarMoeda(centavos) {
@@ -340,6 +348,14 @@ function lerCredenciaisSalvasHub() {
 async function tentarAutoLoginHub() {
   const salvo = lerCredenciaisSalvasHub();
   if (!salvo) return;
+  // 2026-08-27: troca de painel bem cedo na vida da página (antes de
+  // qualquer gesto do usuário) — relato real de PWA instalado no iOS
+  // "sambando pros lados" toda vez que loga sozinho assim, mesmo com
+  // overflow-x:hidden/overscroll-behavior-x/touch-action já no CSS (ver
+  // comentário grande em portal.html). Reforça na marra, em dois momentos
+  // (antes de esconder o painel de CPF, e de novo depois que o dashboard
+  // aparece — ver preencherDashboardHub) — não custa nada chamar de mais.
+  window.scrollTo(0, 0);
   // Esconde a tela de CPF/senha (visível por padrão no HTML) enquanto o
   // login automático está em andamento, pra evitar o "flash" dela aparecer
   // e sumir rápido de novo antes do dashboard carregar.

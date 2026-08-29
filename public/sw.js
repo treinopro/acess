@@ -28,7 +28,14 @@
 // chega em quem instalou/atualizou DEPOIS daquele bump) — bumpar de novo
 // aqui força o service worker a descartar o cache velho e buscar tudo de
 // novo na próxima abertura do app.
-const CACHE_NAME = 'academia-shell-v9';
+// v10 (2026-08-27): o "sambando pros lados" voltou a acontecer DE VERDADE
+// (não só cache velho) — reproduzido de forma consistente, sempre logo após
+// o login automático novo do v9. Adicionado touch-action:pan-y (trava o
+// gesto de pan horizontal do Safari em modo standalone, camada diferente do
+// overflow-x já existente) + reforço do reset de scroll em dois momentos
+// (portal.js, irParaTopo/tentarAutoLoginHub). Ver comentários grandes em
+// portal.html e portal.js.
+const CACHE_NAME = 'academia-shell-v10';
 
 self.addEventListener('install', () => {
   self.skipWaiting();

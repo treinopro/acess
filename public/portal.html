@@ -39,9 +39,19 @@ if ('serviceWorker' in navigator) {
        horizontal, mesmo de 1px (arredondamento de layout). overflow-x:hidden
        trava esse overflow no próprio documento; overscroll-behavior-x
        desliga o bounce/gesto de navegação lateral do Safari, sem mexer no
-       scroll vertical normal (que continua funcionando igual). */
+       scroll vertical normal (que continua funcionando igual).
+       2026-08-27: voltou a acontecer, agora travado (não só um bounce que
+       volta sozinho) — relato consistente, sempre logo depois do login
+       automático novo (ver tentarAutoLoginHub em portal.js), que troca a
+       tela de CPF pelo dashboard bem cedo na vida da página, antes de
+       qualquer gesto do usuário. overflow-x/overscroll-behavior-x atuam no
+       CSS de scroll do documento, mas não bloqueiam o PAN do viewport
+       visual do Safari (uma camada acima, controlada por gesto de toque) —
+       touch-action:pan-y trava explicitamente o gesto horizontal, sem
+       afetar o scroll vertical normal. */
     overflow-x: hidden;
     overscroll-behavior-x: none;
+    touch-action: pan-y;
   }
   .pagina { display: none; min-height: 100vh; flex-direction: column; align-items: center; padding: 32px 16px 60px; text-align: center; }
   .pagina.ativa { display: flex; }

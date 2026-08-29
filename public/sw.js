@@ -21,7 +21,14 @@
 // v8 (2026-08-16): bloqueio da aba de treino por mensalidade/cadastro
 // inativo (portal.js) + correção do PWA "sambando" pros lados no iOS
 // (overflow-x/overscroll-behavior-x em portal.html).
-const CACHE_NAME = 'academia-shell-v8';
+// v9 (2026-08-27): login persistente (localStorage) + botão "Sair" +
+// campos de peso/repetições no treino (portal.html/portal.js). Relato de
+// "app continua sambando pros lados" no PWA já instalado é quase certamente
+// esse mesmo cache antigo nunca tendo sido invalidado (a correção do v8 só
+// chega em quem instalou/atualizou DEPOIS daquele bump) — bumpar de novo
+// aqui força o service worker a descartar o cache velho e buscar tudo de
+// novo na próxima abertura do app.
+const CACHE_NAME = 'academia-shell-v9';
 
 self.addEventListener('install', () => {
   self.skipWaiting();

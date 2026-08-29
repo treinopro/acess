@@ -11,8 +11,14 @@
      em position:fixed (ver portal.js/comentário grande no <style> abaixo).
      Travar o zoom de vez evita esse estado por completo — faz sentido aqui
      porque isto é a tela de um app instalado, não um documento que se
-     beneficia de zoom. -->
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+     beneficia de zoom.
+     minimum-scale=1.0 (2026-08-29, correção da correção): só travar o
+     MÁXIMO deixava o Safari livre pra escolher um zoom MENOR que 100%
+     sozinho — relato real de sobra de borda em volta do conteúdo depois do
+     fix acima, sem conseguir corrigir manualmente porque o pinça já estava
+     travado. Travando os dois lados (mínimo e máximo) iguais a 1.0, o zoom
+     fica preso EXATAMENTE em 100%, sempre. -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Portal do Aluno</title>
 
 <!-- PWA: permite "Instalar app"/"Adicionar à tela inicial" no portal do

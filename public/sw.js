@@ -51,7 +51,11 @@
 // iOS perder a sincronia entre o visual viewport (pinça) e o layout, mesmo
 // com body position:fixed. Trava o zoom de vez (maximum-scale=1.0,
 // user-scalable=no no <meta viewport>, ver portal.html).
-const CACHE_NAME = 'academia-shell-v13';
+// v14 (2026-08-29): v13 travou só o máximo do zoom — Safari escolheu
+// sozinho um zoom MENOR que 100% (sobrou borda em volta, sem como corrigir
+// manualmente já que o pinça tava travado). Adiciona minimum-scale=1.0
+// também, travando os dois lados iguais (ver portal.html).
+const CACHE_NAME = 'academia-shell-v14';
 
 self.addEventListener('install', () => {
   self.skipWaiting();

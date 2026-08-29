@@ -2,7 +2,17 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- 2026-08-29: maximum-scale=1.0 + user-scalable=no travam o pinça-pra-zoom.
+     Relato real: PWA "sambando pros lados" parava de acontecer só quando o
+     aluno dava zoom PRA FORA (sobrava espaço em volta), voltava assim que
+     zoomava de volta até preencher a tela — clássico de iOS Safari perdendo
+     a sincronia entre o "visual viewport" (o que o pinça mostra) e o layout
+     de verdade da página depois de um gesto de zoom, MESMO com o body preso
+     em position:fixed (ver portal.js/comentário grande no <style> abaixo).
+     Travar o zoom de vez evita esse estado por completo — faz sentido aqui
+     porque isto é a tela de um app instalado, não um documento que se
+     beneficia de zoom. -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Portal do Aluno</title>
 
 <!-- PWA: permite "Instalar app"/"Adicionar à tela inicial" no portal do

@@ -46,7 +46,12 @@
 // aparelho), não prova que ESTE aparelho tem PushSubscription própria.
 // Card de notificações agora confere com o service worker e mostra um
 // botão "Ativar neste aparelho" quando faltar (portal.html/portal.js).
-const CACHE_NAME = 'academia-shell-v12';
+// v13 (2026-08-29): "sambando pros lados" continuava, mas só quando o zoom
+// estava em 100% (preenchendo a tela) — sumia zoomando pra fora. Clássico de
+// iOS perder a sincronia entre o visual viewport (pinça) e o layout, mesmo
+// com body position:fixed. Trava o zoom de vez (maximum-scale=1.0,
+// user-scalable=no no <meta viewport>, ver portal.html).
+const CACHE_NAME = 'academia-shell-v13';
 
 self.addEventListener('install', () => {
   self.skipWaiting();

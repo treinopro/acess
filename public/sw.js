@@ -35,7 +35,13 @@
 // overflow-x já existente) + reforço do reset de scroll em dois momentos
 // (portal.js, irParaTopo/tentarAutoLoginHub). Ver comentários grandes em
 // portal.html e portal.js.
-const CACHE_NAME = 'academia-shell-v10';
+// v11 (2026-08-27): v10 não resolveu — piorou (usuário ficou travado sem
+// conseguir arrastar de volta, porque touch-action:pan-y bloqueia o gesto
+// de correção também). Solução estrutural: body virou position:fixed
+// (não pode sofrer rubber-band, é física do WebKit) e todo o scroll de
+// verdade passou pra um wrapper interno novo (#scroll-raiz). Ver comentário
+// grande em portal.html.
+const CACHE_NAME = 'academia-shell-v11';
 
 self.addEventListener('install', () => {
   self.skipWaiting();

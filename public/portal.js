@@ -29,16 +29,17 @@ function mostrarPagina(id) {
 // aluno rolou até o fim do dashboard) faz o painel novo abrir com a
 // rolagem ainda lá embaixo — pro aluno parece que a tela abriu vazia, tendo
 // que rolar pra cima pra ver o conteúdo de verdade.
-// 2026-08-27: chama duas vezes de propósito (agora, e de novo depois que o
-// navegador terminar o próximo frame de layout) — relato real de PWA
-// instalado no iOS ficando com o scroll horizontal "travado" depois de uma
-// troca de painel, mesmo com o CSS anti-scroll-lateral (ver comentário
-// grande em portal.html). Uma só chamada síncrona pode rodar ANTES do
-// reflow da troca de painel terminar; a segunda, via requestAnimationFrame,
-// garante que o reset aconteça depois que o layout já assentou.
+// 2026-08-27: quem rola de verdade agora é #scroll-raiz (wrapper interno),
+// não mais window/body — ver comentário grande em portal.html sobre por que
+// o body virou position:fixed (2 tentativas anteriores, só com CSS de
+// scroll no body, não resolveram o PWA "sambando pros lados" no iOS
+// standalone de vez). Ainda assim zera scrollLeft/scrollTop tanto na hora
+// quanto no próximo frame — não custa reforçar mesmo com o body travado.
 function irParaTopo() {
-  window.scrollTo(0, 0);
-  requestAnimationFrame(() => window.scrollTo(0, 0));
+  const raiz = document.getElementById('scroll-raiz');
+  if (!raiz) return;
+  raiz.scrollTo(0, 0);
+  requestAnimationFrame(() => raiz.scrollTo(0, 0));
 }
 
 function formatarMoeda(centavos) {
@@ -348,14 +349,12 @@ function lerCredenciaisSalvasHub() {
 async function tentarAutoLoginHub() {
   const salvo = lerCredenciaisSalvasHub();
   if (!salvo) return;
-  // 2026-08-27: troca de painel bem cedo na vida da página (antes de
-  // qualquer gesto do usuário) — relato real de PWA instalado no iOS
-  // "sambando pros lados" toda vez que loga sozinho assim, mesmo com
-  // overflow-x:hidden/overscroll-behavior-x/touch-action já no CSS (ver
-  // comentário grande em portal.html). Reforça na marra, em dois momentos
-  // (antes de esconder o painel de CPF, e de novo depois que o dashboard
-  // aparece — ver preencherDashboardHub) — não custa nada chamar de mais.
-  window.scrollTo(0, 0);
+  // 2026-08-27: reforça o reset de scroll do wrapper interno (ver
+  // irParaTopo) já aqui, antes de esconder o painel de CPF — o body em si
+  // não rola mais (position:fixed, ver comentário grande em portal.html),
+  // então isso é só uma segunda camada de segurança, não a correção
+  // principal do "sambando pros lados".
+  document.getElementById('scroll-raiz')?.scrollTo(0, 0);
   // Esconde a tela de CPF/senha (visível por padrão no HTML) enquanto o
   // login automático está em andamento, pra evitar o "flash" dela aparecer
   // e sumir rápido de novo antes do dashboard carregar.

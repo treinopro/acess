@@ -34,24 +34,39 @@ if ('serviceWorker' in navigator) {
     margin: 0; min-height: 100%; width: 100%;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
     background: #0f172a; color: #fff;
-    /* 2026-08-16: PWA instalado no iOS "sambava" pros lados ao rolar — o
-       rubber-band do WebKit em modo standalone reage a qualquer overflow
-       horizontal, mesmo de 1px (arredondamento de layout). overflow-x:hidden
-       trava esse overflow no próprio documento; overscroll-behavior-x
-       desliga o bounce/gesto de navegação lateral do Safari, sem mexer no
-       scroll vertical normal (que continua funcionando igual).
-       2026-08-27: voltou a acontecer, agora travado (não só um bounce que
-       volta sozinho) — relato consistente, sempre logo depois do login
-       automático novo (ver tentarAutoLoginHub em portal.js), que troca a
-       tela de CPF pelo dashboard bem cedo na vida da página, antes de
-       qualquer gesto do usuário. overflow-x/overscroll-behavior-x atuam no
-       CSS de scroll do documento, mas não bloqueiam o PAN do viewport
-       visual do Safari (uma camada acima, controlada por gesto de toque) —
-       touch-action:pan-y trava explicitamente o gesto horizontal, sem
-       afetar o scroll vertical normal. */
+    /* 2026-08-16/27: duas tentativas anteriores (overflow-x:hidden +
+       overscroll-behavior-x, depois touch-action:pan-y) não resolveram de
+       vez o PWA "sambando pros lados" no iOS standalone — a 2ª tentativa
+       até piorou (travou o usuário sem conseguir arrastar de volta pro
+       centro, porque touch-action:pan-y bloqueia o gesto de correção
+       também). Causa real: no modo standalone do iOS, o BODY em si pode
+       sofrer rubber-band/overscroll horizontal (entrar em território
+       negativo de scroll) por qualquer motivo — troca de painel via JS
+       bem cedo na vida da página, arredondamento de layout, etc. — e as
+       propriedades CSS de scroll (overflow-x, overscroll-behavior,
+       touch-action) atuam DEPOIS que esse overscroll já começou, então só
+       amenizam, não impedem.
+       Solução definitiva (padrão conhecido pra apps standalone no iOS):
+       o BODY fica TRAVADO no lugar (position:fixed, ocupando a tela
+       inteira) — um elemento position:fixed não pode sofrer rubber-band
+       nenhum, física do WebKit nem permite. Todo o scroll de verdade passa
+       a acontecer dentro de #scroll-raiz (ver logo abaixo do body no HTML),
+       um wrapper interno com overflow-y:auto — esse sim pode ter bounce
+       vertical normal (bom, esperado), mas nunca horizontal (overflow-x:
+       hidden nele, sem nada pra fazer bounce lateral já que ninguém no
+       conteúdo é mais largo que 100%). */
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+  #scroll-raiz {
+    position: absolute;
+    inset: 0;
+    overflow-y: auto;
     overflow-x: hidden;
-    overscroll-behavior-x: none;
-    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
   }
   .pagina { display: none; min-height: 100vh; flex-direction: column; align-items: center; padding: 32px 16px 60px; text-align: center; }
   .pagina.ativa { display: flex; }
@@ -182,6 +197,7 @@ if ('serviceWorker' in navigator) {
 </style>
 </head>
 <body>
+<div id="scroll-raiz">
 
   <!-- INÍCIO -->
   <div class="pagina ativa" id="pagina-inicio">
@@ -416,6 +432,7 @@ if ('serviceWorker' in navigator) {
     <button class="link-voltar" id="btn-voltar-cadastro-portal">&larr; Voltar ao início</button>
   </div>
 
+</div>
 <script src="portal.js"></script>
 </body>
 </html>

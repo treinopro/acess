@@ -82,7 +82,17 @@ if ('serviceWorker' in navigator) {
     -webkit-overflow-scrolling: touch;
     overscroll-behavior-y: contain;
   }
-  .pagina { display: none; min-height: 100vh; flex-direction: column; align-items: center; padding: 32px 16px 60px; text-align: center; }
+  /* 2026-08-30: viewport-fit=cover (no <meta viewport>) faz o fundo ocupar a
+     tela inteira, até embaixo do notch/câmera e da barra de gestos do iOS —
+     bom pro visual, mas sem isso aqui o CONTEÚDO (título, botões) também ia
+     parar embaixo dessas áreas, ficando cortado/ilegível. env(safe-area-*)
+     é 0 em aparelho sem notch (Android comum, desktop) — só soma alguma
+     coisa em iPhone com notch/Dynamic Island, então não muda nada pra quem
+     não precisa. */
+  .pagina {
+    display: none; min-height: 100vh; flex-direction: column; align-items: center; text-align: center;
+    padding: calc(32px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(60px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+  }
   .pagina.ativa { display: flex; }
   .oculto { display: none !important; }
 

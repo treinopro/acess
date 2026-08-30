@@ -57,7 +57,14 @@
 // A defesa de verdade contra o "sambar" continua sendo o body em
 // position:fixed (v11), que não depende de travar zoom nenhum. Ver
 // comentário grande em portal.html.
-const CACHE_NAME = 'academia-shell-v15';
+// v16 (2026-08-30): viewport-fit=cover faz o FUNDO ocupar até embaixo do
+// notch/barra de gestos do iPhone — mas sem compensar isso no conteúdo, o
+// topo/rodapé de cada tela (título, botão "Concluir treino" etc.) também
+// ficava embaixo dessas áreas, cortado/inalcançável mesmo rolando até o
+// fim. Soma env(safe-area-inset-*) ao padding de cada tela (.pagina, ver
+// portal.html) — vale 0 em aparelho sem notch/Android/desktop, só entra em
+// ação no iPhone com notch/Dynamic Island.
+const CACHE_NAME = 'academia-shell-v16';
 
 self.addEventListener('install', () => {
   self.skipWaiting();

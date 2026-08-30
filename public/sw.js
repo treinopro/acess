@@ -46,16 +46,18 @@
 // aparelho), não prova que ESTE aparelho tem PushSubscription própria.
 // Card de notificações agora confere com o service worker e mostra um
 // botão "Ativar neste aparelho" quando faltar (portal.html/portal.js).
-// v13 (2026-08-29): "sambando pros lados" continuava, mas só quando o zoom
-// estava em 100% (preenchendo a tela) — sumia zoomando pra fora. Clássico de
-// iOS perder a sincronia entre o visual viewport (pinça) e o layout, mesmo
-// com body position:fixed. Trava o zoom de vez (maximum-scale=1.0,
-// user-scalable=no no <meta viewport>, ver portal.html).
-// v14 (2026-08-29): v13 travou só o máximo do zoom — Safari escolheu
-// sozinho um zoom MENOR que 100% (sobrou borda em volta, sem como corrigir
-// manualmente já que o pinça tava travado). Adiciona minimum-scale=1.0
-// também, travando os dois lados iguais (ver portal.html).
-const CACHE_NAME = 'academia-shell-v14';
+// v13/v14 (2026-08-29): tentativa de travar o zoom (maximum-scale/
+// minimum-scale=1.0 + user-scalable=no) pra acabar de vez com o "sambando
+// pros lados". Causou um bug PIOR e diferente — margem enorme em volta do
+// conteúdo, reproduzido em modo standalone tanto no Safari quanto no Chrome
+// (mesmo motor WebKit no iOS) — bate com bug conhecido do WebKit ao travar
+// zoom via viewport especificamente em PWA instalado.
+// v15 (2026-08-30): REVERTE a trava de zoom — volta pro viewport simples
+// (initial-scale=1.0 + viewport-fit=cover, sem user-scalable/min/max-scale).
+// A defesa de verdade contra o "sambar" continua sendo o body em
+// position:fixed (v11), que não depende de travar zoom nenhum. Ver
+// comentário grande em portal.html.
+const CACHE_NAME = 'academia-shell-v15';
 
 self.addEventListener('install', () => {
   self.skipWaiting();

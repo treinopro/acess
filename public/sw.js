@@ -64,7 +64,11 @@
 // fim. Soma env(safe-area-inset-*) ao padding de cada tela (.pagina, ver
 // portal.html) — vale 0 em aparelho sem notch/Android/desktop, só entra em
 // ação no iPhone com notch/Dynamic Island.
-const CACHE_NAME = 'academia-shell-v16';
+// v17 (2026-08-31): v16 (env(safe-area-inset-bottom) + 60px) não foi
+// suficiente na prática — ainda cortava no rodapé em teste real. Aumenta a
+// folga fixa embaixo pra 140px (bem mais generoso), em vez de tentar
+// acertar o valor exato do aparelho.
+const CACHE_NAME = 'academia-shell-v17';
 
 self.addEventListener('install', () => {
   self.skipWaiting();

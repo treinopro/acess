@@ -88,10 +88,16 @@ if ('serviceWorker' in navigator) {
      parar embaixo dessas áreas, ficando cortado/ilegível. env(safe-area-*)
      é 0 em aparelho sem notch (Android comum, desktop) — só soma alguma
      coisa em iPhone com notch/Dynamic Island, então não muda nada pra quem
-     não precisa. */
+     não precisa.
+     2026-08-31: 60px de folga embaixo não foi suficiente na prática (relato
+     real de conteúdo ainda cortado no rodapé, mesmo com o env() somado) —
+     em vez de tentar acertar o valor exato pra cada modelo de iPhone,
+     aumenta bem a folga fixa (60px -> 140px) por cima do env(), pra sobrar
+     margem de segurança generosa em qualquer aparelho, sem precisar saber o
+     tamanho exato da barra de gestos de cada um. */
   .pagina {
     display: none; min-height: 100vh; flex-direction: column; align-items: center; text-align: center;
-    padding: calc(32px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(60px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+    padding: calc(32px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(140px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
   }
   .pagina.ativa { display: flex; }
   .oculto { display: none !important; }

@@ -110,7 +110,12 @@
 // portal.html agora força reg.update() sempre que o app volta a ficar
 // visível, e recarrega sozinho assim que um SW novo assume o controle —
 // não depende mais do aluno conseguir "fechar de verdade" o app.
-const CACHE_NAME = 'academia-shell-v22';
+// v23 (2026-09-01): HTML/JS/CSS proprios do app passam a usar network-first.
+// O stale-while-revalidate anterior entregava uma versao velha primeiro e
+// so atualizava o cache em segundo plano; em um PWA standalone que restaura
+// a tela anterior, essa versao nova podia nunca ficar visivel. Com rede, o
+// shell agora vem sempre do servidor; sem rede, continua abrindo pelo cache.
+const CACHE_NAME = 'academia-shell-v23';
 
 self.addEventListener('install', () => {
   self.skipWaiting();
@@ -132,8 +137,32 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
   if (url.pathname.startsWith('/api/')) return;
 
+  const ehNavegacao = request.mode === 'navigate';
+  const ehCodigoDoApp = !url.pathname.startsWith('/vendor/') && /\.(?:html|js|css)$/i.test(url.pathname);
+
+  // Rede primeiro para o documento e para o codigo proprio. `no-store`
+  // tambem evita que o cache HTTP do Safari devolva uma copia anterior por
+  // baixo do Cache Storage. O cache continua sendo o fallback offline.
+  if (ehNavegacao || ehCodigoDoApp) {
+    event.respondWith(
+      caches.open(CACHE_NAME).then(async (cache) => {
+        try {
+          const resposta = await fetch(request, { cache: 'no-store' });
+          if (resposta && resposta.ok) await cache.put(request, resposta.clone());
+          return resposta;
+        } catch {
+          const cacheado = await cache.match(request);
+          if (cacheado) return cacheado;
+          return Response.error();
+        }
+      })
+    );
+    return;
+  }
+
   // stale-while-revalidate: responde do cache na hora (funciona sem rede /
   // com rede ruim, importante pro totem físico) e atualiza em segundo plano.
+  // Agora fica restrito a imagens, fontes e bibliotecas versionadas/vendor.
   event.respondWith(
     caches.open(CACHE_NAME).then(async (cache) => {
       const cacheado = await cache.match(request);

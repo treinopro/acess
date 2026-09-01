@@ -41,14 +41,25 @@
 // a ficar visível, força reg.update() (checa /sw.js de novo no servidor);
 // (2) assim que um service worker novo assume o controle (claim), recarrega
 // a página sozinho — o aluno não precisa fazer nada manual.
+// 2026-09-01 (v23): a checagem tambem acontece logo no registro, no evento
+// pageshow e a cada 15 minutos enquanto o app estiver vivo. `updateViaCache:
+// none` obriga a busca do sw.js no servidor em vez de aceitar cache HTTP.
 if ('serviceWorker' in navigator) {
   let regServiceWorker;
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').then((reg) => { regServiceWorker = reg; }).catch(() => {});
+  const atualizarServiceWorker = () => {
+    if (regServiceWorker) regServiceWorker.update().catch(() => {});
+  };
+  window.addEventListener('load', async () => {
+    try {
+      regServiceWorker = await navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' });
+      atualizarServiceWorker();
+      window.setInterval(atualizarServiceWorker, 15 * 60 * 1000);
+    } catch {}
   });
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && regServiceWorker) regServiceWorker.update().catch(() => {});
+    if (document.visibilityState === 'visible') atualizarServiceWorker();
   });
+  window.addEventListener('pageshow', atualizarServiceWorker);
   let jaRecarregou = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (jaRecarregou) return;

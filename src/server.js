@@ -200,7 +200,11 @@ app.use(express.static(path.join(__dirname, '..', 'public'), {
   setHeaders: (res, filePath) => {
     const ehVendor = filePath.split(path.sep).includes('vendor');
     const extensaoDoApp = /\.(html|js|css)$/i.test(filePath);
-    if (!ehVendor && extensaoDoApp) {
+    if (path.basename(filePath).toLowerCase() === 'sw.js') {
+      // The file that discovers updates must never be reused without a
+      // server check, especially in an iOS standalone app.
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    } else if (!ehVendor && extensaoDoApp) {
       res.setHeader('Cache-Control', 'no-cache');
     }
   },

@@ -32,8 +32,29 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="theme-color" content="#0f172a">
 <script>
+// 2026-09-01: no iOS, "fechar" um PWA instalado (swipe no seletor de apps)
+// geralmente só SUSPENDE o processo — ao reabrir, ele volta do jeito que
+// estava na memória, sem fazer uma navegação/carregamento novo de verdade.
+// Isso significa que o service worker nunca é reconsultado sozinho, e o
+// aluno fica preso numa versão antiga do portal indefinidamente mesmo com
+// o app "reaberto". Corrige em duas frentes: (1) toda vez que o app volta
+// a ficar visível, força reg.update() (checa /sw.js de novo no servidor);
+// (2) assim que um service worker novo assume o controle (claim), recarrega
+// a página sozinho — o aluno não precisa fazer nada manual.
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+  let regServiceWorker;
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').then((reg) => { regServiceWorker = reg; }).catch(() => {});
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && regServiceWorker) regServiceWorker.update().catch(() => {});
+  });
+  let jaRecarregou = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (jaRecarregou) return;
+    jaRecarregou = true;
+    window.location.reload();
+  });
 }
 </script>
 

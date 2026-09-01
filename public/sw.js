@@ -102,7 +102,15 @@
 // de zoom do iOS pra ficar legível/confortável. Logo, título, cards,
 // botões, campos, linhas de conta/treino/avaliação e textos secundários
 // (inline 13px) todos maiores.
-const CACHE_NAME = 'academia-shell-v21';
+// v22 (2026-09-01): confirmado por curl que a produção já tinha o CSS do
+// v21 — o problema era o APARELHO nunca buscar essa versão nova. No iOS,
+// fechar um PWA instalado (swipe no seletor de apps) normalmente só
+// SUSPENDE o processo, não mata; reabrir volta do jeito que já estava na
+// memória, sem disparar carregamento/checagem de service worker nenhuma.
+// portal.html agora força reg.update() sempre que o app volta a ficar
+// visível, e recarrega sozinho assim que um SW novo assume o controle —
+// não depende mais do aluno conseguir "fechar de verdade" o app.
+const CACHE_NAME = 'academia-shell-v22';
 
 self.addEventListener('install', () => {
   self.skipWaiting();

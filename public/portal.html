@@ -110,40 +110,40 @@ if ('serviceWorker' in navigator) {
   .pagina.ativa { display: flex; }
   .oculto { display: none !important; }
 
-  .logo { font-size: 22px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 6px; color: #10b981; }
-  .subtitulo { color: #94a3b8; font-size: 15px; margin-bottom: 32px; }
+  .logo { font-size: 27px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 8px; color: #10b981; }
+  .subtitulo { color: #94a3b8; font-size: 17px; margin-bottom: 32px; }
 
-  .cartao { background: #1e293b; border-radius: 16px; padding: 22px; width: 100%; max-width: 440px; margin-bottom: 16px; text-align: left; }
-  .cartao h3 { margin: 0 0 12px; font-size: 16px; }
-  .cartao p { margin: 0 0 12px; color: #cbd5e1; font-size: 14px; }
+  .cartao { background: #1e293b; border-radius: 16px; padding: 24px; width: 100%; max-width: 440px; margin-bottom: 18px; text-align: left; }
+  .cartao h3 { margin: 0 0 14px; font-size: 19px; }
+  .cartao p { margin: 0 0 14px; color: #cbd5e1; font-size: 16px; line-height: 1.4; }
 
-  .botao-grande { padding: 20px; font-size: 18px; border-radius: 14px; border: none; cursor: pointer; font-weight: 600; width: 100%; max-width: 440px; margin-bottom: 14px; }
+  .botao-grande { padding: 22px; font-size: 20px; border-radius: 14px; border: none; cursor: pointer; font-weight: 600; width: 100%; max-width: 440px; margin-bottom: 14px; }
   .botao-grande.primario { background: #10b981; color: #06281e; }
   .botao-grande.secundario { background: #334155; color: #fff; }
   .botao-grande:active { transform: scale(0.98); }
   .botao-grande:disabled { opacity: 0.5; cursor: not-allowed; }
 
-  .campo { width: 100%; padding: 15px; font-size: 17px; border-radius: 10px; border: none; margin-bottom: 12px; text-align: center; }
+  .campo { width: 100%; padding: 18px; font-size: 18px; border-radius: 10px; border: none; margin-bottom: 14px; text-align: center; }
   select.campo { text-align: left; }
 
-  .link-voltar { margin-top: 12px; background: none; border: none; color: #64748b; font-size: 14px; cursor: pointer; text-decoration: underline; }
-  .erro-msg { color: #f87171; font-size: 13px; min-height: 18px; margin-bottom: 8px; }
+  .link-voltar { margin-top: 14px; background: none; border: none; color: #64748b; font-size: 16px; cursor: pointer; text-decoration: underline; padding: 8px; }
+  .erro-msg { color: #f87171; font-size: 15px; min-height: 20px; margin-bottom: 8px; }
 
-  .item-conta { display: flex; align-items: center; gap: 12px; background: #0f172a; border-radius: 10px; padding: 14px; margin-bottom: 8px; }
-  .item-conta input { width: 20px; height: 20px; }
+  .item-conta { display: flex; align-items: center; gap: 12px; background: #0f172a; border-radius: 10px; padding: 16px; margin-bottom: 10px; }
+  .item-conta input { width: 24px; height: 24px; }
   .item-conta .info { flex: 1; }
-  .item-conta .desc { font-size: 15px; font-weight: 600; }
-  .item-conta .venc { font-size: 12px; color: #94a3b8; }
-  .item-conta .valor { font-size: 15px; font-weight: 700; color: #10b981; }
-  .total-linha { display: flex; justify-content: space-between; font-size: 17px; font-weight: 700; padding: 10px 0; }
+  .item-conta .desc { font-size: 17px; font-weight: 600; }
+  .item-conta .venc { font-size: 14px; color: #94a3b8; }
+  .item-conta .valor { font-size: 17px; font-weight: 700; color: #10b981; }
+  .total-linha { display: flex; justify-content: space-between; font-size: 19px; font-weight: 700; padding: 12px 0; }
 
-  .aviso-caixa { background: #0f172a; border-radius: 10px; padding: 14px; font-size: 13px; color: #cbd5e1; }
+  .aviso-caixa { background: #0f172a; border-radius: 10px; padding: 16px; font-size: 15px; color: #cbd5e1; }
 
   /* Aviso de vencimento da mensalidade — 2026-08-13: sempre visível assim
      que o aluno acessa o app (não só quando está perto/atrasado), tamanho
      grande de propósito pra ser a primeira coisa que ele vê no dashboard
      (ver preencherDashboardHub/atualizarAvisoVencimento em portal.js). */
-  .aviso-vencimento { border-radius: 14px; padding: 18px 20px; font-size: 16px; font-weight: 700; line-height: 1.4; margin-bottom: 20px; width: 100%; max-width: 440px; text-align: left; }
+  .aviso-vencimento { border-radius: 14px; padding: 20px 22px; font-size: 18px; font-weight: 700; line-height: 1.4; margin-bottom: 20px; width: 100%; max-width: 440px; text-align: left; }
   .aviso-vencimento.em-dia { background: #052e1b; color: #86efac; border: 1px solid #15803d; }
   .aviso-vencimento.futuro { background: #0c2d48; color: #7dd3fc; border: 1px solid #0369a1; }
   .aviso-vencimento.proximo { background: #422006; color: #fbbf24; border: 1px solid #92400e; }
@@ -152,10 +152,10 @@ if ('serviceWorker' in navigator) {
   video { border-radius: 16px; width: 280px; height: 210px; object-fit: cover; background: #000; transform: scaleX(-1); }
   /* Traseira não deve vir espelhada — ver alternarCamera em portal.js. */
   video.camera-traseira { transform: none; }
-  .status-scan { color: #94a3b8; font-size: 14px; margin-top: 8px; min-height: 20px; }
+  .status-scan { color: #94a3b8; font-size: 16px; margin-top: 8px; min-height: 20px; }
   /* Boné/chapéu/óculos escuros cobrindo testa e olhos degrada o
      reconhecimento (já causou confusão entre alunos diferentes). */
-  .dica-sem-acessorios { color: #64748b; font-size: 12px; margin-top: 4px; }
+  .dica-sem-acessorios { color: #64748b; font-size: 14px; margin-top: 4px; }
 
   /* Cadastro facial guiado (liveness) — mesmo visual usado no totem (ver
      terminal.html): círculo sobre o vídeo que muda de cor conforme o passo
@@ -187,29 +187,29 @@ if ('serviceWorker' in navigator) {
     transition: width 0.3s ease;
   }
 
-  .comprovante .linha { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed #334155; }
+  .comprovante .linha { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px dashed #334155; font-size: 15px; }
   .comprovante .linha:last-child { border-bottom: none; font-weight: 700; }
-  .resultado-icone { font-size: 56px; margin-bottom: 8px; }
+  .resultado-icone { font-size: 60px; margin-bottom: 8px; }
 
-  .plano-opcao { display: flex; justify-content: space-between; align-items: center; background: #0f172a; border-radius: 10px; padding: 14px; margin-bottom: 8px; }
-  .plano-opcao button { padding: 8px 14px; border-radius: 8px; border: none; background: #10b981; color: #06281e; font-weight: 600; cursor: pointer; }
+  .plano-opcao { display: flex; justify-content: space-between; align-items: center; background: #0f172a; border-radius: 10px; padding: 16px; margin-bottom: 10px; font-size: 16px; }
+  .plano-opcao button { padding: 10px 16px; border-radius: 8px; border: none; background: #10b981; color: #06281e; font-weight: 600; cursor: pointer; font-size: 15px; }
 
-  .treino-card { background: #0f172a; border-radius: 10px; padding: 14px; margin-bottom: 10px; }
-  .treino-card h4 { margin: 0 0 6px; }
-  .treino-card .dias { font-size: 12px; color: #94a3b8; margin-bottom: 8px; }
-  .exercicio-linha { font-size: 14px; padding: 10px 0; border-bottom: 1px solid #1e293b; }
+  .treino-card { background: #0f172a; border-radius: 10px; padding: 16px; margin-bottom: 12px; }
+  .treino-card h4 { margin: 0 0 8px; font-size: 17px; }
+  .treino-card .dias { font-size: 14px; color: #94a3b8; margin-bottom: 8px; }
+  .exercicio-linha { font-size: 16px; padding: 12px 0; border-bottom: 1px solid #1e293b; }
   .exercicio-linha .topo { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .exercicio-linha .nome { font-weight: 600; }
   .exercicio-linha.concluido .nome { color: #10b981; }
-  .exercicio-linha .detalhe { color: #94a3b8; font-size: 12px; margin-top: 2px; }
-  .exercicio-linha .tag { background: #1e293b; border-radius: 6px; padding: 2px 8px; font-size: 11px; color: #cbd5e1; margin-right: 4px; display: inline-block; margin-top: 4px; }
+  .exercicio-linha .detalhe { color: #94a3b8; font-size: 14px; margin-top: 4px; }
+  .exercicio-linha .tag { background: #1e293b; border-radius: 6px; padding: 3px 9px; font-size: 13px; color: #cbd5e1; margin-right: 4px; display: inline-block; margin-top: 5px; }
   .btn-ver-video-ex {
     background: none; border: 1px solid #334155; color: #10b981; border-radius: 8px;
-    padding: 5px 10px; font-size: 12px; cursor: pointer; margin-top: 6px;
+    padding: 7px 12px; font-size: 14px; cursor: pointer; margin-top: 8px;
   }
   .check-concluido {
-    flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%; border: 2px solid #334155;
-    background: none; color: #10b981; font-size: 14px; cursor: pointer; display: flex;
+    flex-shrink: 0; width: 32px; height: 32px; border-radius: 50%; border: 2px solid #334155;
+    background: none; color: #10b981; font-size: 16px; cursor: pointer; display: flex;
     align-items: center; justify-content: center; padding: 0;
   }
   .check-concluido.marcado { background: #10b981; border-color: #10b981; color: #06281e; }
@@ -219,19 +219,19 @@ if ('serviceWorker' in navigator) {
   .exercicio-imagem { width: 100%; max-height: 160px; object-fit: cover; border-radius: 8px; margin-top: 6px; }
 
   /* Minhas avaliações */
-  .avaliacao-card { background: #0f172a; border-radius: 10px; padding: 14px; margin-bottom: 10px; }
-  .avaliacao-card h4 { margin: 0 0 10px; font-size: 14px; }
-  .avaliacao-metrica { display: flex; justify-content: space-between; align-items: baseline; padding: 6px 0; border-bottom: 1px solid #1e293b; font-size: 13px; }
+  .avaliacao-card { background: #0f172a; border-radius: 10px; padding: 16px; margin-bottom: 12px; }
+  .avaliacao-card h4 { margin: 0 0 12px; font-size: 16px; }
+  .avaliacao-metrica { display: flex; justify-content: space-between; align-items: baseline; padding: 8px 0; border-bottom: 1px solid #1e293b; font-size: 15px; }
   .avaliacao-metrica:last-child { border-bottom: none; }
   .avaliacao-metrica .rotulo { color: #cbd5e1; }
   .avaliacao-metrica .valores { display: flex; align-items: baseline; gap: 8px; }
-  .avaliacao-metrica .atual { font-weight: 700; font-size: 15px; }
-  .avaliacao-delta { font-size: 12px; font-weight: 600; }
+  .avaliacao-metrica .atual { font-weight: 700; font-size: 17px; }
+  .avaliacao-delta { font-size: 14px; font-weight: 600; }
   .avaliacao-delta.bom { color: #10b981; }
   .avaliacao-delta.ruim { color: #fb923c; }
   .avaliacao-delta.neutro { color: #64748b; }
   .avaliacao-sparkline { display: block; margin-top: 4px; }
-  .avaliacao-data-linha { font-size: 11px; color: #64748b; margin-top: 8px; }
+  .avaliacao-data-linha { font-size: 13px; color: #64748b; margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -263,7 +263,7 @@ if ('serviceWorker' in navigator) {
       <h3>Guarde sua senha de acesso</h3>
       <p>Da próxima vez que entrar no portal, você vai precisar do seu CPF <strong>e</strong> desta senha:</p>
       <div class="aviso-caixa" id="primeiro-acesso-senha-valor" style="font-size:28px;font-weight:700;text-align:center;letter-spacing:3px"></div>
-      <p style="font-size:13px;color:#94a3b8">Anote em um lugar seguro — essa senha não vai ser mostrada de novo.</p>
+      <p style="font-size:15px;color:#94a3b8">Anote em um lugar seguro — essa senha não vai ser mostrada de novo.</p>
       <button class="botao-grande primario" id="btn-primeiro-acesso-continuar" style="margin-top:12px;margin-bottom:0">Já anotei, continuar</button>
     </div>
 
@@ -275,7 +275,7 @@ if ('serviceWorker' in navigator) {
       <div class="aviso-vencimento oculto" id="aviso-vencimento-hub"></div>
 
       <div class="cartao oculto" id="aviso-instalar-app" style="text-align:left;background:#0c2d48;border-color:#0369a1">
-        <p style="margin:0;font-size:13px">📲 Adicione este portal à tela de início do seu celular — assim as notificações de vencimento chegam certinho, mesmo no iPhone.</p>
+        <p style="margin:0;font-size:15px">📲 Adicione este portal à tela de início do seu celular — assim as notificações de vencimento chegam certinho, mesmo no iPhone.</p>
       </div>
 
       <div class="cartao oculto" id="convite-notificacoes-hub" style="text-align:left">
@@ -325,7 +325,7 @@ if ('serviceWorker' in navigator) {
         <a class="botao-grande primario oculto" id="link-agendar-avaliacao" style="margin:0;display:block;text-decoration:none;text-align:center" target="_blank" rel="noopener">Agendar pelo WhatsApp</a>
       </div>
 
-      <button type="button" id="btn-hub-sair" style="background:none;border:none;color:#94a3b8;font-size:13px;text-decoration:underline;cursor:pointer;display:block;margin:20px auto 0;padding:8px">Sair desta conta</button>
+      <button type="button" id="btn-hub-sair" style="background:none;border:none;color:#94a3b8;font-size:15px;text-decoration:underline;cursor:pointer;display:block;margin:20px auto 0;padding:8px">Sair desta conta</button>
     </div>
 
     <!-- Configurações de notificações -->
@@ -335,7 +335,7 @@ if ('serviceWorker' in navigator) {
         <input type="checkbox" id="input-notif-ativar" style="width:20px;height:20px" />
         <span>Avisar quando minha mensalidade estiver vencendo</span>
       </label>
-      <label style="display:block;margin-bottom:6px;font-size:13px;color:#94a3b8">Avisar quantos dias antes do vencimento?</label>
+      <label style="display:block;margin-bottom:6px;font-size:15px;color:#94a3b8">Avisar quantos dias antes do vencimento?</label>
       <input class="campo" id="input-notif-dias-antes" type="number" min="1" max="30" value="3" style="max-width:120px" />
       <div class="form-acoes" style="margin-top:16px">
         <button type="submit" class="botao-grande primario" style="margin:0">Salvar</button>
@@ -393,7 +393,7 @@ if ('serviceWorker' in navigator) {
          estiver faltando. -->
     <div class="cartao oculto" id="painel-hub-completar-cadastro" style="text-align:left">
       <h3>Complete seu cadastro</h3>
-      <p style="font-size:13px;color:#94a3b8;margin-bottom:12px">Antes de cadastrar seu rosto, confirme (ou preencha) seus dados abaixo.</p>
+      <p style="font-size:15px;color:#94a3b8;margin-bottom:12px">Antes de cadastrar seu rosto, confirme (ou preencha) seus dados abaixo.</p>
       <input class="campo" id="completar-cadastro-nome" placeholder="Nome completo" />
       <input class="campo" id="completar-cadastro-telefone" placeholder="Telefone" inputmode="tel" />
       <input class="campo" id="completar-cadastro-email" placeholder="E-mail" inputmode="email" />
@@ -449,7 +449,7 @@ if ('serviceWorker' in navigator) {
     <div class="cartao oculto" id="painel-cadastro-portal-sucesso">
       <div class="resultado-icone" style="color:#10b981">✅</div>
       <div class="subtitulo" id="portal-cadastro-sucesso-msg" style="margin-bottom:8px"></div>
-      <p style="font-size:13px;color:#94a3b8;margin-bottom:4px">Sua senha de acesso ao portal (guarde bem — vai precisar dela com seu CPF nas próximas visitas):</p>
+      <p style="font-size:15px;color:#94a3b8;margin-bottom:4px">Sua senha de acesso ao portal (guarde bem — vai precisar dela com seu CPF nas próximas visitas):</p>
       <div class="aviso-caixa" id="portal-cadastro-senha-caixa" style="font-size:26px;font-weight:700;text-align:center;letter-spacing:3px;margin-bottom:12px"></div>
       <p>Quer que a catraca já reconheça seu rosto na próxima visita?</p>
       <button class="botao-grande secundario" id="btn-portal-cadastro-facial" style="margin:0 0 8px">Cadastrar reconhecimento facial agora</button>

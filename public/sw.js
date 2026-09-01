@@ -96,7 +96,13 @@
 // aparência zoomada). Também não recarrega mais os banners já fechados
 // pelo aluno a cada reinstalação do PWA — isso é limite do próprio iOS
 // (apagar o app apaga o localStorage), não bug do código.
-const CACHE_NAME = 'academia-shell-v20';
+// v21 (2026-09-01): pedido direto do dono — parar de mexer em zoom/viewport
+// e aumentar de vez o tamanho de verdade dos elementos (fonte, padding,
+// alvos de toque) em portal.html, pra não depender de nenhum comportamento
+// de zoom do iOS pra ficar legível/confortável. Logo, título, cards,
+// botões, campos, linhas de conta/treino/avaliação e textos secundários
+// (inline 13px) todos maiores.
+const CACHE_NAME = 'academia-shell-v21';
 
 self.addEventListener('install', () => {
   self.skipWaiting();

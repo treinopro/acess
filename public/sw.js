@@ -78,7 +78,15 @@
 // font-size:16px nos dois campos. As tentativas anteriores (position:fixed,
 // travar/destravar zoom, aumentar padding) continuam válidas como reforço,
 // mas não atacavam a causa raiz.
-const CACHE_NAME = 'academia-shell-v18';
+// v19 (2026-08-31): relato real após v18 — funciona certo na aba normal do
+// Safari, mas o zoom automático ainda fica "grudado" especificamente no PWA
+// instalado (modo standalone), mesmo com os campos já em 16px+. Duas
+// camadas a mais: -webkit-text-size-adjust:100% (o zoom automático olha o
+// tamanho RENDERIZADO final, não só o font-size declarado — isso evita o
+// iOS reajustar sozinho) + reset forçado do <meta viewport> toda vez que
+// um campo perde o foco (bug documentado: o zoom disparado ao focar não
+// desfaz sozinho ao desfocar, em PWA standalone). Ver portal.html/portal.js.
+const CACHE_NAME = 'academia-shell-v19';
 
 self.addEventListener('install', () => {
   self.skipWaiting();

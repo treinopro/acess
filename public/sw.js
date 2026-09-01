@@ -86,7 +86,17 @@
 // iOS reajustar sozinho) + reset forçado do <meta viewport> toda vez que
 // um campo perde o foco (bug documentado: o zoom disparado ao focar não
 // desfaz sozinho ao desfocar, em PWA standalone). Ver portal.html/portal.js.
-const CACHE_NAME = 'academia-shell-v19';
+// v20 (2026-08-31): relato real — v19 "soltou" o zoom grudado, mas deixou
+// tudo com aparência zoomada pra fora (elementos pequenos, muita margem).
+// Causa raiz de verdade dos dois bugs (o "sambar" antigo do v13/v14 E este)
+// era a mesma: campo com font-size < 16px brigando com o zoom já travado
+// no viewport. Corrigido o font-size (v18) — agora trava o zoom de novo
+// (maximum-scale/minimum-scale=1.0 + user-scalable=no, ver portal.html) e
+// remove o truque de reset no focusout (não precisa mais, causava a
+// aparência zoomada). Também não recarrega mais os banners já fechados
+// pelo aluno a cada reinstalação do PWA — isso é limite do próprio iOS
+// (apagar o app apaga o localStorage), não bug do código.
+const CACHE_NAME = 'academia-shell-v20';
 
 self.addEventListener('install', () => {
   self.skipWaiting();

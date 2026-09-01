@@ -1516,28 +1516,14 @@ document.getElementById('btn-portal-cadastro-concluir').addEventListener('click'
 
 // ---------------- Inicialização ----------------
 
-// 2026-08-31: bug bem documentado do iOS — mesmo com todo campo em
-// font-size:16px+ (o que já evita boa parte do zoom automático ao focar),
-// existem casos em que o zoom disparado ao focar um campo NÃO desfaz
-// sozinho ao tirar o foco dele (mais comum ainda em PWA instalado/modo
-// standalone do que numa aba normal do Safari — relatado por usuário real
-// aqui: funcionava certo na aba, travava só no app instalado). Esse zoom
-// "grudado" é a causa do corte de tela/scroll bloqueado depois de mexer em
-// qualquer campo. Truque padrão pra forçar o WebKit a soltar: ao qualquer
-// campo perder o foco, mexe brevemente no <meta viewport> (muda o
-// content e devolve ao original 50ms depois) — isso força o Safari a
-// recalcular a escala do zero, soltando o que ficou preso. `focusout` (não
-// `blur`) porque `blur` não borbulha (bubble) e um listener só no document
-// não pegaria eventos de campos dentro de formulários/divs aninhados.
-document.addEventListener('focusout', (ev) => {
-  const alvo = ev.target;
-  if (!alvo || !['INPUT', 'TEXTAREA', 'SELECT'].includes(alvo.tagName)) return;
-  const viewport = document.querySelector('meta[name="viewport"]');
-  if (!viewport) return;
-  const original = viewport.getAttribute('content');
-  viewport.setAttribute('content', `${original}, maximum-scale=1.0`);
-  setTimeout(() => viewport.setAttribute('content', original), 60);
-}, true);
+// 2026-08-31: o truque de resetar o <meta viewport> a cada campo perder o
+// foco (tentativa anterior, pra "soltar" um zoom grudado) foi REMOVIDO —
+// relato real de que deixava a tela inteira com aparência "zoomada pra
+// fora" (elementos pequenos, muito espaço em volta). A causa raiz de
+// verdade era font-size < 16px em alguns campos (corrigido — ver
+// input-peso-usado/input-reps-max acima) brigando com o zoom já travado no
+// <meta viewport> (ver portal.html) — com a causa raiz corrigida, o zoom
+// trava em 100% de forma estável sem precisar desse reset manual.
 
 carregarConfigPublica();
 tentarAutoLoginHub();

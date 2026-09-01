@@ -5,18 +5,21 @@
 <!-- 2026-08-29: tentei travar o zoom (maximum-scale/minimum-scale=1.0 +
      user-scalable=no) achando que resolveria o "sambando pros lados" de vez.
      REVERTIDO no mesmo dia: causou um bug DIFERENTE e pior — margem enorme
-     em volta do conteúdo, só em modo standalone (app instalado), reproduzido
-     tanto no Safari quanto no Chrome no mesmo iPhone (os dois usam o WebKit
-     por baixo no iOS — confirma que não é coisa de um navegador específico).
-     Isso bate com um problema conhecido do próprio WebKit: travar o zoom via
-     viewport (user-scalable=no) especificamente em PWA standalone pode fazer
-     o Safari calcular a escala inicial errada. A defesa de verdade contra o
-     "sambar" é o body em position:fixed (ver portal.js/comentário grande no
-     <style> abaixo) — isso sozinho já impede o rubber-band, sem precisar
-     travar o zoom. Deixa o pinça-pra-zoom livre de novo (o usuário sempre
-     pode corrigir manualmente se precisar), só mantém viewport-fit=cover
-     pra aproveitar a tela até a borda em aparelhos com notch. -->
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+     em volta do conteúdo, só em modo standalone. NA ÉPOCA achei que fosse um
+     bug puro do WebKit em travar zoom + standalone.
+     2026-08-31, causa raiz verdadeira encontrada DEPOIS: existiam campos
+     (peso/repetições do treino) sem font-size:16px+, então o iOS tentava
+     disparar o zoom automático de foco AO MESMO TEMPO que o viewport dizia
+     "não pode dar zoom" (user-scalable=no) — é essa BRIGA entre os dois que
+     produzia a escala errada/margem enorme, não o travamento em si. Corrigido
+     o font-size dos campos (ver portal.js) + reset de scroll no focusout
+     (tentativa intermediária, REMOVIDA aqui por deixar tudo com aparência
+     "zoomada pra fora" — não era a solução certa). Com a causa raiz corrigida,
+     trava o zoom de novo: agora não tem mais nenhum campo tentando brigar
+     com isso, deve segurar os 100% de forma estável, sem o "sambar" (que já
+     não dependia de zoom, resolvido à parte pelo body em position:fixed —
+     ver portal.js/comentário grande no <style> abaixo) nem o zoom grudado. -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Portal do Aluno</title>
 
 <!-- PWA: permite "Instalar app"/"Adicionar à tela inicial" no portal do

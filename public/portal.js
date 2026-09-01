@@ -1038,8 +1038,13 @@ async function abrirPainelTreino() {
           ${ex.imagem_url && !ex.video_url ? `<img class="exercicio-imagem" src="${ex.imagem_url}" loading="lazy">` : ''}
           ${ex.video_url ? `<button type="button" class="btn-ver-video-ex" data-video="${ex.video_url}" data-target="vid_${ex.id}">▶ Ver execução</button><div id="vid_${ex.id}"></div>` : ''}
           <div class="registro-carga" style="display:flex;gap:8px;margin-top:8px">
-            <input type="text" class="input-peso-usado" data-eid="${ex.id}" placeholder="Peso usado (ex: 20kg)" value="${escapeHtml(ex.ultimo_peso_usado || '')}" style="flex:1;min-width:0;padding:8px;border:1px solid #30384a;border-radius:8px;background:transparent;color:inherit" />
-            <input type="number" class="input-reps-max" data-eid="${ex.id}" placeholder="Repetições" min="0" max="999" value="${ex.ultimo_repeticoes_max ?? ''}" style="width:100px;padding:8px;border:1px solid #30384a;border-radius:8px;background:transparent;color:inherit" />
+            <!-- font-size:16px (2026-08-31) é o mínimo pra iOS NÃO dar zoom
+                 automático ao focar o campo — sem isso aqui, herdava o
+                 tamanho padrão do navegador (menor que 16px), e o zoom
+                 disparado ao tocar o campo continuava "grudado" nas telas
+                 seguintes (causa real do corte no rodapé relatado). -->
+            <input type="text" class="input-peso-usado" data-eid="${ex.id}" placeholder="Peso usado (ex: 20kg)" value="${escapeHtml(ex.ultimo_peso_usado || '')}" style="flex:1;min-width:0;padding:8px;font-size:16px;border:1px solid #30384a;border-radius:8px;background:transparent;color:inherit" />
+            <input type="number" class="input-reps-max" data-eid="${ex.id}" placeholder="Repetições" min="0" max="999" value="${ex.ultimo_repeticoes_max ?? ''}" style="width:100px;padding:8px;font-size:16px;border:1px solid #30384a;border-radius:8px;background:transparent;color:inherit" />
           </div>
         </div>
       `).join('') || '<p style="color:#94a3b8;font-size:13px">Nenhum exercício adicionado ainda.</p>'}

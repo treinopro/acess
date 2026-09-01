@@ -68,7 +68,17 @@
 // suficiente na prática — ainda cortava no rodapé em teste real. Aumenta a
 // folga fixa embaixo pra 140px (bem mais generoso), em vez de tentar
 // acertar o valor exato do aparelho.
-const CACHE_NAME = 'academia-shell-v17';
+// v18 (2026-08-31): causa raiz de verdade do "corte no rodapé" finalmente
+// identificada — os campos de peso/repetições do treino (portal.js) não
+// tinham font-size definido, herdando o padrão do navegador (menor que
+// 16px). iOS dá ZOOM AUTOMÁTICO ao focar qualquer campo com fonte menor
+// que 16px, e esse zoom fica "grudado" ao navegar pras telas seguintes —
+// exatamente o comportamento relatado (zoom ao tocar um campo, corte nas
+// telas depois, só resolvia pinçando manualmente pra fora). Adiciona
+// font-size:16px nos dois campos. As tentativas anteriores (position:fixed,
+// travar/destravar zoom, aumentar padding) continuam válidas como reforço,
+// mas não atacavam a causa raiz.
+const CACHE_NAME = 'academia-shell-v18';
 
 self.addEventListener('install', () => {
   self.skipWaiting();

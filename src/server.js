@@ -25,7 +25,7 @@ const recuperacaoRoutes = require('./routes/recuperacao.routes');
 const contasPagarRoutes = require('./routes/contasPagar.routes');
 const chamarInstrutorRoutes = require('./routes/chamar.routes');
 const { router: configRoutes } = require('./routes/config.routes');
-const { rodar: rodarBackup, verificarAgendamento: verificarAgendamentoBackup } = require('./jobs/backup');
+const { rodarNaSubidaSeNaoRecente: rodarBackupNaSubida, verificarAgendamento: verificarAgendamentoBackup } = require('./jobs/backup');
 const { rodar: rodarMensagensAgendadas } = require('./jobs/mensagensAgendadas');
 const { rodar: rodarAvisoVencimento } = require('./jobs/avisoVencimento');
 const { rodar: rodarAvisoRenovacaoAvaliacao } = require('./jobs/avisoRenovacaoAvaliacao');
@@ -270,7 +270,11 @@ server.listen(PORT, () => {
     // + horário) — ver verificarAgendamento em src/jobs/backup.js, que evita
     // rodar duas vezes no mesmo dia mesmo com o processo reiniciando no meio
     // do caminho (marca a última execução no banco, não em memória).
-    rodarBackup().catch((err) => console.error('[backup] erro na execução inicial:', err));
+    // 2026-09-02: rodarNaSubidaSeNaoRecente (em vez de chamar rodar() direto)
+    // — reinícios em rajada (múltiplos deploys seguidos, health-check
+    // instável, etc.) mandavam um e-mail de backup por reinício, sem limite
+    // nenhum. Ver comentário grande em backup.js.
+    rodarBackupNaSubida().catch((err) => console.error('[backup] erro na execução inicial:', err));
     setInterval(() => {
       verificarAgendamentoBackup().catch((err) => console.error('[backup] erro na checagem de agendamento:', err));
     }, 5 * 60 * 1000);

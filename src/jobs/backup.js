@@ -168,6 +168,44 @@ async function verificarAgendamento() {
   });
 }
 
+// 2026-09-02: o backup "de segurança" que roda uma vez a cada subida do
+// processo (ver comentário em server.js — sempre gera um dump fresco a cada
+// deploy) NUNCA teve nenhuma proteção contra duplicidade, ao contrário do
+// agendamento normal (verificarAgendamento acima, que só roda 1x por dia,
+// controlado por data gravada no banco). Isso é inofensivo quando o
+// processo só reinicia mesmo em deploy de verdade — mas vira um problema
+// real (relatado pelo dono: "vários backups de novo, isso já nos trouxe
+// problemas antes") quando o processo reinicia várias vezes seguidas por
+// qualquer outro motivo (reinícios manuais, falha de health-check,
+// crash-loop, múltiplos deploys em sequência no mesmo dia) — cada subida
+// manda um e-mail de backup novo, sem limite.
+//
+// rodarNaSubidaSeNaoRecente() dá essa proteção sem tirar a utilidade do
+// "sempre fresco a cada deploy": só pula se já rodou há menos de
+// INTERVALO_MINIMO_BOOT_MIN minutos, gravado no banco (não em memória, pelo
+// mesmo motivo do agendamento normal — sobrevive a reinícios). Deploys
+// normais, espaçados ao longo do dia, continuam gerando backup fresco
+// normalmente; só uma rajada de reinícios próximos no tempo é que passa a
+// gerar UM só, não um por reinício.
+const INTERVALO_MINIMO_BOOT_MIN = 180; // 3h
+async function rodarNaSubidaSeNaoRecente() {
+  const check = await db.execute(
+    `SELECT (julianday('now') - julianday(valor)) * 24 * 60 AS minutos
+     FROM configuracoes WHERE chave = 'backup_ultima_execucao_boot'`,
+  );
+  const minutosDesdeUltima = check.rows[0]?.minutos;
+  if (minutosDesdeUltima != null && minutosDesdeUltima < INTERVALO_MINIMO_BOOT_MIN) {
+    console.log(`[backup] pulando backup de subida — o último rodou há ${Math.round(minutosDesdeUltima)} min (mínimo ${INTERVALO_MINIMO_BOOT_MIN} min entre reinícios do processo).`);
+    return null;
+  }
+  const resultado = await rodar();
+  await db.execute(
+    `INSERT INTO configuracoes (chave, valor) VALUES ('backup_ultima_execucao_boot', datetime('now'))
+     ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor`,
+  );
+  return resultado;
+}
+
 // Permite rodar manualmente: `node src/jobs/backup.js`
 if (require.main === module) {
   rodar()
@@ -178,4 +216,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { rodar, verificarAgendamento };
+module.exports = { rodar, verificarAgendamento, rodarNaSubidaSeNaoRecente };

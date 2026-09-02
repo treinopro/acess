@@ -95,8 +95,14 @@ if ('serviceWorker' in navigator) {
      explícito do dono do sistema. Responsivo (min(vw, px)) em vez de pixel
      fixo pra caber bem tanto num tablet pequeno quanto num maior, sempre
      mantendo a proporção 4:3 da captura (mesma proporção pedida em
-     iniciarCamera, ver terminal.js) sem esticar/distorcer a imagem. */
-  #video-inicio { width: min(94vw, 560px); height: auto; aspect-ratio: 4 / 3; }
+     iniciarCamera, ver terminal.js) sem esticar/distorcer a imagem.
+     2026-09-02: aumentado de novo, bem mais — "quase tela cheia", pedido
+     explícito do dono. max-height limita pela ALTURA disponível (não só
+     largura) pra não estourar o viewport em telas mais baixas/largas —
+     como o QR e os botões saíram do fluxo normal (viraram uma barra
+     flutuante fixa no rodapé, ver .barra-flutuante-inferior), sobra bem
+     mais espaço vertical só pro vídeo. */
+  #video-inicio { width: min(97vw, 900px); height: auto; aspect-ratio: 4 / 3; max-height: 62vh; }
   /* Efeito espelho só na exibição (UX natural, como uma câmera de selfie) —
      não afeta a leitura de QR nem o reconhecimento facial, que processam o
      quadro bruto da câmera via canvas/vídeo/imagem, não a versão espelhada na tela. */
@@ -130,6 +136,25 @@ if ('serviceWorker' in navigator) {
   }
   .guia-facial-circulo.guia-ativo { border-color: #fbbf24; }
   .guia-facial-circulo.guia-ok { border-color: #10b981; box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.2); }
+
+  /* Barra flutuante do rodapé da tela inicial (2026-09-02, pedido do dono):
+     o QR do portal e os 4 botões pequenos saem do fluxo normal (que antes
+     "empurrava" o vídeo pra cima, limitando o tamanho dele) e viram uma
+     barra fixa colada no rodapé — sobra a tela quase inteira pro vídeo. Só
+     existe em #tela-inicio; reserva-se espaço equivalente em
+     #tela-inicio (padding-bottom) pra o conteúdo centralizado não ficar
+     escondido atrás dela. */
+  #tela-inicio { padding-bottom: 160px; }
+  .barra-flutuante-inferior {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
+    display: flex; align-items: center; justify-content: center; gap: 18px; flex-wrap: wrap;
+    background: rgba(15, 23, 42, 0.97); border-top: 1px solid #1e293b;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  }
+  .barra-flutuante-inferior .qrcode-flutuante { flex-shrink: 0; line-height: 0; }
+  .barra-flutuante-inferior .qrcode-flutuante img,
+  .barra-flutuante-inferior .qrcode-flutuante canvas { border-radius: 6px; }
+  .barra-flutuante-inferior .linha-botoes-pequenos { margin-top: 0; }
 
   /* 2026-08-04: botão de trocar câmera (frontal/traseira) sobre o vídeo,
      só nas telas de cadastro facial — útil sobretudo em celular, pra
@@ -238,17 +263,26 @@ if ('serviceWorker' in navigator) {
          leva pro Portal do Aluno no PRÓPRIO celular do cliente — de lá ele
          cadastra, paga, vê o treino e pega seu QR pessoal de acesso (esse
          sim, individual e não adivinhável — ver gerarCodigoAcesso em
-         acessoTerminal.service.js). -->
-    <div class="painel-identificar">
-      <div class="aviso-caixa" style="margin-bottom:12px">Prefere usar o celular? Aponte a câmera pro QR abaixo — cadastro, pagamentos, treino e seu acesso pessoal, tudo por lá.</div>
-      <div id="qrcode-portal-inicio" style="display:flex;justify-content:center"></div>
-    </div>
-
-    <div class="linha-botoes-pequenos">
-      <button class="botao-pequeno" id="btn-ir-vincular">Primeira vez no totem</button>
-      <button class="botao-pequeno" id="btn-ir-cadastro">Quero me cadastrar</button>
-      <button class="botao-pequeno" id="btn-ir-contas">Pagar contas em atraso</button>
-      <button class="botao-pequeno" id="btn-ir-visitante">Indicar visitante/amigo</button>
+         acessoTerminal.service.js).
+         2026-09-02: QR e botões viraram uma barra flutuante fixa no rodapé
+         (.barra-flutuante-inferior, definida no <style> acima) em vez de
+         ficarem no fluxo normal empurrando o vídeo pra cima — libera bem
+         mais espaço vertical pro vídeo de reconhecimento facial (pedido do
+         dono, "quase tela cheia"). Continua DENTRO de #tela-inicio de
+         propósito (mesmo sendo position:fixed) — um `.tela` sem `.ativa`
+         vira display:none, e isso esconde os descendentes mesmo os fixed,
+         então só aparece quando esta tela realmente está ativa. Parágrafo
+         explicativo comprido ("Prefere usar o celular?") removido — não
+         cabe numa barra fina; o QR ao lado dos botões já é autoexplicativo
+         nesse contexto. -->
+    <div class="barra-flutuante-inferior" id="barra-flutuante-inicio">
+      <div id="qrcode-portal-inicio" class="qrcode-flutuante"></div>
+      <div class="linha-botoes-pequenos">
+        <button class="botao-pequeno" id="btn-ir-vincular">Primeira vez no totem</button>
+        <button class="botao-pequeno" id="btn-ir-cadastro">Quero me cadastrar</button>
+        <button class="botao-pequeno" id="btn-ir-contas">Pagar contas em atraso</button>
+        <button class="botao-pequeno" id="btn-ir-visitante">Indicar visitante/amigo</button>
+      </div>
     </div>
   </div>
 

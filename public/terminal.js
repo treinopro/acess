@@ -1166,6 +1166,10 @@ async function processarResultado(chamada, { aoVoltar } = {}) {
 // mesmo link, não expira, não é pessoal) — só leva pro Portal do Aluno no
 // celular de quem escanear; de lá em diante tudo exige CPF + senha própria
 // do aluno (ver portal.routes.js), então não reabre esse mesmo problema.
+// Tamanho pequeno (2026-09-02) de propósito: o QR saiu do painel central e
+// virou parte da barra flutuante fina do rodapé, ao lado dos botões
+// pequenos (ver .barra-flutuante-inferior em terminal.html) — não é mais o
+// elemento principal da tela, só uma opção alternativa sempre visível.
 function renderizarQrPortalInicio() {
   const alvo = document.getElementById('qrcode-portal-inicio');
   if (!alvo) return;
@@ -1173,7 +1177,7 @@ function renderizarQrPortalInicio() {
   // eslint-disable-next-line no-new
   new QRCode(alvo, {
     text: `${window.location.origin}/portal.html`,
-    width: 150, height: 150, colorDark: '#0f172a', colorLight: '#ffffff',
+    width: 64, height: 64, colorDark: '#0f172a', colorLight: '#ffffff',
   });
 }
 

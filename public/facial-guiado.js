@@ -125,8 +125,22 @@ function calcularPoseFacial(deteccao) {
 // vem mais do tamanho/proporção da caixa do que do ângulo fino — pose aqui
 // só precisa barrar casos bem extremos (rosto bem de lado, olhando bem pra
 // baixo/cima), não variação normal de câmera/postura.
+// 2026-09-02: LARGURA_MINIMA_ROSTO_FRACAO afrouxado de 0.10 pra 0.075 —
+// pedido do dono, relato de alunos mais altos precisando se abaixar/chegar
+// mais perto pra serem reconhecidos. Hipótese dele (plausível, mesmo sem
+// câmera real pra confirmar aqui): pessoa mais alta fica naturalmente mais
+// longe do totem numa postura normal (o ângulo de montagem faz a distância
+// "confortável" variar com a altura de quem está na frente), e rosto mais
+// longe ocupa uma fração MENOR da largura do quadro — cai mais perto do
+// corte de 0.10 e passa a exigir aproximar mais. 0.075 permite ~33% mais
+// distância (a fração cai proporcionalmente ao inverso da distância) sem
+// abrir mão das outras checagens (confiança, proporção da caixa, pose) —
+// que continuam sendo, segundo o comentário acima, a defesa mais forte
+// contra rosto parcial/mal enquadrado. Vale observar o comportamento real
+// na academia depois desta mudança e ajustar de novo se ainda não for
+// suficiente (ou se começar a aceitar rosto longe demais/pouco nítido).
 const CONFIANCA_MINIMA_DETECCAO = 0.6;
-const LARGURA_MINIMA_ROSTO_FRACAO = 0.10; // rosto precisa ocupar pelo menos ~10% da largura do quadro
+const LARGURA_MINIMA_ROSTO_FRACAO = 0.075; // rosto precisa ocupar pelo menos ~7.5% da largura do quadro
 const PROPORCAO_MIN_CAIXA_ROSTO = 0.55; // largura/altura da caixa — um rosto de verdade fica nessa faixa
 const PROPORCAO_MAX_CAIXA_ROSTO = 1.45;
 const YAW_MAXIMO_RECONHECIMENTO = 0.5;

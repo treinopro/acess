@@ -9,6 +9,7 @@ const mercadopago = require('../services/payment/mercadopago.service');
 const pagamentoContas = require('../services/pagamentoContas.service');
 const emailBoasVindas = require('../services/emailBoasVindas.service');
 const totemEventos = require('../services/totemEventos.service');
+const { primeiroVencimento, ehRecorrente } = require('../services/cobrancas.service');
 const { criarLimitador } = require('../middleware/rateLimit');
 const { normalizarCpf } = require('../utils/cpf');
 const db = require('../db/client');
@@ -588,10 +589,14 @@ terminal.post('/auto-cadastro', limitadorCadastro, autenticarTerminalOuCadastroP
       args: [matriculaId, alunoId, p.id, hoje, dataFim],
     });
 
+    // Vencimento sempre dia 10 ou 20 (2026-09-02, pedido do dono — cartaz
+    // "só existem 2 datas de vencimento"), só pra planos recorrentes de
+    // verdade — ver mesmo comentário em planos.routes.js.
+    const vencimentoCobranca = ehRecorrente(p.tipo) ? primeiroVencimento(hoje) : hoje;
     await db.execute({
       sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, provedor, provedor_referencia, descricao, vencimento)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      args: [cobrancaId, alunoId, matriculaId, p.valor_centavos, provedor, provedorReferencia, descricao, hoje],
+      args: [cobrancaId, alunoId, matriculaId, p.valor_centavos, provedor, provedorReferencia, descricao, vencimentoCobranca],
     });
 
     res.status(201).json({

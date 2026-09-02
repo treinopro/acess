@@ -3,7 +3,7 @@ const { v4: uuid } = require('uuid');
 const { z } = require('zod');
 const db = require('../db/client');
 const { autenticar } = require('../middleware/auth');
-const { criarCobrancaDoCiclo } = require('../services/cobrancas.service');
+const { criarCobrancaDoCiclo, primeiroVencimento, ehRecorrente } = require('../services/cobrancas.service');
 
 const router = express.Router();
 router.use(autenticar);
@@ -151,12 +151,19 @@ router.post('/matricular', async (req, res, next) => {
       args: [id, dados.aluno_id, dados.plano_id, dados.data_inicio, dataFim, renovacaoAutomatica],
     });
 
+    // Vencimento sempre dia 10 ou 20 (2026-09-02, pedido do dono — cartaz
+    // "só existem 2 datas de vencimento") — só pra planos recorrentes de
+    // verdade (mensal/trimestral/semestral/anual). Avulso/pacote_aulas são
+    // pagamento único (ex.: aula avulsa paga na hora), não "mensalidade", e
+    // continuam vencendo na própria data de início — ver primeiroVencimento
+    // em cobrancas.service.js.
+    const vencimento = ehRecorrente(plano.rows[0].tipo) ? primeiroVencimento(dados.data_inicio) : dados.data_inicio;
     const cobrancaId = await criarCobrancaDoCiclo({
       matriculaId: id,
       alunoId: dados.aluno_id,
       descricao: `Mensalidade - ${plano.rows[0].nome}`,
       valorCentavos: plano.rows[0].valor_centavos,
-      vencimento: dados.data_inicio,
+      vencimento,
     });
 
     res.status(201).json({ id, data_fim: dataFim, cobranca_id: cobrancaId });

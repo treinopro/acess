@@ -1019,6 +1019,22 @@ const DIAS_SEMANA_PORTAL = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 const treinoFocoExercicio = {};
 let treinosCacheHub = [];
 
+// Cronômetro por treino-card (2026-09-02, port do TreinoPro) — um estado por
+// treino (não um único global) porque, quando o aluno tem mais de um treino
+// marcado pro mesmo dia da semana, cada card cronometra a sua própria sessão
+// independentemente. Zera sozinho só quando o aluno clica no botão de
+// "zerar" — não é afetado por re-renders (navegação, marcar exercício).
+const treinoTimers = {};
+function formatarTempoTimer(totalSeg) {
+  const min = Math.floor(totalSeg / 60).toString().padStart(2, '0');
+  const seg = (totalSeg % 60).toString().padStart(2, '0');
+  return `${min}:${seg}`;
+}
+function obterTimer(treinoId) {
+  if (!treinoTimers[treinoId]) treinoTimers[treinoId] = { seg: 0, rodando: false, intervalo: null };
+  return treinoTimers[treinoId];
+}
+
 function playerHeroMediaHtml(ex) {
   const yt = ex.video_url ? youtubeEmbedUrl(ex.video_url) : null;
   if (yt) return `<div class="player-hero-media"><iframe src="${yt}" allowfullscreen loading="lazy"></iframe></div>`;
@@ -1047,6 +1063,21 @@ async function abrirPainelTreino() {
   ocultarPaineisHub();
   document.getElementById('painel-hub-treino').classList.remove('oculto');
   renderizarTreinosHub();
+  carregarGamificacaoHub();
+}
+
+// Só mostra o(s) treino(s) marcados pro dia de hoje (mesmo espírito do
+// TreinoPro — 1 treino em foco por dia, não a lista inteira do aluno de uma
+// vez). Um treino sem dias_semana definidos (nenhum dia marcado na aba
+// Treinos do professor) continua aparecendo todo dia — é o mesmo
+// comportamento "sem restrição" de antes desta mudança, só não filtra.
+// Combinado com o reset diário que já existia (concluido_em == hoje, ver GET
+// /treino em portal.routes.js), um treino de só 1 dia por semana (ex.:
+// só segunda) reaparece pro aluno já desmarcado quando a próxima segunda
+// chegar — sem precisar de nenhuma lógica de "reset semanal" à parte.
+function treinosDeHoje() {
+  const hojeIdx = new Date().getDay();
+  return treinosCacheHub.filter((t) => !(t.dias_semana || []).length || t.dias_semana.includes(hojeIdx));
 }
 
 function renderizarTreinosHub() {
@@ -1055,13 +1086,26 @@ function renderizarTreinosHub() {
     alvo.innerHTML = '<p>Nenhum treino cadastrado ainda. Fale com seu instrutor.</p>';
     return;
   }
+  const treinosHoje = treinosDeHoje();
+  if (!treinosHoje.length) {
+    alvo.innerHTML = '<div class="treino-card" style="text-align:center;padding:32px 16px"><div style="font-size:15px">Hoje é dia de descanso 💆</div><p style="color:#94a3b8;font-size:13px;margin-top:8px">Aproveite pra recuperar. Seu próximo treino aparece aqui no dia certo.</p></div>';
+    return;
+  }
 
-  alvo.innerHTML = treinosCacheHub.map((t) => {
+  alvo.innerHTML = treinosHoje.map((t) => {
     const diasTexto = (t.dias_semana || []).map((d) => DIAS_SEMANA_PORTAL[d]).join(', ') || 'Sem dias definidos';
+    const timer = obterTimer(t.id);
+    const barraTimerHtml = `
+      <div class="player-timer-bar" data-tid="${t.id}">
+        <button type="button" class="player-timer-btn stop" data-acao="zerar-timer" title="Zerar cronômetro">■</button>
+        <div class="player-timer-display" data-timer-display="${t.id}">${formatarTempoTimer(timer.seg)}</div>
+        <button type="button" class="player-timer-btn play" data-acao="alternar-timer" title="Iniciar/Pausar">${timer.rodando ? '⏸' : '▶'}</button>
+      </div>
+    `;
     if (!t.exercicios.length) {
       return `
         <div class="treino-card" data-tid="${t.id}">
-          <h4>${t.nome}</h4>
+          <div class="treino-card-topo"><h4>${t.nome}</h4></div>
           <div class="dias">${diasTexto}</div>
           <p style="color:#94a3b8;font-size:13px">Nenhum exercício adicionado ainda.</p>
         </div>
@@ -1070,11 +1114,16 @@ function renderizarTreinosHub() {
 
     const atual = escolherExercicioAtual(t.id, t.exercicios);
     treinoFocoExercicio[t.id] = atual.id;
+    const concluidos = t.exercicios.filter((ex) => ex.concluido).length;
 
     return `
       <div class="treino-card" data-tid="${t.id}">
-        <h4>${t.nome}</h4>
+        <div class="treino-card-topo">
+          <h4>${t.nome}</h4>
+          <span class="badge-contagem">${concluidos} de ${t.exercicios.length} concluídos</span>
+        </div>
         <div class="dias">${diasTexto}</div>
+        ${barraTimerHtml}
 
         ${playerHeroMediaHtml(atual)}
         <div class="player-hero-nome">${atual.exercicio}</div>
@@ -1137,6 +1186,56 @@ function renderizarTreinosHub() {
     });
   });
 
+  // Cronômetro: atualiza só o próprio texto a cada segundo (não chama
+  // renderizarTreinosHub de novo — re-renderizar o card inteiro a cada tique
+  // perderia o foco/cursor de quem estiver digitando peso/reps). Sobrevive a
+  // re-renders motivados por outras ações porque busca o elemento pelo
+  // seletor de novo a cada tique, em vez de guardar uma referência presa ao
+  // DOM antigo.
+  function iniciarTiqueTimer(treinoId) {
+    const timer = obterTimer(treinoId);
+    if (timer.intervalo) return;
+    timer.intervalo = setInterval(() => {
+      timer.seg += 1;
+      const display = document.querySelector(`[data-timer-display="${treinoId}"]`);
+      if (display) display.textContent = formatarTempoTimer(timer.seg);
+    }, 1000);
+  }
+  function pararTiqueTimer(treinoId) {
+    const timer = obterTimer(treinoId);
+    if (timer.intervalo) { clearInterval(timer.intervalo); timer.intervalo = null; }
+  }
+  alvo.querySelectorAll('.player-timer-btn[data-acao="alternar-timer"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const treinoId = btn.closest('.player-timer-bar').dataset.tid;
+      const timer = obterTimer(treinoId);
+      timer.rodando = !timer.rodando;
+      if (timer.rodando) iniciarTiqueTimer(treinoId); else pararTiqueTimer(treinoId);
+      btn.textContent = timer.rodando ? '⏸' : '▶';
+    });
+  });
+  alvo.querySelectorAll('.player-timer-btn[data-acao="zerar-timer"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const treinoId = btn.closest('.player-timer-bar').dataset.tid;
+      pararTiqueTimer(treinoId);
+      const timer = obterTimer(treinoId);
+      timer.seg = 0;
+      timer.rodando = false;
+      const display = document.querySelector(`[data-timer-display="${treinoId}"]`);
+      if (display) display.textContent = formatarTempoTimer(0);
+      const btnPlay = btn.closest('.player-timer-bar').querySelector('[data-acao="alternar-timer"]');
+      if (btnPlay) btnPlay.textContent = '▶';
+    });
+  });
+  // Se o timer já estava rodando antes deste re-render (ex.: aluno navegou
+  // pro próximo exercício com o cronômetro ligado), religa o tique sem
+  // precisar tocar em play de novo — senão o setInterval antigo continuaria
+  // rodando escrevendo num elemento que já não existe mais.
+  alvo.querySelectorAll('.player-timer-bar[data-tid]').forEach((barra) => {
+    const treinoId = barra.dataset.tid;
+    if (obterTimer(treinoId).rodando) iniciarTiqueTimer(treinoId);
+  });
+
   // Peso usado/repetições (2026-08-27, e 2026-09-02 o botão "Registrar"):
   // marcar o check já grava junto o que estiver preenchido nos campos de
   // peso/reps do exercício em foco (o aluno pode preencher antes ou depois
@@ -1154,7 +1253,7 @@ function renderizarTreinosHub() {
     const pesoUsado = card.querySelector('.input-peso-usado').value.trim();
     const repsTexto = card.querySelector('.input-reps-max').value.trim();
     const repeticoesMax = repsTexto ? Number(repsTexto) : null;
-    await api(`/api/portal/treino/exercicio/${exercicioId}/concluir`, {
+    const resp = await api(`/api/portal/treino/exercicio/${exercicioId}/concluir`, {
       method: 'POST',
       body: JSON.stringify({
         cpf: cpfHubAtual, senha: senhaHubAtual, concluido: marcarComo,
@@ -1178,6 +1277,10 @@ function renderizarTreinosHub() {
     renderizarTreinosHub();
     if (marcarComo && repeticoesMax != null && repeticoesMax > 13) {
       alert('Boa! Como você conseguiu mais de 13 repetições, seu professor vai revisar a carga desse exercício.');
+    }
+    if (marcarComo && resp.conquistas_novas && resp.conquistas_novas.length) {
+      comemorarConquistas(resp.conquistas_novas);
+      carregarGamificacaoHub();
     }
   }
 
@@ -1212,11 +1315,12 @@ function renderizarTreinosHub() {
       const treinoId = btn.closest('.treino-card').dataset.tid;
       btn.disabled = true;
       try {
-        await api(`/api/portal/treino/${treinoId}/concluir-treino`, {
+        const resp = await api(`/api/portal/treino/${treinoId}/concluir-treino`, {
           method: 'POST',
           body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual }),
         });
         alert('Parabéns! Treino concluído. 💪');
+        if (resp.conquistas_novas && resp.conquistas_novas.length) comemorarConquistas(resp.conquistas_novas);
         await abrirPainelTreino();
       } catch (err) {
         alert(err.message);
@@ -1224,6 +1328,45 @@ function renderizarTreinosHub() {
       }
     });
   });
+}
+
+// Conquistas/gamificação (2026-09-02, port do TreinoPro) — "Meu progresso":
+// streak em semanas, total de treinos e a vitrine de badges (desbloqueadas
+// coloridas, bloqueadas apagadas). Busca à parte de abrirPainelTreino (não
+// bloqueia a tela de treino esperando isso) e de novo depois de qualquer
+// ação que possa ter desbloqueado uma badge nova.
+async function carregarGamificacaoHub() {
+  const alvo = document.getElementById('conteudo-gamificacao-hub');
+  if (!alvo) return;
+  try {
+    const resumo = await api(`/api/portal/gamificacao?cpf=${encodeURIComponent(cpfHubAtual)}&senha=${encodeURIComponent(senhaHubAtual)}`);
+    renderizarGamificacaoHub(resumo);
+  } catch { /* gamificação é só um extra visual — não trava o resto do portal se falhar */ }
+}
+function renderizarGamificacaoHub(resumo) {
+  const alvo = document.getElementById('conteudo-gamificacao-hub');
+  if (!alvo) return;
+  const streakTexto = resumo.streakSemanas >= 1
+    ? `🔥 ${resumo.streakSemanas} semana${resumo.streakSemanas === 1 ? '' : 's'} seguida${resumo.streakSemanas === 1 ? '' : 's'} · ${resumo.totalTreinos} treino${resumo.totalTreinos === 1 ? '' : 's'} registrado${resumo.totalTreinos === 1 ? '' : 's'} no total`
+    : `${resumo.totalTreinos} treino${resumo.totalTreinos === 1 ? '' : 's'} registrado${resumo.totalTreinos === 1 ? '' : 's'} no total`;
+  alvo.innerHTML = `
+    <div class="progresso-card">
+      <h4>Meu progresso</h4>
+      <div class="progresso-streak">${streakTexto} · ${resumo.totalDesbloqueadas} de ${resumo.totalBadges} conquistas</div>
+      <div class="badges-grid">
+        ${resumo.badges.map((b) => `
+          <div class="badge-item ${b.desbloqueada ? 'desbloqueada' : ''}" title="${escapeHtml(b.descricao)}">
+            <span class="icone">${b.icone}</span>
+            <span class="nome">${b.nome}</span>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+function comemorarConquistas(conquistas) {
+  const texto = conquistas.map((c) => `${c.icone} ${c.nome}`).join('\n');
+  alert(`Nova conquista desbloqueada!\n\n${texto}`);
 }
 
 document.getElementById('btn-abrir-treino').addEventListener('click', async () => {

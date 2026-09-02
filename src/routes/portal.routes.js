@@ -33,6 +33,7 @@ const acessoTerminal = require('../services/acessoTerminal.service');
 const pagamentoContas = require('../services/pagamentoContas.service');
 const mercadopago = require('../services/payment/mercadopago.service');
 const emailBoasVindas = require('../services/emailBoasVindas.service');
+const gamificacao = require('../services/gamificacao.service');
 const webPush = require('../services/webPush.service');
 const { criarLimitador } = require('../middleware/rateLimit');
 const { normalizarCpf } = require('../utils/cpf');
@@ -370,15 +371,17 @@ router.post('/treino/exercicio/:id/concluir', limitadorSenhaPortal, async (req, 
       ],
     });
 
+    let conquistasNovas = [];
     if (dados.concluido) {
       await db.execute({
         sql: `INSERT INTO treino_execucoes (id, aluno_id, treino_id, treino_exercicio_id, tipo, peso_usado, repeticoes_max)
               VALUES (?, ?, ?, ?, 'exercicio', ?, ?)`,
         args: [uuid(), aluno.id, dono.rows[0].treino_id, req.params.id, dados.peso_usado || null, dados.repeticoes_max ?? null],
       });
+      conquistasNovas = await gamificacao.verificarConquistas(aluno.id);
     }
 
-    res.json({ ok: true });
+    res.json({ ok: true, conquistas_novas: conquistasNovas });
   } catch (err) {
     next(err);
   }
@@ -417,8 +420,24 @@ router.post('/treino/:id/concluir-treino', limitadorSenhaPortal, async (req, res
       sql: 'UPDATE treino_exercicios SET concluido = 0, concluido_em = NULL WHERE treino_id = ?',
       args: [req.params.id],
     });
+    const conquistasNovas = await gamificacao.verificarConquistas(aluno.id);
 
-    res.json({ ok: true, aluno_nome: aluno.nome });
+    res.json({ ok: true, aluno_nome: aluno.nome, conquistas_novas: conquistasNovas });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/portal/gamificacao?cpf=...&senha=... — streak (semanas seguidas
+// treinando), total de treinos e a vitrine de badges (desbloqueadas e
+// bloqueadas) pra tela "Meu progresso" do portal (ver
+// src/services/gamificacao.service.js).
+router.get('/gamificacao', limitadorSenhaPortal, async (req, res, next) => {
+  try {
+    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(req.query);
+    const autenticado = await autenticarAlunoPortal(cpf, senha);
+    if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
+    res.json(await gamificacao.obterResumoGamificacao(autenticado.aluno.id));
   } catch (err) {
     next(err);
   }

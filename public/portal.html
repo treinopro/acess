@@ -287,6 +287,32 @@ if ('serviceWorker' in navigator) {
   .player-ex-dot { flex-shrink: 0; width: 14px; height: 14px; border-radius: 50%; border: 2px solid #334155; }
   .player-ex-dot.marcado { background: #10b981; border-color: #10b981; }
 
+  .treino-card-topo { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  .treino-card-topo h4 { margin: 0; }
+  .badge-contagem { background: #1e293b; border-radius: 999px; padding: 4px 12px; font-size: 12px; color: #cbd5e1; white-space: nowrap; }
+
+  /* Cronômetro do treino (2026-09-02, port do TreinoPro) — cada treino-card
+     tem o seu próprio (treinoTimers em portal.js), pra funcionar mesmo se
+     mais de um treino estiver marcado pro mesmo dia. */
+  .player-timer-bar { display: flex; align-items: center; justify-content: center; gap: 16px; background: #0b111e; border-radius: 10px; padding: 10px; margin-bottom: 12px; }
+  .player-timer-display { font-family: monospace; font-size: 20px; font-weight: 700; min-width: 74px; text-align: center; }
+  .player-timer-btn {
+    flex-shrink: 0; width: 36px; height: 36px; border-radius: 50%; border: none; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; font-size: 15px; color: #fff;
+  }
+  .player-timer-btn.play { background: #10b981; }
+  .player-timer-btn.stop { background: #334155; }
+
+  /* Gamificação/conquistas (2026-09-02, port do TreinoPro) */
+  .progresso-card { background: #0f172a; border-radius: 10px; padding: 16px; margin-top: 12px; }
+  .progresso-card h4 { margin: 0 0 4px; font-size: 16px; }
+  .progresso-streak { color: #94a3b8; font-size: 14px; margin-bottom: 12px; }
+  .badges-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .badge-item { text-align: center; background: #1e293b; border-radius: 10px; padding: 10px 4px; opacity: 0.35; }
+  .badge-item.desbloqueada { opacity: 1; background: #052e1b; }
+  .badge-item .icone { font-size: 22px; display: block; margin-bottom: 4px; }
+  .badge-item .nome { font-size: 11px; color: #cbd5e1; line-height: 1.2; }
+
   /* Minhas avaliações */
   .avaliacao-card { background: #0f172a; border-radius: 10px; padding: 16px; margin-bottom: 12px; }
   .avaliacao-card h4 { margin: 0 0 12px; font-size: 16px; }
@@ -429,6 +455,7 @@ if ('serviceWorker' in navigator) {
     <div class="cartao oculto" id="painel-hub-treino" style="text-align:left">
       <h3>Meu treino</h3>
       <div id="conteudo-treino-hub"></div>
+      <div id="conteudo-gamificacao-hub"></div>
     </div>
 
     <!-- Upgrade de plano -->

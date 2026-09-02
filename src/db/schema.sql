@@ -475,6 +475,21 @@ CREATE TABLE IF NOT EXISTS treino_execucoes (
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Conquistas do aluno (2026-09-02, port do TreinoPro — ver
+-- src/services/gamificacao.service.js). Streak (semanas seguidas treinando)
+-- e total de treinos são calculados em tempo real a partir de
+-- treino_execucoes (nunca gravados aqui, sempre a fonte da verdade); esta
+-- tabela só guarda QUAL badge já foi desbloqueada e QUANDO, pra nunca
+-- re-desbloquear/re-comemorar a mesma de novo (UNIQUE cuida disso).
+CREATE TABLE IF NOT EXISTS aluno_conquistas (
+  id TEXT PRIMARY KEY,
+  aluno_id TEXT NOT NULL REFERENCES alunos(id) ON DELETE CASCADE,
+  badge_key TEXT NOT NULL,
+  desbloqueada_em TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(aluno_id, badge_key)
+);
+CREATE INDEX IF NOT EXISTS idx_aluno_conquistas_aluno ON aluno_conquistas(aluno_id);
+
 -- Biblioteca de exercícios (2026-08, port do TreinoPro) — catálogo único e
 -- global (este sistema não é multi-tenant como o TreinoPro: uma só
 -- academia, um só catálogo, gerenciado pelo admin). Usada tanto para montar

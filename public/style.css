@@ -370,9 +370,10 @@ body {
 .modal-topo { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .modal-topo h3 { margin: 0; font-size: 18px; }
 .modal-card label { display: block; font-size: 13px; margin: 10px 0 4px; color: #344054; }
-.modal-card input, .modal-card select {
+.modal-card input, .modal-card select, .modal-card textarea {
   width: 100%; padding: 9px 11px; border: 1px solid #d0d5dd; border-radius: 8px; font-size: 14px; font-family: inherit;
 }
+.modal-card textarea { resize: vertical; }
 .modal-card input:disabled, .modal-card select:disabled { background: #f2f4f7; color: #98a2b3; }
 
 /* ---------- Toast ---------- */

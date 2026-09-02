@@ -1009,87 +1009,194 @@ function videoPreviewHtml(url) {
   return `<div style="margin-top:6px"><a href="${url}" target="_blank" rel="noopener" class="btn-ver-video-ex" style="text-decoration:none;display:inline-block">▶ Ver vídeo</a></div>`;
 }
 
+const DIAS_SEMANA_PORTAL = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+// Treino "em foco" por card (2026-09-02, layout inspirado no TreinoPro — ver
+// abrirPainelTreino/renderizarTreinosHub abaixo): qual exercício o hero do
+// treino X está mostrando agora. Sobrevive a re-renders (navegação
+// anterior/próximo, marcar exercício), só é limpo quando o painel é reaberto
+// do zero (abrirPainelTreino busca os dados de novo e escolheCurrentExercicio
+// reconstrói a partir daí).
+const treinoFocoExercicio = {};
+let treinosCacheHub = [];
+
+function playerHeroMediaHtml(ex) {
+  const yt = ex.video_url ? youtubeEmbedUrl(ex.video_url) : null;
+  if (yt) return `<div class="player-hero-media"><iframe src="${yt}" allowfullscreen loading="lazy"></iframe></div>`;
+  if (ex.video_url) return `<div class="player-hero-media"><a href="${ex.video_url}" target="_blank" rel="noopener" class="btn-ver-video-ex" style="display:block;text-align:center;padding:60px 0;text-decoration:none">▶ Ver vídeo</a></div>`;
+  if (ex.imagem_url) return `<div class="player-hero-media"><img src="${ex.imagem_url}" loading="lazy"></div>`;
+  return '<div class="player-hero-media"><div class="sem-midia">🏋️</div></div>';
+}
+function playerThumbHtml(ex) {
+  return ex.imagem_url ? `<img src="${ex.imagem_url}" loading="lazy">` : '🏋️';
+}
+// Escolhe o exercício em foco: mantém o que já estava selecionado (se ainda
+// existir no treino), senão pega o primeiro não concluído, senão o primeiro
+// de todos (treino inteiro já feito) — mesma regra do TreinoPro
+// (pickCurrentExercise em index.html).
+function escolherExercicioAtual(treinoId, exercicios) {
+  const focoId = treinoFocoExercicio[treinoId];
+  if (focoId) {
+    const achado = exercicios.find((e) => e.id === focoId);
+    if (achado) return achado;
+  }
+  return exercicios.find((e) => !e.concluido) || exercicios[0];
+}
+
 async function abrirPainelTreino() {
-  const treinos = await api(`/api/portal/treino?cpf=${encodeURIComponent(cpfHubAtual)}&senha=${encodeURIComponent(senhaHubAtual)}`);
+  treinosCacheHub = await api(`/api/portal/treino?cpf=${encodeURIComponent(cpfHubAtual)}&senha=${encodeURIComponent(senhaHubAtual)}`);
   ocultarPaineisHub();
   document.getElementById('painel-hub-treino').classList.remove('oculto');
-  const DIAS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+  renderizarTreinosHub();
+}
+
+function renderizarTreinosHub() {
   const alvo = document.getElementById('conteudo-treino-hub');
-  if (!treinos.length) {
+  if (!treinosCacheHub.length) {
     alvo.innerHTML = '<p>Nenhum treino cadastrado ainda. Fale com seu instrutor.</p>';
     return;
   }
-  alvo.innerHTML = treinos.map((t) => `
-    <div class="treino-card">
-      <h4>${t.nome}</h4>
-      <div class="dias">${(t.dias_semana || []).map((d) => DIAS[d]).join(', ') || 'Sem dias definidos'}</div>
-      ${t.exercicios.map((ex) => `
-        <div class="exercicio-linha ${ex.concluido ? 'concluido' : ''}">
-          <div class="topo">
-            <div>
-              <div class="nome">${ex.exercicio}</div>
-              <div class="detalhe">${[ex.series && `${ex.series} séries`, ex.carga && `carga ${ex.carga}`, ex.intervalo && `intervalo ${ex.intervalo}`].filter(Boolean).join(' · ')}</div>
-            </div>
-            <button type="button" class="check-concluido ${ex.concluido ? 'marcado' : ''}" data-eid="${ex.id}" title="Marcar como concluído">${ex.concluido ? '✓' : ''}</button>
-          </div>
-          ${ex.metodo ? `<span class="tag">⚡ ${ex.metodo}</span>` : ''}
-          ${ex.observacao ? `<div class="detalhe">${ex.observacao}</div>` : ''}
-          ${ex.dica ? `<div class="detalhe">💡 ${ex.dica}</div>` : ''}
-          ${ex.imagem_url && !ex.video_url ? `<img class="exercicio-imagem" src="${ex.imagem_url}" loading="lazy">` : ''}
-          ${ex.video_url ? `<button type="button" class="btn-ver-video-ex" data-video="${ex.video_url}" data-target="vid_${ex.id}">▶ Ver execução</button><div id="vid_${ex.id}"></div>` : ''}
-          <div class="registro-carga" style="display:flex;gap:8px;margin-top:8px">
-            <!-- font-size:16px (2026-08-31) é o mínimo pra iOS NÃO dar zoom
-                 automático ao focar o campo — sem isso aqui, herdava o
-                 tamanho padrão do navegador (menor que 16px), e o zoom
-                 disparado ao tocar o campo continuava "grudado" nas telas
-                 seguintes (causa real do corte no rodapé relatado). -->
-            <input type="text" class="input-peso-usado" data-eid="${ex.id}" placeholder="Peso usado (ex: 20kg)" value="${escapeHtml(ex.ultimo_peso_usado || '')}" style="flex:1;min-width:0;padding:8px;font-size:16px;border:1px solid #30384a;border-radius:8px;background:transparent;color:inherit" />
-            <input type="number" class="input-reps-max" data-eid="${ex.id}" placeholder="Repetições" min="0" max="999" value="${ex.ultimo_repeticoes_max ?? ''}" style="width:100px;padding:8px;font-size:16px;border:1px solid #30384a;border-radius:8px;background:transparent;color:inherit" />
-          </div>
-        </div>
-      `).join('') || '<p style="color:#94a3b8;font-size:13px">Nenhum exercício adicionado ainda.</p>'}
-      ${t.exercicios.length ? `<button type="button" class="btn-concluir-treino" data-tid="${t.id}" style="margin-top:14px;width:100%">Concluir treino</button>` : ''}
-    </div>
-  `).join('');
 
-  alvo.querySelectorAll('.btn-ver-video-ex[data-video]').forEach((btn) => {
+  alvo.innerHTML = treinosCacheHub.map((t) => {
+    const diasTexto = (t.dias_semana || []).map((d) => DIAS_SEMANA_PORTAL[d]).join(', ') || 'Sem dias definidos';
+    if (!t.exercicios.length) {
+      return `
+        <div class="treino-card" data-tid="${t.id}">
+          <h4>${t.nome}</h4>
+          <div class="dias">${diasTexto}</div>
+          <p style="color:#94a3b8;font-size:13px">Nenhum exercício adicionado ainda.</p>
+        </div>
+      `;
+    }
+
+    const atual = escolherExercicioAtual(t.id, t.exercicios);
+    treinoFocoExercicio[t.id] = atual.id;
+
+    return `
+      <div class="treino-card" data-tid="${t.id}">
+        <h4>${t.nome}</h4>
+        <div class="dias">${diasTexto}</div>
+
+        ${playerHeroMediaHtml(atual)}
+        <div class="player-hero-nome">${atual.exercicio}</div>
+        <div class="player-hero-detalhe">${[atual.series, atual.carga].filter(Boolean).join(' · ')}</div>
+        ${atual.metodo ? `<span class="tag">⚡ ${atual.metodo}</span>` : ''}
+        ${atual.intervalo ? `<span class="tag">⏱ ${atual.intervalo}</span>` : ''}
+        ${atual.observacao ? `<div class="detalhe" style="margin-top:6px">${atual.observacao}</div>` : ''}
+        ${atual.dica ? `<div class="detalhe">💡 ${atual.dica}</div>` : ''}
+
+        <div class="player-nav-row">
+          <button type="button" class="player-nav-btn" data-acao="anterior" title="Exercício anterior">◀</button>
+          <button type="button" class="check-concluido grande ${atual.concluido ? 'marcado' : ''}" data-eid="${atual.id}" title="Marcar como concluído">${atual.concluido ? '✓' : ''}</button>
+          <button type="button" class="player-nav-btn" data-acao="proximo" title="Próximo exercício">▶</button>
+        </div>
+
+        <!-- font-size:16px (2026-08-31) é o mínimo pra iOS NÃO dar zoom
+             automático ao focar o campo — ver comentário grande no <head>. -->
+        <div class="registro-carga" style="display:flex;gap:8px">
+          <input type="text" class="input-peso-usado" placeholder="Peso usado (ex: 20kg)" value="${escapeHtml(atual.ultimo_peso_usado || '')}" style="flex:1;min-width:0;padding:8px;font-size:16px;border:1px solid #30384a;border-radius:8px;background:transparent;color:inherit" />
+          <input type="number" class="input-reps-max" placeholder="Repetições" min="0" max="999" value="${atual.ultimo_repeticoes_max ?? ''}" style="width:100px;padding:8px;font-size:16px;border:1px solid #30384a;border-radius:8px;background:transparent;color:inherit" />
+          <button type="button" class="btn-registrar" data-acao="registrar">Registrar</button>
+        </div>
+
+        <div class="player-ex-list">
+          ${t.exercicios.map((ex) => `
+            <div class="player-ex-row ${ex.id === atual.id ? 'ativo' : ''} ${ex.concluido ? 'concluido' : ''}" data-acao="focar" data-eid="${ex.id}">
+              <div class="player-ex-thumb">${playerThumbHtml(ex)}</div>
+              <div class="player-ex-nome">${ex.exercicio}</div>
+              <div class="player-ex-series">${ex.series || ''}</div>
+              <div class="player-ex-dot ${ex.concluido ? 'marcado' : ''}"></div>
+            </div>
+          `).join('')}
+        </div>
+
+        <button type="button" class="btn-concluir-treino" data-acao="concluir-treino" style="margin-top:14px;width:100%">Concluir treino</button>
+      </div>
+    `;
+  }).join('');
+
+  // Navegar pro exercício anterior/próximo do treino, ou pular direto pra um
+  // pelo clique na lista compacta — só troca o "foco" e re-renderiza (dados
+  // já estão em treinosCacheHub, não precisa buscar de novo no servidor).
+  alvo.querySelectorAll('.player-nav-btn[data-acao]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      const box = document.getElementById(btn.dataset.target);
-      if (box.innerHTML) { box.innerHTML = ''; btn.textContent = '▶ Ver execução'; }
-      else { box.innerHTML = videoPreviewHtml(btn.dataset.video); btn.textContent = '▲ Fechar vídeo'; }
+      const treinoId = btn.closest('.treino-card').dataset.tid;
+      const treino = treinosCacheHub.find((t) => t.id === treinoId);
+      if (!treino) return;
+      const idxAtual = treino.exercicios.findIndex((e) => e.id === treinoFocoExercicio[treinoId]);
+      const delta = btn.dataset.acao === 'proximo' ? 1 : -1;
+      const proximo = treino.exercicios[(idxAtual + delta + treino.exercicios.length) % treino.exercicios.length];
+      treinoFocoExercicio[treinoId] = proximo.id;
+      renderizarTreinosHub();
     });
   });
-  // Peso usado/repetições (2026-08-27): só vão junto quando o aluno está
-  // MARCANDO como feito (não ao desmarcar) — lidos dos dois campos ao lado
-  // do exercício no momento do clique, então o aluno pode preencher antes
-  // ou depois de tocar o check, tanto faz. Mais de 13 repetições manda o
-  // exercício pras Pendências do professor (ver LIMITE_REPETICOES_SEM_AJUSTE
-  // em portal.routes.js) — avisa o aluno na hora também, só pra ele saber
-  // que o professor vai revisar a carga.
-  alvo.querySelectorAll('.check-concluido').forEach((btn) => {
+  alvo.querySelectorAll('.player-ex-row[data-acao="focar"]').forEach((linha) => {
+    linha.addEventListener('click', () => {
+      const treinoId = linha.closest('.treino-card').dataset.tid;
+      treinoFocoExercicio[treinoId] = linha.dataset.eid;
+      renderizarTreinosHub();
+    });
+  });
+
+  // Peso usado/repetições (2026-08-27, e 2026-09-02 o botão "Registrar"):
+  // marcar o check já grava junto o que estiver preenchido nos campos de
+  // peso/reps do exercício em foco (o aluno pode preencher antes ou depois
+  // de tocar o check). "Registrar" faz a mesma chamada mas fica disponível
+  // mesmo com o exercício já marcado — pra atualizar o peso depois de trocar
+  // de carga no meio da série, sem precisar desmarcar/marcar de novo. Nos
+  // dois casos, o peso informado agora também SUBSTITUI a carga prescrita
+  // (ver POST /treino/exercicio/:id/concluir em portal.routes.js) até o
+  // professor ajustar de novo. Mais de 13 repetições manda o exercício pras
+  // Pendências do professor (ver LIMITE_REPETICOES_SEM_AJUSTE em
+  // portal.routes.js) — avisa o aluno na hora também, só pra ele saber que o
+  // professor vai revisar a carga.
+  async function registrarExercicio(treinoId, exercicioId, marcarComo) {
+    const card = alvo.querySelector(`.treino-card[data-tid="${treinoId}"]`);
+    const pesoUsado = card.querySelector('.input-peso-usado').value.trim();
+    const repsTexto = card.querySelector('.input-reps-max').value.trim();
+    const repeticoesMax = repsTexto ? Number(repsTexto) : null;
+    await api(`/api/portal/treino/exercicio/${exercicioId}/concluir`, {
+      method: 'POST',
+      body: JSON.stringify({
+        cpf: cpfHubAtual, senha: senhaHubAtual, concluido: marcarComo,
+        peso_usado: marcarComo ? (pesoUsado || null) : null,
+        repeticoes_max: marcarComo ? repeticoesMax : null,
+      }),
+    });
+    const treino = treinosCacheHub.find((t) => t.id === treinoId);
+    const ex = treino && treino.exercicios.find((e) => e.id === exercicioId);
+    if (ex) {
+      ex.concluido = marcarComo;
+      if (marcarComo) {
+        if (pesoUsado) { ex.ultimo_peso_usado = pesoUsado; ex.carga = pesoUsado; }
+        ex.ultimo_repeticoes_max = repeticoesMax;
+      }
+    }
+    if (marcarComo && treino) {
+      const proximo = treino.exercicios.find((e) => !e.concluido);
+      if (proximo) treinoFocoExercicio[treinoId] = proximo.id;
+    }
+    renderizarTreinosHub();
+    if (marcarComo && repeticoesMax != null && repeticoesMax > 13) {
+      alert('Boa! Como você conseguiu mais de 13 repetições, seu professor vai revisar a carga desse exercício.');
+    }
+  }
+
+  alvo.querySelectorAll('.check-concluido[data-eid]').forEach((btn) => {
     btn.addEventListener('click', async () => {
+      const treinoId = btn.closest('.treino-card').dataset.tid;
       const marcarComo = !btn.classList.contains('marcado');
-      const linha = btn.closest('.exercicio-linha');
-      const inputPeso = linha.querySelector('.input-peso-usado');
-      const inputReps = linha.querySelector('.input-reps-max');
-      const pesoUsado = marcarComo ? inputPeso.value.trim() : '';
-      const repsTexto = marcarComo ? inputReps.value.trim() : '';
-      const repeticoesMax = repsTexto ? Number(repsTexto) : null;
-      try {
-        await api(`/api/portal/treino/exercicio/${btn.dataset.eid}/concluir`, {
-          method: 'POST',
-          body: JSON.stringify({
-            cpf: cpfHubAtual, senha: senhaHubAtual, concluido: marcarComo,
-            peso_usado: pesoUsado || null, repeticoes_max: repeticoesMax,
-          }),
-        });
-        btn.classList.toggle('marcado', marcarComo);
-        btn.textContent = marcarComo ? '✓' : '';
-        linha.classList.toggle('concluido', marcarComo);
-        if (marcarComo && repeticoesMax != null && repeticoesMax > 13) {
-          alert('Boa! Como você conseguiu mais de 13 repetições, seu professor vai revisar a carga desse exercício.');
-        }
-      } catch (err) { alert(err.message); }
+      try { await registrarExercicio(treinoId, btn.dataset.eid, marcarComo); }
+      catch (err) { alert(err.message); }
+    });
+  });
+  alvo.querySelectorAll('.btn-registrar[data-acao="registrar"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const treinoId = btn.closest('.treino-card').dataset.tid;
+      const exercicioId = treinoFocoExercicio[treinoId];
+      btn.disabled = true;
+      try { await registrarExercicio(treinoId, exercicioId, true); }
+      catch (err) { alert(err.message); }
+      finally { btn.disabled = false; }
     });
   });
 
@@ -1100,11 +1207,12 @@ async function abrirPainelTreino() {
   // permanente de que o aluno treinou (pro professor) já foi gravado a cada
   // exercício marcado — este botão só ADICIONA um evento "treino concluído"
   // a mais nesse histórico, nunca substitui os anteriores.
-  alvo.querySelectorAll('.btn-concluir-treino').forEach((btn) => {
+  alvo.querySelectorAll('.btn-concluir-treino[data-acao="concluir-treino"]').forEach((btn) => {
     btn.addEventListener('click', async () => {
+      const treinoId = btn.closest('.treino-card').dataset.tid;
       btn.disabled = true;
       try {
-        await api(`/api/portal/treino/${btn.dataset.tid}/concluir-treino`, {
+        await api(`/api/portal/treino/${treinoId}/concluir-treino`, {
           method: 'POST',
           body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual }),
         });

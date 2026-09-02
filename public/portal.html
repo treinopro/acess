@@ -229,12 +229,8 @@ if ('serviceWorker' in navigator) {
   .treino-card { background: #0f172a; border-radius: 10px; padding: 16px; margin-bottom: 12px; }
   .treino-card h4 { margin: 0 0 8px; font-size: 17px; }
   .treino-card .dias { font-size: 14px; color: #94a3b8; margin-bottom: 8px; }
-  .exercicio-linha { font-size: 16px; padding: 12px 0; border-bottom: 1px solid #1e293b; }
-  .exercicio-linha .topo { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .exercicio-linha .nome { font-weight: 600; }
-  .exercicio-linha.concluido .nome { color: #10b981; }
-  .exercicio-linha .detalhe { color: #94a3b8; font-size: 14px; margin-top: 4px; }
-  .exercicio-linha .tag { background: #1e293b; border-radius: 6px; padding: 3px 9px; font-size: 13px; color: #cbd5e1; margin-right: 4px; display: inline-block; margin-top: 5px; }
+  .detalhe { color: #94a3b8; font-size: 14px; margin-top: 4px; }
+  .tag { background: #1e293b; border-radius: 6px; padding: 3px 9px; font-size: 13px; color: #cbd5e1; margin-right: 4px; display: inline-block; margin-top: 5px; }
   .btn-ver-video-ex {
     background: none; border: 1px solid #334155; color: #10b981; border-radius: 8px;
     padding: 7px 12px; font-size: 14px; cursor: pointer; margin-top: 8px;
@@ -249,6 +245,47 @@ if ('serviceWorker' in navigator) {
   .video-embed iframe { width: 100%; height: 200px; border: none; display: block; }
   .video-embed video { width: 100%; max-height: 220px; display: block; background: #000; }
   .exercicio-imagem { width: 100%; max-height: 160px; object-fit: cover; border-radius: 8px; margin-top: 6px; }
+
+  /* Player do treino de hoje (2026-09-02, layout inspirado no TreinoPro) —
+     card com o exercício "em foco" em destaque (vídeo/imagem, nome, navegação
+     anterior/próximo e o check bem no centro) e, embaixo, a lista compacta
+     de todos os exercícios do treino pra pular pra qualquer um. */
+  .player-hero-media { border-radius: 10px; overflow: hidden; background: #1e293b; margin-bottom: 10px; }
+  .player-hero-media iframe { width: 100%; height: 190px; border: none; display: block; }
+  .player-hero-media img { width: 100%; height: 190px; object-fit: cover; display: block; }
+  .player-hero-media .sem-midia { width: 100%; height: 150px; display: flex; align-items: center; justify-content: center; font-size: 42px; }
+  .player-hero-nome { font-size: 18px; font-weight: 700; margin-bottom: 2px; }
+  .player-hero-detalhe { color: #94a3b8; font-size: 14px; }
+  .player-nav-row { display: flex; align-items: center; justify-content: center; gap: 18px; margin: 14px 0; }
+  .player-nav-btn {
+    flex-shrink: 0; width: 40px; height: 40px; border-radius: 50%; border: 1px solid #334155;
+    background: none; color: #cbd5e1; font-size: 16px; cursor: pointer; display: flex;
+    align-items: center; justify-content: center; padding: 0;
+  }
+  .player-nav-btn:active { background: #1e293b; }
+  .check-concluido.grande { width: 56px; height: 56px; font-size: 24px; border-width: 3px; }
+  .registro-carga input { font-size: 16px; } /* mantém o mínimo pra iOS não dar zoom, ver comentário no <head> */
+  .btn-registrar {
+    background: #10b981; color: #06281e; border: none; border-radius: 8px;
+    padding: 8px 14px; font-size: 14px; font-weight: 600; cursor: pointer; flex-shrink: 0;
+  }
+  .btn-registrar:disabled { opacity: 0.5; cursor: not-allowed; }
+  .player-ex-list { margin-top: 16px; border-top: 1px solid #1e293b; padding-top: 4px; }
+  .player-ex-row {
+    display: flex; align-items: center; gap: 10px; padding: 10px 6px; border-radius: 8px;
+    cursor: pointer; border: 1px solid transparent;
+  }
+  .player-ex-row.ativo { border-color: #10b981; background: #0b2d22; }
+  .player-ex-row .player-ex-thumb {
+    flex-shrink: 0; width: 36px; height: 36px; border-radius: 8px; background: #1e293b;
+    display: flex; align-items: center; justify-content: center; font-size: 16px; overflow: hidden;
+  }
+  .player-ex-row .player-ex-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .player-ex-row .player-ex-nome { flex: 1; font-size: 15px; }
+  .player-ex-row.concluido .player-ex-nome { text-decoration: line-through; color: #64748b; }
+  .player-ex-row .player-ex-series { color: #94a3b8; font-size: 13px; flex-shrink: 0; }
+  .player-ex-dot { flex-shrink: 0; width: 14px; height: 14px; border-radius: 50%; border: 2px solid #334155; }
+  .player-ex-dot.marcado { background: #10b981; border-color: #10b981; }
 
   /* Minhas avaliações */
   .avaliacao-card { background: #0f172a; border-radius: 10px; padding: 16px; margin-bottom: 12px; }

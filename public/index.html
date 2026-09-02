@@ -524,55 +524,68 @@
               <p style="font-size:11px;color:#667085;margin:4px 0 0">Arraste pelo ⠿ pra reordenar os exercícios.</p>
 
               <button type="button" class="btn-secundario" id="btn-toggle-exercicio" style="margin-top:10px">+ Adicionar exercício</button>
-              <form id="form-exercicio" class="form-painel oculto" style="margin-top:10px">
-                <input type="hidden" id="exercicio-id" />
 
-                <!-- Modo edição: editando 1 exercício já existente -->
-                <div id="exercicio-modo-edicao">
-                  <label>Escolher da biblioteca (opcional)</label>
-                  <select id="exercicio-lib-select">
-                    <option value="">— digitar nome manualmente —</option>
-                  </select>
-                </div>
-
-                <!-- Modo criação: pode selecionar vários exercícios da biblioteca de uma vez -->
-                <div id="exercicio-modo-criacao">
-                  <label>Escolher da biblioteca (selecione um ou mais)</label>
-                  <input type="text" id="exercicio-lib-busca" placeholder="Buscar por nome ou grupo muscular…" style="margin-bottom:6px" />
-                  <div id="exercicio-lib-multi" style="max-height:220px;overflow-y:auto;border:1px solid #d0d5dd;border-radius:8px;padding:8px 10px"></div>
-                  <p id="exercicio-multi-contador" style="font-size:12px;color:#667085;margin:6px 0 0"></p>
-                </div>
-
-                <div id="exercicio-lib-preview"></div>
-                <div class="grid-2" style="margin-top:8px">
-                  <div><label id="exercicio-nome-label">Exercício *</label><input id="exercicio-nome" /></div>
-                  <div><label>Séries</label><input id="exercicio-series" placeholder="ex: 4x12" /></div>
-                  <div><label>Carga</label><input id="exercicio-carga" placeholder="ex: 20kg" /></div>
-                  <div><label>Intervalo</label><input id="exercicio-intervalo" placeholder="ex: 60s" /></div>
-                  <div>
-                    <label>Método de treino</label>
-                    <select id="exercicio-metodo">
-                      <option value="">— Nenhum —</option>
-                      <option value="Bi-set">Bi-set</option>
-                      <option value="Tri-set">Tri-set</option>
-                      <option value="Superset">Superset</option>
-                      <option value="Pirâmide">Pirâmide</option>
-                      <option value="Drop-set">Drop-set</option>
-                      <option value="Rest-pause">Rest-pause</option>
-                      <option value="Circuito">Circuito</option>
-                    </select>
+              <div id="modal-exercicio" class="modal-overlay oculto">
+                <div class="modal-card">
+                  <div class="modal-topo">
+                    <h3 id="exercicio-modal-titulo">Adicionar exercício</h3>
+                    <button type="button" class="btn-fechar-painel" id="btn-fechar-modal-exercicio" title="Fechar">&times;</button>
                   </div>
-                  <div><label>Vídeo próprio (opcional, sobrescreve o da biblioteca)</label><input id="exercicio-video" placeholder="https://youtube.com/watch?v=..." /></div>
+                  <form id="form-exercicio">
+                    <input type="hidden" id="exercicio-id" />
+
+                    <!-- Modo edição: editando 1 exercício já existente -->
+                    <div id="exercicio-modo-edicao">
+                      <label>Escolher da biblioteca (opcional)</label>
+                      <select id="exercicio-lib-select">
+                        <option value="">— digitar nome manualmente —</option>
+                      </select>
+                    </div>
+
+                    <!-- Modo criação: pode selecionar vários exercícios da biblioteca de uma vez -->
+                    <div id="exercicio-modo-criacao">
+                      <label>Escolher da biblioteca (selecione um ou mais)</label>
+                      <input type="text" id="exercicio-lib-busca" placeholder="Buscar por nome ou grupo muscular…" style="margin-bottom:6px" />
+                      <div id="exercicio-lib-multi" style="max-height:220px;overflow-y:auto;border:1px solid #d0d5dd;border-radius:8px;padding:8px 10px"></div>
+                      <p id="exercicio-multi-contador" style="font-size:12px;color:#667085;margin:6px 0 0"></p>
+                    </div>
+
+                    <div id="exercicio-lib-preview"></div>
+                    <label id="exercicio-nome-label">Exercício *</label>
+                    <input id="exercicio-nome" />
+                    <div class="grid-2">
+                      <div><label>Séries</label><input id="exercicio-series" placeholder="ex: 4x12" /></div>
+                      <div><label>Carga</label><input id="exercicio-carga" placeholder="ex: 20kg" /></div>
+                    </div>
+                    <div class="grid-2">
+                      <div><label>Intervalo</label><input id="exercicio-intervalo" placeholder="ex: 60s" /></div>
+                      <div>
+                        <label>Método de treino</label>
+                        <select id="exercicio-metodo">
+                          <option value="">— Nenhum —</option>
+                          <option value="Bi-set">Bi-set</option>
+                          <option value="Tri-set">Tri-set</option>
+                          <option value="Superset">Superset</option>
+                          <option value="Pirâmide">Pirâmide</option>
+                          <option value="Drop-set">Drop-set</option>
+                          <option value="Rest-pause">Rest-pause</option>
+                          <option value="Circuito">Circuito</option>
+                        </select>
+                      </div>
+                    </div>
+                    <label>Observação (visível ao aluno)</label>
+                    <textarea id="exercicio-observacao" rows="2"></textarea>
+                    <label>Dica do instrutor</label>
+                    <textarea id="exercicio-dica" rows="2"></textarea>
+                    <label>Vídeo próprio (opcional, sobrescreve o da biblioteca)</label>
+                    <input id="exercicio-video" placeholder="https://youtube.com/watch?v=..." />
+                    <div class="form-acoes">
+                      <button type="submit" class="btn-primario" id="btn-salvar-exercicio-form">Salvar exercício</button>
+                      <button type="button" class="btn-secundario" id="btn-cancelar-exercicio">Cancelar</button>
+                    </div>
+                  </form>
                 </div>
-                <label>Observação (visível ao aluno)</label>
-                <textarea id="exercicio-observacao" rows="2"></textarea>
-                <label>Dica do instrutor</label>
-                <textarea id="exercicio-dica" rows="2"></textarea>
-                <div class="form-acoes">
-                  <button type="submit" class="btn-primario" id="btn-salvar-exercicio-form">Salvar exercício</button>
-                  <button type="button" class="btn-secundario" id="btn-cancelar-exercicio">Cancelar</button>
-                </div>
-              </form>
+              </div>
             </div>
           </div>
 

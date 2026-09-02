@@ -2008,6 +2008,7 @@ async function abrirFormExercicio(exercicio) {
   const modoCriacao = document.getElementById('exercicio-modo-criacao');
   const nomeLabel = document.getElementById('exercicio-nome-label');
   const btnSalvar = document.getElementById('btn-salvar-exercicio-form');
+  const titulo = document.getElementById('exercicio-modal-titulo');
 
   if (exercicio) {
     // Editando um exercício já existente do treino — continua sendo 1 por vez.
@@ -2018,6 +2019,7 @@ async function abrirFormExercicio(exercicio) {
     document.getElementById('exercicio-lib-preview').innerHTML = exercicio.video_url ? videoPreviewHtml(exercicio.video_url) : '';
     nomeLabel.textContent = 'Exercício *';
     btnSalvar.textContent = 'Salvar exercício';
+    titulo.textContent = `Editar exercício — ${exercicio.exercicio}`;
   } else {
     // Adicionando exercício(s) novo(s) — pode marcar vários da biblioteca.
     modoEdicao.classList.add('oculto');
@@ -2030,14 +2032,18 @@ async function abrirFormExercicio(exercicio) {
     document.getElementById('exercicio-lib-preview').innerHTML = '';
     nomeLabel.textContent = 'Exercício avulso (opcional se já marcou algum acima)';
     btnSalvar.textContent = 'Salvar exercício(s)';
+    titulo.textContent = 'Adicionar exercício';
   }
 
-  document.getElementById('form-exercicio').classList.remove('oculto');
+  document.getElementById('modal-exercicio').classList.remove('oculto');
 }
 
 document.getElementById('btn-toggle-exercicio').addEventListener('click', () => abrirFormExercicio(null));
 document.getElementById('btn-cancelar-exercicio').addEventListener('click', () => {
-  document.getElementById('form-exercicio').classList.add('oculto');
+  document.getElementById('modal-exercicio').classList.add('oculto');
+});
+document.getElementById('btn-fechar-modal-exercicio').addEventListener('click', () => {
+  document.getElementById('modal-exercicio').classList.add('oculto');
 });
 
 document.getElementById('form-exercicio').addEventListener('submit', async (ev) => {
@@ -2087,7 +2093,7 @@ document.getElementById('form-exercicio').addEventListener('submit', async (ev) 
       }
       mostrarToast(selecionados.length > 1 ? `${selecionados.length} exercícios salvos com a mesma metodologia.` : 'Exercício salvo.');
     }
-    document.getElementById('form-exercicio').classList.add('oculto');
+    document.getElementById('modal-exercicio').classList.add('oculto');
     await carregarTreinosPerfil();
   } catch (err) { mostrarToast(err.message, true); }
 });

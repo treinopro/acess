@@ -303,6 +303,17 @@ const LIMITE_REPETICOES_SEM_AJUSTE = 13;
 // treino_exercicios (ultimo_peso_usado/ultimo_repeticoes_max — pro professor
 // bater o olho na aba Treinos sem consultar histórico) quanto em
 // treino_execucoes (histórico completo, nunca apagado).
+//
+// carga (2026-09-02): pedido explícito do dono do sistema — o peso que o
+// aluno reporta ter usado passa a SUBSTITUIR o campo "carga" (prescrito)
+// automaticamente, não só ficar guardado à parte em ultimo_peso_usado. Assim
+// a ficha do aluno (aqui embaixo) e a aba Treinos do professor (coluna
+// "Carga" em app.js) já mostram o peso mais recente sem o professor precisar
+// copiar manualmente de "Aluno reportou" pra "Carga". Isso fica valendo até
+// o professor editar a carga de novo (PUT /exercicios/:id em
+// treinos.routes.js, que sempre grava por cima) — o mesmo campo, só que
+// agora com duas fontes de escrita: o aluno concluindo o exercício, e o
+// professor ajustando manualmente.
 router.post('/treino/exercicio/:id/concluir', limitadorSenhaPortal, async (req, res, next) => {
   try {
     const dados = z.object({
@@ -340,17 +351,20 @@ router.post('/treino/exercicio/:id/concluir', limitadorSenhaPortal, async (req, 
     // banco — ver src/utils/data.js e o comentário de corrigirFormatoDatasAcessosAntigos em migrate.js.
     const concluidoInt = dados.concluido ? 1 : 0;
     const precisaAjuste = dados.concluido && dados.repeticoes_max != null && dados.repeticoes_max > LIMITE_REPETICOES_SEM_AJUSTE;
+    const atualizaCarga = dados.concluido && !!dados.peso_usado;
     await db.execute({
       sql: `UPDATE treino_exercicios
             SET concluido = ?, concluido_em = CASE WHEN ? = 1 THEN datetime('now') ELSE NULL END,
                 ultimo_peso_usado = CASE WHEN ? = 1 THEN ? ELSE ultimo_peso_usado END,
                 ultimo_repeticoes_max = CASE WHEN ? = 1 THEN ? ELSE ultimo_repeticoes_max END,
+                carga = CASE WHEN ? THEN ? ELSE carga END,
                 precisa_ajuste_carga = CASE WHEN ? THEN 1 ELSE precisa_ajuste_carga END
             WHERE id = ?`,
       args: [
         concluidoInt, concluidoInt,
         concluidoInt, dados.peso_usado || null,
         concluidoInt, dados.repeticoes_max ?? null,
+        atualizaCarga ? 1 : 0, dados.peso_usado || null,
         precisaAjuste ? 1 : 0,
         req.params.id,
       ],

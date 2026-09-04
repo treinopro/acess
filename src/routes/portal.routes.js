@@ -35,6 +35,7 @@ const mercadopago = require('../services/payment/mercadopago.service');
 const emailBoasVindas = require('../services/emailBoasVindas.service');
 const gamificacao = require('../services/gamificacao.service');
 const { primeiroVencimento, ehRecorrente } = require('../services/cobrancas.service');
+const { obterConfigChamarProfessor } = require('./config.routes');
 const webPush = require('../services/webPush.service');
 const { criarLimitador } = require('../middleware/rateLimit');
 const { normalizarCpf } = require('../utils/cpf');
@@ -479,6 +480,27 @@ router.post('/chamar-professor', limitadorSenhaPortal, async (req, res, next) =>
     const autenticado = await autenticarAlunoPortal(dados.cpf, dados.senha);
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
     const aluno = autenticado.aluno;
+
+    // Horário permitido (2026-09-04, pedido do dono) — configurável em
+    // Configurações > Chamar professor, desligado por padrão. Checa ANTES
+    // do cooldown de propósito: fora do horário nem consome o "slot" do
+    // cooldown, senão o primeiro clique de manhã cedo bloquearia o
+    // primeiro clique de verdade assim que a academia abrir.
+    const configHorario = await obterConfigChamarProfessor();
+    if (configHorario.restrito) {
+      const horaAtual = await db.execute("SELECT strftime('%H:%M', datetime('now', '-3 hours')) as hora");
+      const hora = horaAtual.rows[0].hora;
+      const { horaInicio, horaFim } = configHorario;
+      // Suporta janela que vira a virada da meia-noite (ex.: 22:00–06:00) —
+      // comparação lexicográfica de "HH:MM" funciona igual comparação de
+      // horário porque os dois lados são sempre zero-padded.
+      const dentroDaJanela = horaInicio <= horaFim
+        ? hora >= horaInicio && hora <= horaFim
+        : hora >= horaInicio || hora <= horaFim;
+      if (!dentroDaJanela) {
+        return res.status(403).json({ erro: `O professor só pode ser chamado pelo portal entre ${horaInicio} e ${horaFim}.` });
+      }
+    }
 
     const chaveContexto = `${aluno.id}|${dados.exercicio || 'geral'}`;
     const ultimoChamado = ultimoChamadoProfessorPorAlunoContexto.get(chaveContexto);

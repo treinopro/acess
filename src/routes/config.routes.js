@@ -84,6 +84,20 @@ const PADROES_COOLDOWN = {
 };
 const CHAVES_COOLDOWN = Object.keys(PADROES_COOLDOWN);
 
+// Horário permitido pro botão "Chamar professor" do portal (2026-09-04,
+// pedido do dono) — restrito desligado por padrão (preserva o
+// comportamento de sempre pra quem não configurar nada). Horas em
+// "HH:MM", comparadas contra o horário de Brasília (não UTC — ver
+// obterConfigChamarProfessor abaixo, mesmo ajuste -3h já usado em
+// atualizarCobrancasVencidas/webPush pra não bater errado perto da
+// meia-noite local).
+const PADROES_CHAMAR_PROFESSOR = {
+  chamar_professor_restrito: 'false',
+  chamar_professor_hora_inicio: '06:00',
+  chamar_professor_hora_fim: '22:00',
+};
+const CHAVES_CHAMAR_PROFESSOR = Object.keys(PADROES_CHAMAR_PROFESSOR);
+
 // GET /api/config — pública de propósito: a tela de login precisa mostrar o
 // nome do app e o "licenciado para" ANTES do usuário estar autenticado.
 // Não expõe nada sensível, só as strings de marca/identidade visual e a
@@ -393,4 +407,62 @@ async function obterCooldownAcesso() {
   };
 }
 
-module.exports = { router, escreverBackupStream, obterCooldownAcesso };
+// GET /api/config/chamar-professor-horario — admin only (ver comentário de
+// PADROES_CHAMAR_PROFESSOR acima)
+router.get('/chamar-professor-horario', autenticar, apenasAdmin, async (req, res, next) => {
+  try {
+    res.json(await obterConfigChamarProfessor());
+  } catch (err) {
+    next(err);
+  }
+});
+
+const ChamarProfessorConfigSchema = z.object({
+  chamar_professor_restrito: z.boolean().optional(),
+  chamar_professor_hora_inicio: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  chamar_professor_hora_fim: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+});
+
+// PUT /api/config/chamar-professor-horario — admin only
+router.put('/chamar-professor-horario', autenticar, apenasAdmin, async (req, res, next) => {
+  try {
+    const dados = ChamarProfessorConfigSchema.parse(req.body);
+    const chaves = Object.keys(dados);
+    if (chaves.length === 0) return res.status(400).json({ erro: 'Nenhum campo informado.' });
+
+    for (const chave of chaves) {
+      const valor = typeof dados[chave] === 'boolean' ? String(dados[chave]) : dados[chave];
+      await db.execute({
+        sql: 'INSERT INTO configuracoes (chave, valor) VALUES (?, ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor',
+        args: [chave, valor],
+      });
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Lê a configuração de horário do "Chamar professor" — usada por
+ * POST /api/portal/chamar-professor (portal.routes.js) pra decidir se
+ * bloqueia o chamado fora do horário permitido. Horário comparado contra
+ * Brasília (UTC-3), não UTC puro — mesmo ajuste já usado em
+ * atualizarCobrancasVencidas/webPush pra não bater errado perto da meia-noite.
+ */
+async function obterConfigChamarProfessor() {
+  const result = await db.execute({
+    sql: `SELECT chave, valor FROM configuracoes WHERE chave IN (${CHAVES_CHAMAR_PROFESSOR.map(() => '?').join(',')})`,
+    args: CHAVES_CHAMAR_PROFESSOR,
+  });
+  const config = { ...PADROES_CHAMAR_PROFESSOR };
+  result.rows.forEach((row) => { config[row.chave] = row.valor; });
+  return {
+    restrito: config.chamar_professor_restrito === 'true',
+    horaInicio: config.chamar_professor_hora_inicio,
+    horaFim: config.chamar_professor_hora_fim,
+  };
+}
+
+module.exports = { router, escreverBackupStream, obterCooldownAcesso, obterConfigChamarProfessor };

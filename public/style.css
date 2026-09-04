@@ -108,27 +108,31 @@ body {
 .nav-link:hover { background: #1f2937; color: #fff; }
 
 .sidebar-rodape {
-  padding: 16px 20px; border-top: 1px solid #1f2937; margin-top: 12px;
+  padding: 14px 16px; border-top: 1px solid #1f2937; margin-top: 12px;
   display: flex; flex-direction: column; gap: 8px; flex-shrink: 0;
 }
-#usuario-nome { font-size: 13px; color: #9ca3af; }
+#usuario-nome { font-size: 13px; color: #9ca3af; padding: 0 4px; }
 #btn-sair {
   background: #1f2937; color: #fff; border: none; border-radius: 6px; padding: 8px; cursor: pointer; font-size: 13px;
 }
 #btn-sair:hover { background: #374151; }
 
-.btn-acessos-recentes {
-  background: #10b981; color: #fff; border: none; border-radius: 6px; padding: 9px 8px;
-  cursor: pointer; font-size: 13px; font-weight: 600;
+/* Ações rápidas (2026-09-04): virou grade 2 colunas em vez de empilhar cada
+   botão numa linha inteira — com "Chamado do aluno" somado aos 4 que já
+   existiam, a pilha vertical estava espremendo o espaço da navegação
+   principal (nav ficava com scroll interno visível mesmo sem precisar).
+   Rótulos mais curtos aqui (o significado completo continua no title, pra
+   quem passar o mouse). */
+.sidebar-acoes-rapidas {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
 }
-.btn-acessos-recentes:hover { background: #0ea472; }
-
-/* Mesmo destaque do botão "Acessos recentes" — ação rápida e frequente da recepção. */
-.btn-liberar-rapido {
-  background: #10b981; color: #fff; border: none; border-radius: 6px; padding: 9px 8px;
-  cursor: pointer; font-size: 13px; font-weight: 600;
+.btn-acessos-recentes, .btn-liberar-rapido {
+  background: #10b981; color: #fff; border: none; border-radius: 6px; padding: 8px 6px;
+  cursor: pointer; font-size: 12px; font-weight: 600; text-align: center;
+  text-decoration: none; display: flex; align-items: center; justify-content: center;
+  line-height: 1.3;
 }
-.btn-liberar-rapido:hover { background: #0ea472; }
+.btn-acessos-recentes:hover, .btn-liberar-rapido:hover { background: #0ea472; }
 .btn-liberar-rapido:disabled { opacity: 0.6; cursor: wait; }
 
 /* ---------- Painel lateral persistente (Acessos recentes) ---------- */

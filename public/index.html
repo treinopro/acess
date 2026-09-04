@@ -72,11 +72,13 @@
         <a class="nav-link" href="avaliacoes/" target="_blank" rel="noopener">📏 Avaliação física</a>
       </nav>
       <div class="sidebar-rodape">
-        <button class="btn-liberar-rapido oculto" id="btn-liberar-rapido" title="Libera a catraca imediatamente, sem abrir a janela completa da catraca">⚡ Liberar rápido</button>
-        <a class="btn-liberar-rapido oculto" id="link-liberacao-rapida" href="liberacao-rapida.html" target="_blank" rel="noopener" style="text-decoration:none;display:inline-block" title="Abre uma tela cheia, só com o botão de liberar — ideal pra deixar num tablet/computador da recepção">⚡ Tela de liberação rápida</a>
-        <button class="btn-liberar-rapido oculto" id="btn-comando-voz" title='Fale um comando, ex: "liberar catraca", "abrir contas a pagar", "abrir relatórios"'>🎤 Comando de voz</button>
-        <button class="btn-acessos-recentes oculto" id="btn-acessos-recentes">🕓 Acessos recentes</button>
-        <button class="btn-acessos-recentes oculto" id="btn-ativar-notificacoes-staff" title="Recebe um aviso neste navegador quando um aluno tocar em &quot;Chamar professor&quot; no portal">🔔 Chamado do aluno</button>
+        <div class="sidebar-acoes-rapidas">
+          <button class="btn-liberar-rapido oculto" id="btn-liberar-rapido" title="Libera a catraca imediatamente, sem abrir a janela completa da catraca">⚡ Liberar rápido</button>
+          <a class="btn-liberar-rapido oculto" id="link-liberacao-rapida" href="liberacao-rapida.html" target="_blank" rel="noopener" title="Abre uma tela cheia, só com o botão de liberar — ideal pra deixar num tablet/computador da recepção">⚡ Tela cheia</a>
+          <button class="btn-liberar-rapido oculto" id="btn-comando-voz" title='Fale um comando, ex: "liberar catraca", "abrir contas a pagar", "abrir relatórios"'>🎤 Comando de voz</button>
+          <button class="btn-acessos-recentes oculto" id="btn-acessos-recentes" title="Acessos recentes">🕓 Acessos</button>
+          <button class="btn-acessos-recentes oculto" id="btn-ativar-notificacoes-staff" title="Recebe um aviso neste navegador quando um aluno tocar em &quot;Chamar professor&quot; no portal">🔔 Chamado</button>
+        </div>
         <span id="usuario-nome"></span>
         <button id="btn-sair">Sair</button>
       </div>
@@ -1980,6 +1982,31 @@
             <div>
               <label>Biometria da catraca (segundos)</label>
               <input id="cfg-cooldown-biometria" type="number" min="0" max="300" step="1" />
+            </div>
+          </div>
+          <div class="form-acoes">
+            <button type="submit" class="btn-primario">Salvar</button>
+          </div>
+        </form>
+
+        <form id="form-config-chamar-professor" class="form-painel">
+          <h3 style="margin-top:0">Chamar professor (portal do aluno)</h3>
+          <p style="margin-top:0;color:#667085;font-size:13px">
+            Restringe o horário em que o botão "Chamar professor" do portal manda notificação de verdade — fora
+            desse horário, o aluno vê um aviso pedindo pra procurar a recepção em vez de chamar. Desligado por
+            padrão (chama a qualquer hora).
+          </p>
+          <label style="display:flex;align-items:center;gap:8px;margin:10px 0">
+            <input type="checkbox" id="cfg-chamar-professor-restrito" style="width:auto" /> Restringir a um horário
+          </label>
+          <div class="grid-2">
+            <div>
+              <label>A partir de</label>
+              <input id="cfg-chamar-professor-hora-inicio" type="time" />
+            </div>
+            <div>
+              <label>Até</label>
+              <input id="cfg-chamar-professor-hora-fim" type="time" />
             </div>
           </div>
           <div class="form-acoes">

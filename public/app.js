@@ -419,7 +419,7 @@ function carregarSecao(nome) {
   if (nome === 'contas-pagar') carregarSecaoContasPagar();
   if (nome === 'pagamento-rapido') iniciarPagamentoRapido();
   if (nome === 'usuarios') carregarUsuarios();
-  if (nome === 'config') { carregarConfiguracoesForm(); carregarConfigCooldown(); carregarConfigBackup(); carregarPendenciasSincronizacao(); }
+  if (nome === 'config') { carregarConfiguracoesForm(); carregarConfigCooldown(); carregarConfigChamarProfessor(); carregarConfigBackup(); carregarPendenciasSincronizacao(); }
   if (nome === 'recuperacao') carregarSecaoRecuperacao();
   if (nome === 'relatorios') carregarSecaoRelatorios();
   if (nome === 'biblioteca') carregarSecaoBiblioteca();
@@ -958,6 +958,31 @@ document.getElementById('form-config-cooldown').addEventListener('submit', async
   try {
     await api('/api/config/cooldown-acesso', { method: 'PUT', body: JSON.stringify(dados) });
     mostrarToast('Tempo mínimo entre liberações salvo.');
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+// ---------------- Chamar professor: horário permitido (admin) ----------------
+// Mesmo padrão do cooldown-acesso acima — ver /api/config/chamar-professor-horario
+// em src/routes/config.routes.js.
+async function carregarConfigChamarProfessor() {
+  try {
+    const config = await api('/api/config/chamar-professor-horario');
+    document.getElementById('cfg-chamar-professor-restrito').checked = !!config.restrito;
+    document.getElementById('cfg-chamar-professor-hora-inicio').value = config.horaInicio || '06:00';
+    document.getElementById('cfg-chamar-professor-hora-fim').value = config.horaFim || '22:00';
+  } catch (err) { mostrarToast(err.message, true); }
+}
+
+document.getElementById('form-config-chamar-professor').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const dados = {
+    chamar_professor_restrito: document.getElementById('cfg-chamar-professor-restrito').checked,
+    chamar_professor_hora_inicio: document.getElementById('cfg-chamar-professor-hora-inicio').value || '06:00',
+    chamar_professor_hora_fim: document.getElementById('cfg-chamar-professor-hora-fim').value || '22:00',
+  };
+  try {
+    await api('/api/config/chamar-professor-horario', { method: 'PUT', body: JSON.stringify(dados) });
+    mostrarToast('Horário do "Chamar professor" salvo.');
   } catch (err) { mostrarToast(err.message, true); }
 });
 

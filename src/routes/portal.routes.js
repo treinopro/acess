@@ -34,7 +34,6 @@ const pagamentoContas = require('../services/pagamentoContas.service');
 const mercadopago = require('../services/payment/mercadopago.service');
 const emailBoasVindas = require('../services/emailBoasVindas.service');
 const gamificacao = require('../services/gamificacao.service');
-const notificarInstrutor = require('../services/notificarInstrutor.service');
 const { primeiroVencimento, ehRecorrente } = require('../services/cobrancas.service');
 const webPush = require('../services/webPush.service');
 const { criarLimitador } = require('../middleware/rateLimit');
@@ -445,19 +444,26 @@ router.get('/gamificacao', limitadorSenhaPortal, async (req, res, next) => {
   }
 });
 
+// Cooldown por aluno (2026-09-02) — evita martelar as notificações push do
+// staff se o mesmo aluno clicar "Chamar professor" várias vezes seguidas.
+// Em memória, reinicia a cada deploy/restart (mesmo espírito do cooldown
+// por equipamento em notificarInstrutor.service.js) — suficiente pro caso
+// de uso, não precisa sobreviver a restart.
+const ultimoChamadoProfessorPorAluno = new Map();
+const COOLDOWN_CHAMAR_PROFESSOR_MS = 60 * 1000;
+
 // POST /api/portal/chamar-professor { cpf, senha, exercicio? } — botão
-// "Chamar professor" do portal (2026-09-02): reaproveita o MESMO aviso via
-// Telegram já usado pelas tags NFC coladas nos aparelhos (ver
-// notificarInstrutor.service.js e src/routes/chamar.routes.js) — mesma
-// função enviarChamado(), só que quem chama agora é o próprio aluno, do
-// celular, em vez de uma tag física. `exercicio` (opcional) é o nome do
-// exercício em foco no player do treino no momento do clique — quando vem
-// preenchido, o professor já sabe de cara em qual estação/exercício aquele
-// aluno está e pode ir direto até ele; o botão flutuante (sem contexto de
-// exercício) manda só o nome do aluno. equipamentoId usa o próprio id do
-// aluno (não um id de aparelho) — é o que dá o cooldown de 60s por PESSOA
-// em enviarChamado (evita martelar o Telegram se o aluno clicar várias
-// vezes seguidas), sem interferir no cooldown de nenhum aparelho físico.
+// "Chamar professor" do portal (2026-09-02). Usa a MESMA infraestrutura de
+// Web Push já validada e funcionando pros avisos de vencimento do aluno
+// (webPush.service.js, mesmas chaves VAPID/service worker) — não o Telegram
+// das tags NFC (nunca chegou a ser configurado em produção, ver
+// notificarInstrutor.service.js/NFC-CHAMAR-INSTRUTOR.md), a pedido do dono
+// ("use notificações normais, já existe sistema funcionando"). Manda pra
+// TODO usuário do painel que tiver ativado notificações neste aparelho
+// (enviarParaTodoStaff — sem roteamento por professor específico, academia
+// pequena). `exercicio` (opcional) é o nome do exercício em foco no player
+// do treino no momento do clique — quando vem preenchido, quem receber o
+// aviso já sabe de cara em qual estação/exercício aquele aluno está.
 router.post('/chamar-professor', limitadorSenhaPortal, async (req, res, next) => {
   try {
     const dados = z.object({
@@ -469,14 +475,20 @@ router.post('/chamar-professor', limitadorSenhaPortal, async (req, res, next) =>
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
     const aluno = autenticado.aluno;
 
-    const contexto = dados.exercicio ? `${aluno.nome} — Portal (exercício: ${dados.exercicio})` : `${aluno.nome} — Portal`;
+    const ultimoChamado = ultimoChamadoProfessorPorAluno.get(aluno.id);
+    if (ultimoChamado && (Date.now() - ultimoChamado) < COOLDOWN_CHAMAR_PROFESSOR_MS) {
+      return res.json({ enviados: 0, motivo: 'cooldown' });
+    }
+    ultimoChamadoProfessorPorAluno.set(aluno.id, Date.now());
+
+    const corpo = dados.exercicio ? `${aluno.nome} está precisando de ajuda em: ${dados.exercicio}` : `${aluno.nome} está chamando pelo portal.`;
     try {
-      const resultado = await notificarInstrutor.enviarChamado({ equipamentoId: `portal-${aluno.id}`, equipamentoNome: contexto });
+      const resultado = await webPush.enviarParaTodoStaff({ titulo: '🙋 Chamado do aluno', corpo, url: '/index.html', tag: 'chamar-professor' });
       res.json(resultado);
     } catch (erroChamado) {
-      // Falha ao avisar (Telegram não configurado, ou recusou o envio) —
-      // nunca expõe detalhe técnico pro aluno, mesmo espírito de
-      // chamar.routes.js (a tag NFC física): sempre dá um caminho alternativo.
+      // Falha ao avisar (VAPID não configurado, nenhum staff inscrito, etc.)
+      // — nunca expõe detalhe técnico pro aluno, sempre dá um caminho
+      // alternativo.
       console.error('[chamar-professor] erro ao notificar via portal:', erroChamado.message);
       res.status(503).json({ erro: 'Não consegui avisar o professor agora. Peça ajuda diretamente na recepção.' });
     }

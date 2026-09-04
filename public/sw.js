@@ -115,7 +115,10 @@
 // so atualizava o cache em segundo plano; em um PWA standalone que restaura
 // a tela anterior, essa versao nova podia nunca ficar visivel. Com rede, o
 // shell agora vem sempre do servidor; sem rede, continua abrindo pelo cache.
-const CACHE_NAME = 'academia-shell-v23';
+// v24 (2026-09-02): botao "Chamar professor" no portal (push pro staff via
+// push_subscriptions_staff, ver src/routes/push.routes.js) + botao "🔔
+// Chamado do aluno" no painel do professor (index.html/app.js) pra ativar.
+const CACHE_NAME = 'academia-shell-v24';
 
 self.addEventListener('install', () => {
   self.skipWaiting();

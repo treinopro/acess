@@ -643,6 +643,26 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 
 CREATE INDEX IF NOT EXISTS idx_push_subscriptions_aluno ON push_subscriptions(aluno_id);
 
+-- Mesma ideia acima, só que pro STAFF (usuarios) em vez do aluno — usada
+-- pelo botão "Chamar professor" do portal (2026-09-02): em vez de Telegram
+-- (que precisa de bot/chat_id configurados à parte, nunca chegou a ser
+-- configurado em produção), reaproveita a MESMA infraestrutura de Web Push
+-- já validada e funcionando pros avisos de vencimento do aluno (mesmas
+-- chaves VAPID, mesmo service worker). Sem professor_id específico de
+-- propósito — academia pequena, todo usuário do painel que ativar recebe
+-- (fan-out simples, sem roteamento por professor/aluno).
+CREATE TABLE IF NOT EXISTS push_subscriptions_staff (
+  id TEXT PRIMARY KEY,
+  usuario_id TEXT NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+  endpoint TEXT NOT NULL UNIQUE,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  user_agent TEXT,
+  criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_push_subscriptions_staff_usuario ON push_subscriptions_staff(usuario_id);
+
 -- Banners/avisos do admin pro portal do aluno (2026-08-14, ver Recuperação
 -- de Clientes > Banners). Mostrado como um "feed" no topo do dashboard do
 -- portal — aluno_ids_json NULL = todo mundo, senão só quem está na lista

@@ -235,6 +235,10 @@ function mostrarApp() {
   // ver checagem de suporte perto da implementação, mais abaixo neste arquivo.
   document.getElementById('btn-comando-voz').classList.toggle('oculto', estado.usuario?.papel !== 'admin' || !window.__reconhecimentoVozSuportado);
   document.getElementById('grupo-gerar-recorrentes').classList.toggle('oculto', estado.usuario?.papel !== 'admin');
+  // "Chamado do aluno" (2026-09-02) — qualquer papel pode querer receber o
+  // aviso quando um aluno tocar em "Chamar professor" no portal, não só
+  // admin (diferente dos botões acima, que são ações administrativas).
+  document.getElementById('btn-ativar-notificacoes-staff').classList.remove('oculto');
   carregarSecao('alunos');
   // Aviso de aniversariantes de hoje (feature de Recuperação de Clientes) —
   // roda logo após o login, sem precisar abrir a aba, pra quem tem permissão vê-la.
@@ -5396,6 +5400,54 @@ document.getElementById('btn-acessos-recentes').addEventListener('click', () => 
   else abrirPainelAcessos();
 });
 document.getElementById('btn-fechar-acessos').addEventListener('click', fecharPainelAcessos);
+
+// ---------------- "Chamado do aluno" (Web Push pro staff) ----------------
+// 2026-09-02: mesmo esquema de Web Push já validado no portal do aluno
+// (avisos de vencimento) — VAPID + service worker (já registrado em
+// index.html) + PushSubscription salva em push_subscriptions_staff (ver
+// src/routes/push.routes.js). Pede permissão só num clique explícito deste
+// botão, nunca sozinho no carregamento da página.
+function urlBase64ToUint8ArrayStaff(base64) {
+  const padding = '='.repeat((4 - (base64.length % 4)) % 4);
+  const bruto = atob((base64 + padding).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from([...bruto].map((c) => c.charCodeAt(0)));
+}
+document.getElementById('btn-ativar-notificacoes-staff').addEventListener('click', async () => {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    mostrarToast('Este navegador não suporta notificações push.', true);
+    return;
+  }
+  if (Notification.permission === 'denied') {
+    mostrarToast('Notificações estão bloqueadas neste navegador. Ative nas configurações do site.', true);
+    return;
+  }
+  try {
+    const { publicKey, habilitado } = await api('/api/portal/push/vapid-public-key');
+    if (!habilitado || !publicKey) {
+      mostrarToast('Notificações push ainda não configuradas no servidor.', true);
+      return;
+    }
+    if (Notification.permission === 'default') {
+      const permissao = await Notification.requestPermission();
+      if (permissao !== 'granted') { mostrarToast('Permissão de notificação não concedida.', true); return; }
+    }
+    const registro = await navigator.serviceWorker.ready;
+    let sub = await registro.pushManager.getSubscription();
+    const chaveEsperada = urlBase64ToUint8ArrayStaff(publicKey);
+    if (sub) {
+      const chaveAtual = sub.options && sub.options.applicationServerKey;
+      const igual = chaveAtual && new Uint8Array(chaveAtual).length === chaveEsperada.length
+        && new Uint8Array(chaveAtual).every((b, i) => b === chaveEsperada[i]);
+      if (!igual) { await sub.unsubscribe(); sub = null; }
+    }
+    if (!sub) sub = await registro.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: chaveEsperada });
+
+    await api('/api/push/staff/subscribe', { method: 'POST', body: JSON.stringify(sub.toJSON()) });
+    mostrarToast('Notificações ativadas! Você vai receber um aviso aqui quando um aluno chamar.');
+  } catch (err) {
+    mostrarToast(`Não consegui ativar as notificações: ${err.message}`, true);
+  }
+});
 
 // ---------------- Ordenação genérica de tabelas (clique no cabeçalho) ----------------
 // Mesmo comportamento já usado em Alunos/Pagamentos (ordenacaoAlunos/ordenacaoContas), só que

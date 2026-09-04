@@ -397,6 +397,7 @@ function resetHub() {
   const avisoVencimento = document.getElementById('aviso-vencimento-hub');
   avisoVencimento.classList.add('oculto');
   avisoVencimento.textContent = '';
+  document.getElementById('btn-chamar-professor-flutuante').classList.add('oculto');
 }
 
 // 2026-07: antes esse botão sempre resetava tudo e voltava pro início (digitar
@@ -420,6 +421,37 @@ document.getElementById('btn-voltar-hub').addEventListener('click', () => {
   mostrarPagina('pagina-inicio');
 });
 
+// "Chamar professor" (2026-09-02) — mesmo aviso via Telegram das tags NFC
+// coladas nos aparelhos (ver POST /api/portal/chamar-professor em
+// portal.routes.js), só que disparado pelo aluno direto do portal.
+// `exercicio` (opcional) é o nome do exercício em foco no player do treino
+// — quando informado, o professor já sabe onde ir sem precisar perguntar.
+// `botao` é desabilitado durante a chamada (evita duplo clique) e continua
+// desabilitado por alguns segundos depois de um sucesso, só como reforço
+// visual — o cooldown de verdade (60s por aluno) é aplicado no servidor.
+async function chamarProfessor(exercicio, botao) {
+  if (botao) botao.disabled = true;
+  try {
+    const resp = await api('/api/portal/chamar-professor', {
+      method: 'POST',
+      body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, exercicio: exercicio || undefined }),
+    });
+    if (resp.enviado === false && resp.motivo === 'cooldown') {
+      alert('Você já chamou o professor há pouco — ele já está a caminho!');
+    } else {
+      alert('Professor avisado! 🔔 Ele já está vindo.');
+    }
+  } catch (err) {
+    alert(err.message);
+  } finally {
+    if (botao) setTimeout(() => { botao.disabled = false; }, 5000);
+  }
+}
+
+document.getElementById('btn-chamar-professor-flutuante').addEventListener('click', (ev) => {
+  chamarProfessor(null, ev.currentTarget);
+});
+
 function preencherDashboardHub(info) {
   alunoHubTreinoModo = info.treino_modo || 'nativo';
   dadosPessoaisHubAtual = info.dados_pessoais || null;
@@ -428,6 +460,7 @@ function preencherDashboardHub(info) {
   document.getElementById('painel-hub-cpf').classList.add('oculto');
   document.getElementById('painel-hub-primeiro-acesso').classList.add('oculto');
   document.getElementById('painel-hub-dashboard').classList.remove('oculto');
+  document.getElementById('btn-chamar-professor-flutuante').classList.remove('oculto');
   irParaTopo();
 
   document.getElementById('card-plano-resumo').textContent = info.plano_atual
@@ -1126,6 +1159,7 @@ function renderizarTreinosHub() {
         ${barraTimerHtml}
 
         ${playerHeroMediaHtml(atual)}
+        <button type="button" class="btn-chamar-professor-exercicio" data-acao="chamar-professor-exercicio">🙋 Chamar professor</button>
         <div class="player-hero-nome">${atual.exercicio}</div>
         <div class="player-hero-detalhe">${[atual.series, atual.carga].filter(Boolean).join(' · ')}</div>
         ${atual.metodo ? `<span class="tag">⚡ ${atual.metodo}</span>` : ''}
@@ -1300,6 +1334,14 @@ function renderizarTreinosHub() {
       try { await registrarExercicio(treinoId, exercicioId, true); }
       catch (err) { alert(err.message); }
       finally { btn.disabled = false; }
+    });
+  });
+  alvo.querySelectorAll('.btn-chamar-professor-exercicio[data-acao="chamar-professor-exercicio"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const treinoId = btn.closest('.treino-card').dataset.tid;
+      const treino = treinosCacheHub.find((t) => t.id === treinoId);
+      const exercicioFoco = treino && treino.exercicios.find((e) => e.id === treinoFocoExercicio[treinoId]);
+      chamarProfessor(exercicioFoco ? exercicioFoco.exercicio : null, btn);
     });
   });
 

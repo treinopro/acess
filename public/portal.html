@@ -313,6 +313,35 @@ if ('serviceWorker' in navigator) {
   .badge-item .icone { font-size: 22px; display: block; margin-bottom: 4px; }
   .badge-item .nome { font-size: 11px; color: #cbd5e1; line-height: 1.2; }
 
+  /* "Chamar professor" (2026-09-02) — reaproveita o mesmo aviso via Telegram
+     já usado pelas tags NFC coladas nos aparelhos (ver
+     services/notificarInstrutor.service.js), só que disparado pelo próprio
+     aluno no portal em vez de por uma tag física. Botão flutuante = sempre
+     acessível (qualquer tela do hub, depois de logado — ver
+     preencherDashboardHub/resetHub em portal.js), fica FORA de #scroll-raiz
+     de propósito (irmão dele, não filho de nenhum .cartao/.pagina que possa
+     ficar display:none) — um position:fixed dentro de um ancestral
+     escondido também não aparece, mesmo sendo fixed. */
+  .btn-chamar-professor-flutuante {
+    position: fixed; right: 18px; bottom: 18px; z-index: 50;
+    display: flex; align-items: center; gap: 8px;
+    background: #10b981; color: #06281e; border: none; border-radius: 999px;
+    padding: 14px 20px; font-size: 14px; font-weight: 700; cursor: pointer;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  }
+  .btn-chamar-professor-flutuante:active { transform: scale(0.97); }
+  .btn-chamar-professor-flutuante:disabled { opacity: 0.6; cursor: not-allowed; }
+  /* Versão dentro do player do treino (perto do vídeo, ver
+     renderizarTreinosHub em portal.js) — mesma ação, mas já leva o nome do
+     exercício em foco, pra o professor saber onde ir direto. */
+  .btn-chamar-professor-exercicio {
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    width: 100%; margin-top: 10px; background: #1e293b; color: #10b981;
+    border: 1px solid #10b981; border-radius: 10px; padding: 10px; font-size: 14px;
+    font-weight: 600; cursor: pointer;
+  }
+  .btn-chamar-professor-exercicio:disabled { opacity: 0.6; cursor: not-allowed; }
+
   /* Minhas avaliações */
   .avaliacao-card { background: #0f172a; border-radius: 10px; padding: 16px; margin-bottom: 12px; }
   .avaliacao-card h4 { margin: 0 0 12px; font-size: 16px; }
@@ -568,6 +597,9 @@ if ('serviceWorker' in navigator) {
   </div>
 
 </div>
+
+<button type="button" class="btn-chamar-professor-flutuante oculto" id="btn-chamar-professor-flutuante">🙋 Chamar professor</button>
+
 <script src="portal.js"></script>
 </body>
 </html>

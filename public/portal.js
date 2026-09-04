@@ -436,7 +436,17 @@ async function chamarProfessor(exercicio, botao) {
       method: 'POST',
       body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, exercicio: exercicio || undefined }),
     });
-    if (resp.enviado === false && resp.motivo === 'cooldown') {
+    // 2026-09-04: resp aqui é o formato de enviarParaTodoStaff() em
+    // webPush.service.js — {enviados, removidos} ou, em cooldown,
+    // {enviados:0, motivo:'cooldown'} (ver POST /chamar-professor em
+    // portal.routes.js). NUNCA tem um campo "enviado" (singular) — esse
+    // formato era do notificarInstrutor/Telegram antigo, trocado em
+    // 2026-09-02 pro Web Push, mas esta checagem ficou comparando um campo
+    // que não existe mais (`resp.enviado === false`, sempre falso porque
+    // undefined !== false) — bug real relatado: 2ª chamada (depois de trocar
+    // de exercício, dentro da janela de cooldown) mostrava "Professor
+    // avisado!" mesmo sem nenhum push ter saído de verdade.
+    if (resp.motivo === 'cooldown') {
       alert('Você já chamou o professor há pouco — ele já está a caminho!');
     } else {
       alert('Professor avisado! 🔔 Ele já está vindo.');

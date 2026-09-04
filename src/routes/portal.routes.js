@@ -444,12 +444,17 @@ router.get('/gamificacao', limitadorSenhaPortal, async (req, res, next) => {
   }
 });
 
-// Cooldown por aluno (2026-09-02) — evita martelar as notificações push do
-// staff se o mesmo aluno clicar "Chamar professor" várias vezes seguidas.
-// Em memória, reinicia a cada deploy/restart (mesmo espírito do cooldown
-// por equipamento em notificarInstrutor.service.js) — suficiente pro caso
-// de uso, não precisa sobreviver a restart.
-const ultimoChamadoProfessorPorAluno = new Map();
+// Cooldown por aluno+contexto (2026-09-02, ajustado 2026-09-04) — evita
+// martelar as notificações push do staff se o mesmo aluno clicar "Chamar
+// professor" várias vezes seguidas PRO MESMO exercício (ou pro botão
+// flutuante geral). A chave inclui o exercício de propósito: um aluno que
+// chama, troca de exercício e chama de novo é um pedido NOVO de verdade
+// (quer que o professor saiba que mudou de estação), não deve ficar preso
+// no cooldown do exercício anterior — relatado como bug real ("troquei de
+// exercício e o chamado novo não chegou"). Em memória, reinicia a cada
+// deploy/restart (mesmo espírito do cooldown por equipamento em
+// notificarInstrutor.service.js) — suficiente pro caso de uso.
+const ultimoChamadoProfessorPorAlunoContexto = new Map();
 const COOLDOWN_CHAMAR_PROFESSOR_MS = 60 * 1000;
 
 // POST /api/portal/chamar-professor { cpf, senha, exercicio? } — botão
@@ -475,15 +480,21 @@ router.post('/chamar-professor', limitadorSenhaPortal, async (req, res, next) =>
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
     const aluno = autenticado.aluno;
 
-    const ultimoChamado = ultimoChamadoProfessorPorAluno.get(aluno.id);
+    const chaveContexto = `${aluno.id}|${dados.exercicio || 'geral'}`;
+    const ultimoChamado = ultimoChamadoProfessorPorAlunoContexto.get(chaveContexto);
     if (ultimoChamado && (Date.now() - ultimoChamado) < COOLDOWN_CHAMAR_PROFESSOR_MS) {
       return res.json({ enviados: 0, motivo: 'cooldown' });
     }
-    ultimoChamadoProfessorPorAluno.set(aluno.id, Date.now());
+    ultimoChamadoProfessorPorAlunoContexto.set(chaveContexto, Date.now());
 
     const corpo = dados.exercicio ? `${aluno.nome} está precisando de ajuda em: ${dados.exercicio}` : `${aluno.nome} está chamando pelo portal.`;
+    // `tag` inclui o contexto de propósito: duas chamadas com tags
+    // diferentes (ex.: exercícios diferentes) aparecem como notificações
+    // SEPARADAS (cada uma re-alerta de verdade); a mesma tag só substitui
+    // a anterior — correto pra "chamei de novo pro mesmo exercício", errado
+    // pra "troquei de exercício e chamei de novo" (que precisa alertar).
     try {
-      const resultado = await webPush.enviarParaTodoStaff({ titulo: '🙋 Chamado do aluno', corpo, url: '/index.html', tag: 'chamar-professor' });
+      const resultado = await webPush.enviarParaTodoStaff({ titulo: '🙋 Chamado do aluno', corpo, url: '/index.html', tag: `chamar-professor-${chaveContexto}` });
       res.json(resultado);
     } catch (erroChamado) {
       // Falha ao avisar (VAPID não configurado, nenhum staff inscrito, etc.)

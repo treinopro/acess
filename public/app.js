@@ -970,6 +970,9 @@ async function carregarConfigChamarProfessor() {
     document.getElementById('cfg-chamar-professor-restrito').checked = !!config.restrito;
     document.getElementById('cfg-chamar-professor-hora-inicio').value = config.horaInicio || '06:00';
     document.getElementById('cfg-chamar-professor-hora-fim').value = config.horaFim || '22:00';
+    document.getElementById('cfg-chamar-professor-pausa-ativa').checked = !!config.pausaAtiva;
+    document.getElementById('cfg-chamar-professor-pausa-inicio').value = config.pausaInicio || '12:00';
+    document.getElementById('cfg-chamar-professor-pausa-fim').value = config.pausaFim || '13:00';
   } catch (err) { mostrarToast(err.message, true); }
 }
 
@@ -979,6 +982,9 @@ document.getElementById('form-config-chamar-professor').addEventListener('submit
     chamar_professor_restrito: document.getElementById('cfg-chamar-professor-restrito').checked,
     chamar_professor_hora_inicio: document.getElementById('cfg-chamar-professor-hora-inicio').value || '06:00',
     chamar_professor_hora_fim: document.getElementById('cfg-chamar-professor-hora-fim').value || '22:00',
+    chamar_professor_pausa_ativa: document.getElementById('cfg-chamar-professor-pausa-ativa').checked,
+    chamar_professor_pausa_inicio: document.getElementById('cfg-chamar-professor-pausa-inicio').value || '12:00',
+    chamar_professor_pausa_fim: document.getElementById('cfg-chamar-professor-pausa-fim').value || '13:00',
   };
   try {
     await api('/api/config/chamar-professor-horario', { method: 'PUT', body: JSON.stringify(dados) });

@@ -91,10 +91,16 @@ const CHAVES_COOLDOWN = Object.keys(PADROES_COOLDOWN);
 // obterConfigChamarProfessor abaixo, mesmo ajuste -3h já usado em
 // atualizarCobrancasVencidas/webPush pra não bater errado perto da
 // meia-noite local).
+// Pausa opcional (2026-09-04, pedido do dono — ex.: almoço) DENTRO da janela
+// principal acima: um segundo intervalo, desligado por padrão, que também
+// bloqueia o chamado mesmo estando dentro do horário geral permitido.
 const PADROES_CHAMAR_PROFESSOR = {
   chamar_professor_restrito: 'false',
   chamar_professor_hora_inicio: '06:00',
   chamar_professor_hora_fim: '22:00',
+  chamar_professor_pausa_ativa: 'false',
+  chamar_professor_pausa_inicio: '12:00',
+  chamar_professor_pausa_fim: '13:00',
 };
 const CHAVES_CHAMAR_PROFESSOR = Object.keys(PADROES_CHAMAR_PROFESSOR);
 
@@ -421,6 +427,9 @@ const ChamarProfessorConfigSchema = z.object({
   chamar_professor_restrito: z.boolean().optional(),
   chamar_professor_hora_inicio: z.string().regex(/^\d{2}:\d{2}$/).optional(),
   chamar_professor_hora_fim: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  chamar_professor_pausa_ativa: z.boolean().optional(),
+  chamar_professor_pausa_inicio: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  chamar_professor_pausa_fim: z.string().regex(/^\d{2}:\d{2}$/).optional(),
 });
 
 // PUT /api/config/chamar-professor-horario — admin only
@@ -462,6 +471,9 @@ async function obterConfigChamarProfessor() {
     restrito: config.chamar_professor_restrito === 'true',
     horaInicio: config.chamar_professor_hora_inicio,
     horaFim: config.chamar_professor_hora_fim,
+    pausaAtiva: config.chamar_professor_pausa_ativa === 'true',
+    pausaInicio: config.chamar_professor_pausa_inicio,
+    pausaFim: config.chamar_professor_pausa_fim,
   };
 }
 

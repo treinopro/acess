@@ -458,6 +458,14 @@ router.get('/gamificacao', limitadorSenhaPortal, async (req, res, next) => {
 const ultimoChamadoProfessorPorAlunoContexto = new Map();
 const COOLDOWN_CHAMAR_PROFESSOR_MS = 60 * 1000;
 
+// "HH:MM" comparado como texto funciona igual comparação de horário (os
+// dois lados são sempre zero-padded) — suporta janela que vira a virada da
+// meia-noite (ex.: 22:00–06:00) e é reaproveitado tanto pro horário geral
+// quanto pra pausa (ex.: almoço) do "Chamar professor" abaixo.
+function horaDentroDaJanela(hora, inicio, fim) {
+  return inicio <= fim ? (hora >= inicio && hora <= fim) : (hora >= inicio || hora <= fim);
+}
+
 // POST /api/portal/chamar-professor { cpf, senha, exercicio? } — botão
 // "Chamar professor" do portal (2026-09-02). Usa a MESMA infraestrutura de
 // Web Push já validada e funcionando pros avisos de vencimento do aluno
@@ -487,18 +495,20 @@ router.post('/chamar-professor', limitadorSenhaPortal, async (req, res, next) =>
     // cooldown, senão o primeiro clique de manhã cedo bloquearia o
     // primeiro clique de verdade assim que a academia abrir.
     const configHorario = await obterConfigChamarProfessor();
-    if (configHorario.restrito) {
+    if (configHorario.restrito || configHorario.pausaAtiva) {
       const horaAtual = await db.execute("SELECT strftime('%H:%M', datetime('now', '-3 hours')) as hora");
       const hora = horaAtual.rows[0].hora;
-      const { horaInicio, horaFim } = configHorario;
-      // Suporta janela que vira a virada da meia-noite (ex.: 22:00–06:00) —
-      // comparação lexicográfica de "HH:MM" funciona igual comparação de
-      // horário porque os dois lados são sempre zero-padded.
-      const dentroDaJanela = horaInicio <= horaFim
-        ? hora >= horaInicio && hora <= horaFim
-        : hora >= horaInicio || hora <= horaFim;
-      if (!dentroDaJanela) {
-        return res.status(403).json({ erro: `O professor só pode ser chamado pelo portal entre ${horaInicio} e ${horaFim}.` });
+
+      if (configHorario.restrito && !horaDentroDaJanela(hora, configHorario.horaInicio, configHorario.horaFim)) {
+        return res.status(403).json({ erro: `O professor só pode ser chamado pelo portal entre ${configHorario.horaInicio} e ${configHorario.horaFim}.` });
+      }
+      // Pausa (ex.: almoço) — bloqueia mesmo estando dentro do horário
+      // geral acima. Checada em separado (não é "senão" do if de cima) pra
+      // funcionar mesmo se `restrito` estiver desligado mas a pausa ligada
+      // sozinha (ex.: academia abre 24h, só quer bloquear no horário de
+      // almoço do professor).
+      if (configHorario.pausaAtiva && horaDentroDaJanela(hora, configHorario.pausaInicio, configHorario.pausaFim)) {
+        return res.status(403).json({ erro: `O professor está em pausa (${configHorario.pausaInicio} às ${configHorario.pausaFim}). Tente novamente depois, ou procure a recepção.` });
       }
     }
 

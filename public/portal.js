@@ -11,6 +11,7 @@ async function api(caminho, opcoes = {}) {
   if (!resp.ok) {
     const erro = new Error(dados.erro || dados.motivo || 'Erro na requisição.');
     erro.dados = dados; // preserva campos extras (ex.: precisa_senha) pra quem chamou decidir o que fazer
+    erro.status = resp.status; // distingue "servidor recusou a credencial" (401/404) de "servidor com problema" (500) pra quem precisar decidir se foi erro do usuário ou instabilidade passageira
     throw erro;
   }
   return dados;
@@ -291,7 +292,12 @@ async function iniciarCadastroFacial({ video, statusEl, cpf, senha, aoConcluir }
 // ---------------- Início ----------------
 
 document.getElementById('btn-ir-hub').addEventListener('click', () => {
-  resetHub();
+  // Se o auto-login (tentarAutoLoginHub, na inicialização) já restaurou uma
+  // sessão salva, NÃO reseta — resetHub() apagaria cpfHubAtual/senhaHubAtual
+  // e mostraria a tela de CPF/senha de novo, desfazendo o login automático
+  // bem na hora que o aluno entra no hub (bug real: o auto-login nunca tinha
+  // efeito nenhum por causa disso).
+  if (!cpfHubAtual) resetHub();
   mostrarPagina('pagina-hub');
 });
 
@@ -366,8 +372,16 @@ async function tentarAutoLoginHub() {
     cpfHubAtual = salvo.cpf;
     senhaHubAtual = salvo.senha;
     preencherDashboardHub(info);
-  } catch {
-    limparCredenciaisHub();
+    mostrarPagina('pagina-hub'); // pula a tela "Já sou aluno" — é isto que faz o login persistente valer a pena
+  } catch (err) {
+    // Só apaga a credencial salva se o SERVIDOR respondeu recusando de
+    // verdade (401 senha errada, 404 aluno removido) — 401/404 são os únicos
+    // status que a rota GET /portal/aluno usa pra "credencial inválida" (ver
+    // portal.routes.js). Qualquer outra coisa (500 de instabilidade no banco,
+    // falha de rede/timeout sem resposta nenhuma) NÃO prova que a credencial
+    // é inválida — mantém salva e deixa tentar de novo na próxima abertura,
+    // em vez de forçar login manual por causa de um problema passageiro.
+    if (err.status === 401 || err.status === 404) limparCredenciaisHub();
     painelCpf.classList.remove('oculto');
   }
 }

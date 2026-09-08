@@ -375,6 +375,22 @@ document.getElementById('form-login').addEventListener('submit', async (ev) => {
 
 document.getElementById('btn-sair').addEventListener('click', fazerLogout);
 
+// Autosservico: qualquer papel logado troca a propria senha, sem precisar de
+// admin (diferente do botao "Redefinir senha" em Usuarios, so-admin — 2026-09-08).
+document.getElementById('btn-trocar-minha-senha').addEventListener('click', async () => {
+  const senhaAtual = window.prompt('Digite sua senha atual:');
+  if (senhaAtual === null) return;
+  const senhaNova = window.prompt('Digite a nova senha (mínimo 6 caracteres):');
+  if (senhaNova === null) return;
+  try {
+    await api('/api/auth/trocar-senha', {
+      method: 'POST',
+      body: JSON.stringify({ senha_atual: senhaAtual, senha_nova: senhaNova }),
+    });
+    mostrarToast('Senha alterada com sucesso.');
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
 // ---------------- Menu mobile (sidebar em modo "gaveta" abaixo de 900px) ----------------
 // Fora da media query mobile isso não tem efeito visual nenhum (a sidebar fica fixa
 // como sempre) — a classe "aberta" só é interpretada pelo CSS dentro de @media.

@@ -289,10 +289,15 @@ function escreverNoStream(writable, chunk) {
 async function escreverBackupStream(writable) {
   await escreverNoStream(writable, `{"gerado_em":${JSON.stringify(new Date().toISOString())},"tabelas":{`);
 
-  // usuarios entra sem o hash da senha — backup não deve carregar credenciais
+  // usuarios entra sem o hash da senha — backup não deve carregar credenciais.
+  // `usuario` (login curto alternativo ao e-mail, ver auth.routes.js — "WHERE
+  // email = ? OR usuario = ?") NÃO é segredo nenhum — faltava aqui até
+  // 08/09/2026, e um restore perdia o login por usuário de todo mundo (só o
+  // e-mail continuava funcionando) até eu recuperar manualmente do banco
+  // antigo. Nunca mais deixar de fora.
   const tabelas = [
     ...TABELAS_BACKUP.map((nome) => ({ nome, sql: `SELECT * FROM ${nome}` })),
-    { nome: 'usuarios', sql: 'SELECT id, nome, email, papel, criado_em FROM usuarios' },
+    { nome: 'usuarios', sql: 'SELECT id, nome, usuario, email, papel, criado_em FROM usuarios' },
   ];
 
   for (let i = 0; i < tabelas.length; i++) {

@@ -763,6 +763,14 @@ async function registrarAcesso({
     try { totemEventos.emitirLiberado({ metodo, alunoNome, motivo: motivoLiberacao }); } catch { /* nunca deve derrubar o registro do acesso */ }
   }
 
+  // 2026-09-08: canal separado pro painel "Acessos ao vivo" do admin (ver
+  // totemEventos.service.js) — ao contrário do emitirLiberado acima, dispara
+  // pra LIBERADO e NEGADO (o admin quer ver tentativas negadas também, não só
+  // sucessos), sem tocar no banco pra isso. Mesmo padrão best-effort/síncrono.
+  try { totemEventos.emitirAcessoAdmin({
+    resultado, metodo, alunoNome, alunoId, mensagem,
+  }); } catch { /* nunca deve derrubar o registro do acesso */ }
+
   if (!dbResiliente.MODO_TOTEM_OFFLINE) {
     await db.execute({
       sql: 'INSERT INTO acessos_catraca (id, aluno_id, metodo, resultado, mensagem) VALUES (?, ?, ?, ?, ?)',
@@ -841,6 +849,12 @@ async function registrarAcessoIdempotente(dados) {
   if (dados.resultado === 'liberado') {
     try { totemEventos.emitirLiberado({ metodo: dados.metodo }); } catch { /* nunca deve derrubar o registro do acesso */ }
   }
+  // 2026-09-08: mesmo canal admin de registrarAcesso acima — este caminho
+  // (biometria lida direto na catraca) não tem o nome do aluno em mãos sem
+  // uma consulta extra ao banco, então vai só com metodo/resultado/mensagem.
+  try { totemEventos.emitirAcessoAdmin({
+    resultado: dados.resultado, metodo: dados.metodo, alunoId: dados.alunoId, mensagem: dados.mensagem,
+  }); } catch { /* nunca deve derrubar o registro do acesso */ }
   return registrarAcessoIdempotenteEm(db, dados);
 }
 
@@ -909,7 +923,9 @@ async function tentarLiberar({ aluno, metodo, mensagemDiagnostico }) {
   const avisoVencimento = aluno ? await buscarAvisoVencimentoSeguro(aluno.id) : null;
 
   if (!autorizado) {
-    await registrarAcesso({ alunoId: aluno ? aluno.id : null, metodo, resultado: 'negado', mensagem: motivo });
+    await registrarAcesso({
+      alunoId: aluno ? aluno.id : null, metodo, resultado: 'negado', mensagem: motivo, alunoNome: aluno ? aluno.nome : null,
+    });
     // cpf/aluno_id vão junto mesmo no negado — a tela do totem usa isso pra
     // oferecer "Pagar contas em atraso" já com o CPF preenchido, sem o aluno
     // precisar digitar de novo (só faz sentido quando o motivo é financeiro,
@@ -934,7 +950,9 @@ async function tentarLiberar({ aluno, metodo, mensagemDiagnostico }) {
     const faltam = (cooldownFacialSegundos * 1000) - (agoraMs - ultimaVezDesteAluno);
     if (faltam > 0) {
       const motivoCooldown = 'Aguarde alguns segundos antes da próxima liberação por reconhecimento facial.';
-      await registrarAcesso({ alunoId: aluno.id, metodo, resultado: 'negado', mensagem: motivoCooldown });
+      await registrarAcesso({
+        alunoId: aluno.id, metodo, resultado: 'negado', mensagem: motivoCooldown, alunoNome: aluno.nome,
+      });
       return { autorizado: false, motivo: motivoCooldown, aluno_nome: aluno.nome, aluno_id: aluno.id, cpf: aluno.cpf, aviso_vencimento: avisoVencimento };
     }
   }
@@ -947,7 +965,9 @@ async function tentarLiberar({ aluno, metodo, mensagemDiagnostico }) {
     await liberarNaCatraca(mensagemBoasVindasCatraca(aluno.nome));
   } catch (err) {
     const motivoFalha = `Falha ao comunicar com a catraca: ${err.message}`;
-    await registrarAcesso({ alunoId: aluno.id, metodo, resultado: 'negado', mensagem: motivoFalha });
+    await registrarAcesso({
+      alunoId: aluno.id, metodo, resultado: 'negado', mensagem: motivoFalha, alunoNome: aluno.nome,
+    });
     return { autorizado: false, motivo: motivoFalha, aluno_nome: aluno.nome, aluno_id: aluno.id, cpf: aluno.cpf, aviso_vencimento: avisoVencimento };
   }
 
@@ -970,7 +990,9 @@ async function tentarLiberar({ aluno, metodo, mensagemDiagnostico }) {
   // não dava pra investigar depois um relato de reconhecimento errado (ex.:
   // confusão entre alunos que usam boné) com nenhum dado concreto pra
   // calibrar FACE_MATCH_LIMIAR_COSSENO/FACE_MATCH_MARGEM_MINIMA_COSSENO.
-  await registrarAcesso({ alunoId: aluno.id, metodo, resultado: 'liberado', mensagem: metodo === 'facial' ? mensagemDiagnostico || null : null });
+  await registrarAcesso({
+    alunoId: aluno.id, metodo, resultado: 'liberado', mensagem: metodo === 'facial' ? mensagemDiagnostico || null : null, alunoNome: aluno.nome,
+  });
   return { autorizado: true, motivo: null, aluno_nome: aluno.nome, aluno_id: aluno.id, cpf: aluno.cpf, aviso_vencimento: avisoVencimento, primeiro_acesso_hoje: primeiroAcessoHoje };
 }
 

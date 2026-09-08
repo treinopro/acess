@@ -85,10 +85,34 @@ function autenticarTerminalOuCadastroPublico(req, res, next) {
   return res.status(401).json({ erro: 'Token inválido ou não informado.' });
 }
 
+// Variante de autenticar+apenasAdmin pra conexões SSE (EventSource) do painel
+// admin — o EventSource nativo do navegador não permite mandar headers
+// customizados (só a URL), então o JWT vai em ?token= em vez do header
+// "Authorization: Bearer" normal. Mesmo token/mesma verificação, só o
+// transporte muda (mesmo padrão já usado pelo TERMINAL_TOKEN do totem em
+// GET /api/terminal/eventos/stream).
+function autenticarAdminPorQuery(req, res, next) {
+  const token = req.query.token;
+  if (!token) {
+    return res.status(401).json({ erro: 'Token não informado.' });
+  }
+  try {
+    const usuario = verificarToken(token);
+    if (usuario.papel !== 'admin') {
+      return res.status(403).json({ erro: 'Apenas administradores podem realizar esta ação.' });
+    }
+    req.usuario = usuario;
+    return next();
+  } catch (err) {
+    return res.status(401).json({ erro: 'Token inválido ou expirado.' });
+  }
+}
+
 module.exports = {
   autenticar,
   apenasAdmin,
   autenticarTerminal,
   autenticarCadastroPublico,
   autenticarTerminalOuCadastroPublico,
+  autenticarAdminPorQuery,
 };

@@ -4601,7 +4601,10 @@ async function carregarUsuarios() {
               <option value="recepcao">recepcao</option>
             </select>
           </td>
-          <td><button class="btn-linha perigo" data-acao="excluir">Excluir</button></td>
+          <td>
+            <button class="btn-linha" data-acao="redefinir-senha">Redefinir senha</button>
+            <button class="btn-linha perigo" data-acao="excluir">Excluir</button>
+          </td>
         </tr>
       `);
       tr.querySelector('[data-acao="papel"]').value = u.papel;
@@ -4609,6 +4612,14 @@ async function carregarUsuarios() {
         try {
           await api(`/api/usuarios/${u.id}/papel`, { method: 'PATCH', body: JSON.stringify({ papel: ev.target.value }) });
           mostrarToast('Papel atualizado.');
+        } catch (err) { mostrarToast(err.message, true); }
+      });
+      tr.querySelector('[data-acao="redefinir-senha"]').addEventListener('click', async () => {
+        const novaSenha = window.prompt(`Nova senha para ${u.nome} (mínimo 6 caracteres):`);
+        if (novaSenha === null) return;
+        try {
+          await api(`/api/usuarios/${u.id}/senha`, { method: 'PUT', body: JSON.stringify({ senha: novaSenha }) });
+          mostrarToast(`Senha de ${u.nome} redefinida.`);
         } catch (err) { mostrarToast(err.message, true); }
       });
       tr.querySelector('[data-acao="excluir"]').addEventListener('click', async () => {
@@ -5029,7 +5040,7 @@ document.getElementById('btn-rel-matriculas-imprimir').addEventListener('click',
 });
 
 // Classifica um acesso em 'liberado' / 'negado' / 'vencido' (negado por mensalidade em
-// atraso) — mesma regra usada no badge do painel "Acessos recentes" (ver formatarTipoAcesso),
+// atraso) — mesma regra usada no badge da janela "Acessos ao vivo" (ver formatarTipoAcessoVivo),
 // só que devolvendo a chave em vez do HTML, pra poder filtrar e contar por tipo.
 function tipoDeAcesso(a) {
   if (a.resultado === 'liberado') return 'liberado';
@@ -5340,31 +5351,37 @@ document.getElementById('btn-rel-risco-cancelar-matriculas').addEventListener('c
   } catch (err) { mostrarToast(err.message, true); }
 });
 
-// ---------------- Painel lateral "Acessos recentes" (persiste entre abas) ----------------
-// Reaproveita o mesmo endpoint /api/terminal/acessos usado na aba Catraca. O painel fica
-// fora das <section class="secao">, então trocar de aba não fecha ele; só o botão de X fecha.
+// ---------------- Janela flutuante "Acessos ao vivo" (persiste entre abas) ----------------
+// 2026-09-08: substitui o antigo "Acompanhamento de acessos", que consultava
+// GET /api/terminal/acessos a cada 8s/20s — deixado aberto numa tela de
+// recepção (uso real, não incomum), isso martelava o banco sem parar e foi a
+// causa raiz de o Turso estourar a cota de leitura (ver comentário do índice
+// novo em idx_acessos_catraca_criado_em, schema.sql). Esta versão NUNCA lê o
+// banco pra se exibir: escuta por SSE (GET /api/terminal/admin/eventos/stream)
+// o mesmo evento que acende a tela do totem, e guarda só os últimos 20 na
+// memória do navegador — some quando a janela fecha, de propósito (é um
+// "agora", não um histórico). O histórico consultável mora em Relatórios >
+// Acesso Diário/Pessoal/Último Acesso, com atualização manual (botão
+// "Buscar"), sem nenhum timer.
 
-let acessosRecentesTimer = null;
+let acessosVivoFonte = null;
+const acessosVivoLista = []; // últimos 20, mais recente primeiro — só em memória
 
-function formatarTipoAcesso(a) {
+function formatarTipoAcessoVivo(a) {
   if (a.resultado === 'liberado') return '<span class="badge ativo">Liberado</span>';
-  // Mesmo motivo/correção de tipoDeAcesso() acima: o texto real de negação por
-  // mensalidade em atraso é "Existem mensalidades em atraso.", não algo com "venc".
   const rotulo = a.mensagem && /atraso/i.test(a.mensagem) ? 'Vencido' : 'Negado';
-  // Só oferece o botão de liberar quando dá pra saber QUEM foi negado (aluno_id
-  // presente) — sem isso não tem quem indicar pra /catraca/liberar-aluno.
   if (a.aluno_id) {
     return `<span class="badge inadimplente negado-liberar" style="cursor:pointer" title="Clique para liberar o acesso manualmente pela recepção">${rotulo} ↻</span>`;
   }
   return `<span class="badge inadimplente">${rotulo}</span>`;
 }
 
-// Libera manualmente, pela recepção, um acesso que a catraca/totem negou — clique no
-// badge "Negado"/"Vencido" no painel "Acompanhamento de acessos" (2026-08-24, pedido
-// do dono do sistema). Reaproveita a mesma rota admin já usada pelo perfil do aluno
-// (/catraca/liberar-aluno), só que passando o motivo original da negação (`a.mensagem`)
-// no campo `motivo` — ele entra só no registro/log do novo acesso liberado, nunca no
-// texto mostrado na tela física da catraca (ver comentário em terminal.routes.js).
+// Libera manualmente, pela recepção, um acesso que a catraca/totem acabou de
+// negar (2026-08-24, pedido do dono do sistema — mantido na versão "ao vivo").
+// Reaproveita a mesma rota admin já usada pelo perfil do aluno
+// (/catraca/liberar-aluno), passando o motivo original da negação no campo
+// `motivo` — só entra no log do novo acesso liberado, nunca é falado na
+// catraca física (ver comentário em terminal.routes.js).
 async function liberarAcessoNegadoPelaRecepcao(a) {
   const motivoOriginal = a.mensagem || 'não informado';
   const motivo = window.prompt(
@@ -5378,50 +5395,72 @@ async function liberarAcessoNegadoPelaRecepcao(a) {
       body: JSON.stringify({ aluno_id: a.aluno_id, motivo }),
     });
     mostrarToast(`Acesso de ${a.aluno_nome} liberado pela recepção.`);
-    carregarAcessosRecentes();
   } catch (err) { mostrarToast(err.message, true); }
 }
 
-async function carregarAcessosRecentes() {
+function renderizarAcessosVivo() {
+  const tbody = document.getElementById('lista-acessos-vivo');
+  if (!tbody) return;
+  tbody.innerHTML = acessosVivoLista.length ? '' : '<tr><td colspan="3">Nenhum acesso ainda desde que esta janela abriu.</td></tr>';
+  acessosVivoLista.forEach((a) => {
+    const nomeCel = a.aluno_id
+      ? `<span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${escapeHtml(a.aluno_nome)}</span>`
+      : (escapeHtml(a.aluno_nome) || '—');
+    const tr = el(`
+      <tr>
+        <td>${new Date(a.em).toLocaleTimeString('pt-BR')}</td>
+        <td>${nomeCel}</td>
+        <td>${formatarTipoAcessoVivo(a)}</td>
+      </tr>
+    `);
+    tr.querySelector('.nome-clicavel')?.addEventListener('click', () => abrirPerfilAluno(a.aluno_id));
+    tr.querySelector('.negado-liberar')?.addEventListener('click', () => liberarAcessoNegadoPelaRecepcao(a));
+    tbody.appendChild(tr);
+  });
+}
+
+function iniciarEscutaAcessosVivo() {
+  if (acessosVivoFonte || !estado.token) return;
   try {
-    const lista = await api('/api/terminal/acessos');
-    const tbody = document.getElementById('lista-acessos-recentes');
-    tbody.innerHTML = lista.length ? '' : '<tr><td colspan="4">Nenhum acesso registrado ainda.</td></tr>';
-    lista.forEach((a) => {
-      const quando = parseDataHoraServidor(a.criado_em);
-      const nomeCel = a.aluno_id
-        ? `<span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${escapeHtml(a.aluno_nome)}</span>`
-        : (escapeHtml(a.aluno_nome) || '—');
-      const tr = el(`
-        <tr>
-          <td>${quando.toLocaleDateString('pt-BR')}</td>
-          <td>${quando.toLocaleTimeString('pt-BR')}</td>
-          <td>${nomeCel}</td>
-          <td>${formatarTipoAcesso(a)}</td>
-        </tr>
-      `);
-      tr.querySelector('.nome-clicavel')?.addEventListener('click', () => abrirPerfilAluno(a.aluno_id));
-      tr.querySelector('.negado-liberar')?.addEventListener('click', () => liberarAcessoNegadoPelaRecepcao(a));
-      tbody.appendChild(tr);
+    acessosVivoFonte = new EventSource(`/api/terminal/admin/eventos/stream?token=${encodeURIComponent(estado.token)}`);
+    acessosVivoFonte.addEventListener('acesso', (evento) => {
+      let dados = {};
+      try { dados = JSON.parse(evento.data); } catch { return; }
+      acessosVivoLista.unshift({
+        em: dados.em || Date.now(),
+        resultado: dados.resultado,
+        mensagem: dados.mensagem,
+        aluno_nome: dados.alunoNome,
+        aluno_id: dados.alunoId || null,
+      });
+      if (acessosVivoLista.length > 20) acessosVivoLista.length = 20;
+      renderizarAcessosVivo();
     });
-  } catch (err) {
-    // Silencioso: esse painel pode ficar aberto em qualquer aba, não queremos
-    // toasts repetidos de erro a cada atualização automática.
+    // Sem handler de erro customizado de propósito — o EventSource reconecta
+    // sozinho (comportamento nativo do navegador) se a conexão cair.
+  } catch {
+    // Best-effort: se falhar ao abrir, a janela só fica sem eventos novos.
+  }
+}
+
+function pararEscutaAcessosVivo() {
+  if (acessosVivoFonte) {
+    acessosVivoFonte.close();
+    acessosVivoFonte = null;
   }
 }
 
 function abrirPainelAcessos() {
   document.getElementById('painel-acessos').classList.remove('oculto');
   restaurarJanela(document.getElementById('painel-acessos'));
-  carregarAcessosRecentes();
-  clearInterval(acessosRecentesTimer);
-  acessosRecentesTimer = setInterval(carregarAcessosRecentes, 8000);
+  acessosVivoLista.length = 0; // janela reaberta = começa do zero, é um "agora"
+  renderizarAcessosVivo();
+  iniciarEscutaAcessosVivo();
 }
 
 function fecharPainelAcessos() {
   document.getElementById('painel-acessos').classList.add('oculto');
-  clearInterval(acessosRecentesTimer);
-  acessosRecentesTimer = null;
+  pararEscutaAcessosVivo();
   reposicionarJanelasMinimizadas();
 }
 

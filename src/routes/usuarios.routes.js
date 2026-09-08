@@ -66,6 +66,25 @@ router.patch('/:id/papel', async (req, res, next) => {
   }
 });
 
+// PUT /api/usuarios/:id/senha — redefine a senha de um usuário existente
+// (2026-09-08: não existia nenhum jeito de trocar a senha de alguém sem
+// excluir e recriar a conta inteira, perdendo o vínculo do id em qualquer
+// referência antiga — ex.: banners_portal.criado_por. Ficou necessário na
+// hora de restaurar um backup pra um banco novo: o backup NUNCA inclui
+// senha_hash de propósito, então toda conta precisa de uma senha nova depois
+// de uma restauração — ver escreverBackupStream em config.routes.js).
+router.put('/:id/senha', async (req, res, next) => {
+  try {
+    const senha = z.string().min(6).parse(req.body.senha);
+    const senhaHash = await bcrypt.hash(senha, 10);
+    const result = await db.execute({ sql: 'UPDATE usuarios SET senha_hash = ? WHERE id = ?', args: [senhaHash, req.params.id] });
+    if (!result.rowsAffected) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // DELETE /api/usuarios/:id — remove um usuário (não permite autoexclusão)
 router.delete('/:id', async (req, res, next) => {
   try {

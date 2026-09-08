@@ -230,13 +230,21 @@ router.put('/', autenticar, apenasAdmin, async (req, res, next) => {
 // padrão do resto do arquivo — só not exportar de propósito: `usuarios`
 // (tratada à parte abaixo, sem o hash da senha) e `pagamentos_totem` (dados
 // de pagamento em trânsito do gateway, não é preciso reconstruir histórico).
+// 2026-09-08: mesmo problema de novo — aluno_conquistas (gamificação) e
+// push_subscriptions_staff (chamar professor) foram adicionadas ao schema
+// depois da última vez que esta lista foi corrigida (28/08) e nunca entraram
+// aqui. Achado de novo investigando uma restauração pra um banco novo (Turso
+// bloqueou leitura por estourar a cota — ver idx_acessos_catraca_criado_em em
+// schema.sql). Se uma tabela nova for adicionada ao schema.sql no futuro e
+// fizer sentido reconstruir os dados dela num restore, ela precisa ser
+// adicionada aqui manualmente — não é automático.
 const TABELAS_BACKUP = [
   'alunos', 'anamneses', 'anamnese_perguntas', 'anamnese_respostas', 'avaliacoes_fisicas', 'avaliacao_pipeline',
   'planos', 'matriculas', 'turmas', 'agendamentos', 'checkins', 'cobrancas', 'pagamentos_cobranca', 'contas_pagar',
   'acessos_catraca', 'configuracoes', 'concessoes_acesso', 'banners_portal', 'produtos_servicos',
   'vendas_produtos_servicos', 'exercicio_biblioteca', 'treinos', 'treino_exercicios', 'treino_execucoes',
   'treino_templates', 'treino_template_exercicios', 'mensagens_templates', 'mensagens_agendadas',
-  'mensagens_enviadas', 'push_subscriptions',
+  'mensagens_enviadas', 'push_subscriptions', 'aluno_conquistas', 'push_subscriptions_staff',
 ];
 
 // Tamanho do lote de leitura por tabela — evita carregar uma tabela inteira

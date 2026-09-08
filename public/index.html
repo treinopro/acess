@@ -76,7 +76,7 @@
           <button class="btn-liberar-rapido oculto" id="btn-liberar-rapido" title="Libera a catraca imediatamente, sem abrir a janela completa da catraca">⚡ Liberar rápido</button>
           <a class="btn-liberar-rapido oculto" id="link-liberacao-rapida" href="liberacao-rapida.html" target="_blank" rel="noopener" title="Abre uma tela cheia, só com o botão de liberar — ideal pra deixar num tablet/computador da recepção">⚡ Tela cheia</a>
           <button class="btn-liberar-rapido oculto" id="btn-comando-voz" title='Fale um comando, ex: "liberar catraca", "abrir contas a pagar", "abrir relatórios"'>🎤 Comando de voz</button>
-          <button class="btn-acessos-recentes oculto" id="btn-acessos-recentes" title="Acessos recentes">🕓 Acessos</button>
+          <button class="btn-acessos-recentes oculto" id="btn-acessos-recentes" title="Acessos ao vivo — aparece na hora, sem precisar atualizar (últimos 20; para o histórico completo veja Relatórios > Acesso Diário)">🕓 Ao vivo</button>
           <button class="btn-acessos-recentes oculto" id="btn-ativar-notificacoes-staff" title="Recebe um aviso neste navegador quando um aluno tocar em &quot;Chamar professor&quot; no portal">🔔 Chamado</button>
         </div>
         <span id="usuario-nome"></span>
@@ -2187,18 +2187,26 @@
     </div>
   </div>
 
-  <!-- JANELA FLUTUANTE - ACOMPANHAMENTO DE ACESSOS (visualização, somente leitura;
-       2026-07: convertida de painel lateral fixo pra janela flutuante/arrastável/
-       redimensionável/minimizável/maximizável, igual a da catraca) -->
+  <!-- JANELA FLUTUANTE - ACESSOS AO VIVO (2026-09-08: substitui o antigo
+       "Acompanhamento de acessos", que consultava o banco a cada 8/20s e
+       chegou a estourar a cota de leitura do Turso — ver
+       idx_acessos_catraca_criado_em em schema.sql. Esta versão NUNCA lê o
+       banco: escuta o mesmo evento em tempo real que já acende a tela do
+       totem (GET /api/terminal/admin/eventos/stream, SSE), guarda só os
+       últimos 20 na memória do navegador, e some quando a janela fecha. O
+       histórico de verdade, consultável e filtrável, mora em Relatórios >
+       Acesso Diário/Pessoal/Último Acesso — sem atualização automática lá,
+       de propósito.) -->
   <div id="painel-acessos" class="janela-flutuante oculto">
     <div class="janela-flutuante-topo" id="painel-acessos-alca">
-      <h3>Acompanhamento de acessos</h3>
+      <h3>Acessos ao vivo</h3>
       <button id="btn-fechar-acessos" class="btn-fechar-painel" title="Fechar">&times;</button>
     </div>
     <div class="janela-flutuante-corpo">
+      <p style="margin:0 0 8px;color:#667085;font-size:12px">Aparece na hora que acontece — sem precisar atualizar. Só os últimos 20 desde que esta janela abriu; para o histórico completo, use Relatórios &gt; Acesso Diário.</p>
       <table class="tabela">
-        <thead><tr><th>Data</th><th>Hora</th><th>Nome</th><th>Tipo</th></tr></thead>
-        <tbody id="lista-acessos-recentes"><tr><td colspan="4">Carregando...</td></tr></tbody>
+        <thead><tr><th>Hora</th><th>Nome</th><th>Tipo</th></tr></thead>
+        <tbody id="lista-acessos-vivo"><tr><td colspan="3">Conectando...</td></tr></tbody>
       </table>
     </div>
   </div>

@@ -38,6 +38,46 @@ function quantidadeClientesConectados() {
   return clientes.size;
 }
 
+// 2026-09-08: canal SEPARADO para o painel "Acessos ao vivo" do admin (ver
+// /api/terminal/admin/eventos/stream em terminal.routes.js) — não reaproveita
+// o Set `clientes` acima de propósito: aquele é autenticado pelo TERMINAL_TOKEN
+// do totem físico e só carrega o suficiente pra tela/som de liberação; este
+// aqui é autenticado por sessão de admin e dispara pra LIBERADO e NEGADO (o
+// admin quer ver tentativas, não só sucessos), com o nome+motivo completo.
+// Puramente em memória — nunca é lido do banco, só espelha o que acabou de
+// ser gravado no mesmo instante (ver os dois pontos de chamada em
+// acessoTerminal.service.js, logo ao lado de emitirLiberado).
+const clientesAdmin = new Set(); // Set<express.Response>
+
+function registrarClienteAdmin(res) {
+  clientesAdmin.add(res);
+}
+
+function removerClienteAdmin(res) {
+  clientesAdmin.delete(res);
+}
+
+function emitirAcessoAdmin({
+  resultado, metodo, alunoNome, alunoId, mensagem,
+} = {}) {
+  if (clientesAdmin.size === 0) return;
+  const payload = JSON.stringify({
+    resultado: resultado || null,
+    metodo: metodo || null,
+    alunoNome: alunoNome || null,
+    alunoId: alunoId || null,
+    mensagem: mensagem || null,
+    em: Date.now(),
+  });
+  for (const res of clientesAdmin) {
+    try {
+      res.write(`event: acesso\ndata: ${payload}\n\n`);
+    } catch {
+      // Conexão morta — removida quando o 'close' do response disparar.
+    }
+  }
+}
+
 /**
  * Notifica todo totem conectado agora que uma liberação acabou de acontecer.
  * `alunoNome`/`motivo` (2026-08-24): usados só pela liberação manual pela
@@ -62,4 +102,12 @@ function emitirLiberado({ metodo, alunoNome, motivo } = {}) {
   }
 }
 
-module.exports = { registrarCliente, removerCliente, emitirLiberado, quantidadeClientesConectados };
+module.exports = {
+  registrarCliente,
+  removerCliente,
+  emitirLiberado,
+  quantidadeClientesConectados,
+  registrarClienteAdmin,
+  removerClienteAdmin,
+  emitirAcessoAdmin,
+};

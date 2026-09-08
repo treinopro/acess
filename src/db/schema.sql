@@ -707,6 +707,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_alunos_biometria_id ON alunos(biometria_id
 -- quando preenchido) porque cadastros antigos podem estar sem CPF.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_alunos_cpf ON alunos(cpf) WHERE cpf IS NOT NULL AND cpf != '';
 CREATE INDEX IF NOT EXISTS idx_acessos_catraca_aluno ON acessos_catraca(aluno_id);
+-- 2026-09-08: GET /api/terminal/acessos (painel "Acessos recentes" do admin,
+-- que fica se auto-atualizando a cada 8s enquanto a janela estiver aberta —
+-- ver acessosRecentesTimer em app.js) faz ORDER BY criado_em DESC LIMIT 500
+-- sem filtro nenhum na chamada mais comum. Sem índice em criado_em, isso
+-- varria a tabela INTEIRA (que só cresce — todo acesso de catraca, todo dia,
+-- desde que a academia abriu) a cada 8 segundos, mesmo pra pegar só os 500
+-- mais recentes. Achado investigando o banco (Turso) bloquear leituras por
+-- estourar a cota do plano com um uso real baixo — este scan repetido era o
+-- principal suspeito. Com o índice, SQLite anda pra trás por ele e para nos
+-- primeiros 500, sem tocar no resto da tabela.
+CREATE INDEX IF NOT EXISTS idx_acessos_catraca_criado_em ON acessos_catraca(criado_em);
 CREATE INDEX IF NOT EXISTS idx_mensagens_agendadas_status_data ON mensagens_agendadas(status, agendado_para);
 CREATE INDEX IF NOT EXISTS idx_pagamentos_cobranca_cobranca ON pagamentos_cobranca(cobranca_id);
 CREATE INDEX IF NOT EXISTS idx_anamnese_respostas_anamnese ON anamnese_respostas(anamnese_id);

@@ -2,7 +2,9 @@ const crypto = require('crypto');
 const express = require('express');
 const { v4: uuid } = require('uuid');
 const { z } = require('zod');
-const { autenticar, apenasAdmin, autenticarTerminal, autenticarTerminalOuCadastroPublico } = require('../middleware/auth');
+const {
+  autenticar, apenasAdmin, autenticarTerminal, autenticarTerminalOuCadastroPublico, autenticarAdminPorQuery,
+} = require('../middleware/auth');
 const catracaGateway = require('../services/catracaGateway.service');
 const acessoTerminal = require('../services/acessoTerminal.service');
 const mercadopago = require('../services/payment/mercadopago.service');
@@ -779,6 +781,35 @@ terminal.get('/eventos/stream', (req, res) => {
   req.on('close', () => {
     clearInterval(keepAlive);
     totemEventos.removerCliente(res);
+  });
+});
+
+// 2026-09-08: painel "Acessos ao vivo" do admin (ver public/app.js) — mesma
+// ideia do stream do totem acima (SSE, evento empurrado no instante em que
+// acontece, nunca lido do banco), canal SEPARADO (ver totemEventos.service.js
+// pro motivo) e autenticado por sessão de admin em vez do TERMINAL_TOKEN do
+// totem físico. Fica fora do router `admin` de propósito: aquele usa
+// autenticar/apenasAdmin normais (lê o JWT do header Authorization), mas
+// EventSource não manda headers customizados — o JWT vem em ?token=, ver
+// autenticarAdminPorQuery em middleware/auth.js.
+terminal.get('/admin/eventos/stream', autenticarAdminPorQuery, (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.write(': conectado\n\n');
+
+  totemEventos.registrarClienteAdmin(res);
+
+  const keepAlive = setInterval(() => {
+    try { res.write(': ping\n\n'); } catch { /* conexão já deve estar fechando, o listener 'close' abaixo cuida */ }
+  }, 25000);
+
+  req.on('close', () => {
+    clearInterval(keepAlive);
+    totemEventos.removerClienteAdmin(res);
   });
 });
 

@@ -238,6 +238,18 @@ router.put('/', autenticar, apenasAdmin, async (req, res, next) => {
 // schema.sql). Se uma tabela nova for adicionada ao schema.sql no futuro e
 // fizer sentido reconstruir os dados dela num restore, ela precisa ser
 // adicionada aqui manualmente — não é automático.
+//
+// 2026-09-08 (mesmo dia, achado grave na MESMA restauração): as tabelas do
+// AvaliaPro (avaliacoes, avaliandos, midias, extracoes, analises_posturais,
+// analises_funcionais, config, auditoria — schema aplicado por
+// avaliapro/scripts/aplicar-schema-na-academia.js, NUNCA fizeram parte de
+// src/db/schema.sql deste projeto) NUNCA estiveram nesta lista, apesar do
+// próprio comentário daquele script dizer que a intenção sempre foi "o
+// backup do academia-gestao... cobre as avaliações físicas junto". Resultado
+// real: avaliação física de aluno nenhum foi restaurada no banco novo — só
+// as tabelas em si foram recriadas (vazias) via o script do AvaliaPro depois
+// do fato. `midias` guarda só metadados; os arquivos de foto/vídeo em si
+// ficam em avaliapro/data/midia/ (fora do banco, fora deste backup também).
 const TABELAS_BACKUP = [
   'alunos', 'anamneses', 'anamnese_perguntas', 'anamnese_respostas', 'avaliacoes_fisicas', 'avaliacao_pipeline',
   'planos', 'matriculas', 'turmas', 'agendamentos', 'checkins', 'cobrancas', 'pagamentos_cobranca', 'contas_pagar',
@@ -245,6 +257,8 @@ const TABELAS_BACKUP = [
   'vendas_produtos_servicos', 'exercicio_biblioteca', 'treinos', 'treino_exercicios', 'treino_execucoes',
   'treino_templates', 'treino_template_exercicios', 'mensagens_templates', 'mensagens_agendadas',
   'mensagens_enviadas', 'push_subscriptions', 'aluno_conquistas', 'push_subscriptions_staff',
+  'avaliacoes', 'avaliandos', 'midias', 'extracoes', 'analises_posturais', 'analises_funcionais',
+  'config', 'auditoria',
 ];
 
 // Tamanho do lote de leitura por tabela — evita carregar uma tabela inteira
@@ -288,7 +302,24 @@ async function escreverBackupStream(writable) {
     let offset = 0;
     let primeiraLinha = true;
     for (;;) {
-      const result = await db.execute({ sql: `${sql} LIMIT ? OFFSET ?`, args: [TAMANHO_LOTE_BACKUP, offset] });
+      let result;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        result = await db.execute({ sql: `${sql} LIMIT ? OFFSET ?`, args: [TAMANHO_LOTE_BACKUP, offset] });
+      } catch (err) {
+        // 2026-09-08: tabelas do AvaliaPro (avaliacoes, avaliandos, midias,
+        // etc. — ver TABELAS_BACKUP) só existem neste banco DEPOIS de rodar
+        // scripts/aplicar-schema-na-academia.js do lado do AvaliaPro; em
+        // deploys/bancos onde isso nunca rodou, essas tabelas não existem de
+        // verdade. Sem esta checagem, incluir essas tabelas na lista de
+        // backup quebraria o backup INTEIRO (nenhuma tabela seria salva) só
+        // por causa de uma tabela opcional ausente — pior que só pular ela.
+        if (/no such table/i.test(err.message)) {
+          console.warn(`[backup] tabela "${nome}" não existe neste banco — pulando (ver comentário em escreverBackupStream).`);
+          break;
+        }
+        throw err;
+      }
       for (const row of result.rows) {
         await escreverNoStream(writable, `${primeiraLinha ? '' : ','}${JSON.stringify(row)}`);
         primeiraLinha = false;

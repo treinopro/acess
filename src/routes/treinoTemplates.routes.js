@@ -3,6 +3,7 @@ const { v4: uuid } = require('uuid');
 const { z } = require('zod');
 const db = require('../db/client');
 const { autenticar } = require('../middleware/auth');
+const { herdarMidiaDaBiblioteca } = require('./treinos.routes');
 
 const router = express.Router();
 router.use(autenticar);
@@ -116,15 +117,22 @@ router.post('/:id/aplicar', async (req, res, next) => {
       sql: 'INSERT INTO treinos (id, aluno_id, nome, dias_semana, ordem) VALUES (?, ?, ?, ?, ?)',
       args: [treinoId, dados.aluno_id, dados.nome || template.rows[0].nome, JSON.stringify(dados.dias_semana), ordemTreino],
     }];
-    exercicios.rows.forEach((ex, idx) => {
+    // herdarMidiaDaBiblioteca: treino_template_exercicios praticamente nunca
+    // guarda video_url/imagem_url próprios (só o biblioteca_id) — sem isso,
+    // todo exercício vindo de um modelo chegava ao aluno sem vídeo, mesmo
+    // com o item da biblioteca tendo vídeo cadastrado (2026-09-09).
+    for (let idx = 0; idx < exercicios.rows.length; idx++) {
+      const ex = exercicios.rows[idx];
+      // eslint-disable-next-line no-await-in-loop
+      const comMidia = await herdarMidiaDaBiblioteca(ex);
       stmts.push({
         sql: `INSERT INTO treino_exercicios
                 (id, treino_id, biblioteca_id, exercicio, series, carga, intervalo, metodo, observacao, dica, video_url, imagem_url, ordem)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         args: [uuid(), treinoId, ex.biblioteca_id, ex.exercicio, ex.series, ex.carga, ex.intervalo,
-          ex.metodo, ex.observacao, ex.dica, ex.video_url, ex.imagem_url, idx],
+          ex.metodo, ex.observacao, ex.dica, comMidia.video_url, comMidia.imagem_url, idx],
       });
-    });
+    }
     await db.batch(stmts, 'write');
     res.status(201).json({ id: treinoId });
   } catch (err) {

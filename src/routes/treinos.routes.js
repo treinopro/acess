@@ -284,3 +284,10 @@ router.delete('/exercicios/:id', async (req, res, next) => {
 });
 
 module.exports = router;
+// Exportado também em treinoTemplates.routes.js (POST /:id/aplicar) — sem
+// isso, aplicar um modelo salvo a um aluno copiava video_url/imagem_url
+// literalmente NULL de treino_template_exercicios (que nunca guarda cópia
+// própria, só o biblioteca_id) em vez de herdar da biblioteca, deixando o
+// aluno sem vídeo em TODO exercício vindo de modelo (2026-09-09, achado
+// testando a aplicação de um modelo de verdade).
+module.exports.herdarMidiaDaBiblioteca = herdarMidiaDaBiblioteca;

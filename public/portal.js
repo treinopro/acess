@@ -960,8 +960,20 @@ const ESTILO_RELATORIO_AV =
 function abrirJanelaRelatorioAv(titulo, corpo) {
   const w = window.open('', '_blank');
   if (!w) { window.alert('O navegador bloqueou a janela do relatório. Autorize pop-ups deste site e tente de novo.'); return; }
+  // 2026-09-09: o portal costuma rodar instalado na tela de início (PWA) —
+  // nesse modo não existe barra do navegador nem botão "voltar" nenhum, então
+  // a janela nova do relatório (window.open) fica sem NENHUM jeito de
+  // retornar ao portal sem esta barra própria. @media print esconde ela do
+  // PDF gerado (ninguém quer o botão "Voltar" impresso no relatório).
+  const barraVoltar = '<div class="barra-voltar-relatorio">'
+    + '<button type="button" onclick="window.close()">← Voltar ao portal</button></div>';
+  const estiloBarraVoltar = '.barra-voltar-relatorio{position:sticky;top:0;background:#17202b;padding:10px 12px;'
+    + 'margin:-28px -28px 20px;display:flex;}'
+    + '.barra-voltar-relatorio button{background:#2a8f5e;color:#fff;border:none;border-radius:7px;'
+    + 'padding:9px 16px;font-size:13px;font-weight:600;cursor:pointer;}'
+    + '@media print{.barra-voltar-relatorio{display:none;}}';
   w.document.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${escHtmlAv(titulo)}</title>`
-    + `<style>${ESTILO_RELATORIO_AV}</style></head><body>${corpo}`
+    + `<style>${ESTILO_RELATORIO_AV}${estiloBarraVoltar}</style></head><body>${barraVoltar}${corpo}`
     + `<div class="rodape">Gerado em ${new Date().toLocaleString('pt-BR')}. Para salvar em PDF, use Ctrl+P (ou Cmd+P) e escolha "Salvar como PDF".</div>`
     + '</body></html>');
   w.document.close();

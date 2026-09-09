@@ -959,7 +959,7 @@ const ESTILO_RELATORIO_AV =
 
 function abrirJanelaRelatorioAv(titulo, corpo) {
   const w = window.open('', '_blank');
-  if (!w) { mostrarToast('O navegador bloqueou a janela do relatório. Autorize pop-ups deste site.', true); return; }
+  if (!w) { window.alert('O navegador bloqueou a janela do relatório. Autorize pop-ups deste site e tente de novo.'); return; }
   w.document.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${escHtmlAv(titulo)}</title>`
     + `<style>${ESTILO_RELATORIO_AV}</style></head><body>${corpo}`
     + `<div class="rodape">Gerado em ${new Date().toLocaleString('pt-BR')}. Para salvar em PDF, use Ctrl+P (ou Cmd+P) e escolha "Salvar como PDF".</div>`

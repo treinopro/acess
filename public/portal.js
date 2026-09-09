@@ -817,7 +817,274 @@ function renderizarAvaliacoesHub(avaliacoes) {
   });
 
   alvo.innerHTML = html || '<p style="color:#94a3b8;font-size:14px">Nenhuma medida reconhecida nas avaliações registradas.</p>';
+
+  // 2026-09-09 (pedido explícito, segunda vez): antes só mostrava 1-2
+  // métricas curadas por tipo (METRICAS_HUB acima) pra não "virar uma
+  // segunda tela de profissional" — mas o aluno quer o relatório completo,
+  // com todos os campos, igual ao que sai do AvaliaPro pro staff. Mostra o
+  // botão de relatório/comparador só quando há avaliação de verdade.
+  document.getElementById('btn-relatorio-completo-avaliacoes').classList.toggle('oculto', avaliacoes.length === 0);
+  document.getElementById('bloco-comparar-avaliacoes').classList.toggle('oculto', avaliacoes.length === 0);
+  if (avaliacoes.length) popularComparadorAvaliacoes();
 }
+
+// ---------------- Relatório completo de avaliações (PDF) + comparador ----
+// Mesma estratégia do AvaliaPro (ver avaliapro/public/app/relatorio.js):
+// janela nova com HTML de impressão, sem biblioteca de PDF — Ctrl+P vira
+// PDF nativamente, com texto selecionável/pesquisável (não uma imagem).
+
+// Rótulo + unidade amigável pra cada chave conhecida de fields/computed —
+// chave desconhecida cai no próprio nome da chave, sem quebrar o relatório.
+const ROTULOS_CAMPOS_AVALIACAO = {
+  peso: ['Peso', ' kg'], altura: ['Altura', ' cm'], idade: ['Idade', ' anos'], sexo: ['Sexo', ''],
+  cintura: ['Cintura', ' cm'], quadril: ['Quadril', ' cm'], torax: ['Tórax', ' cm'],
+  braco_d: ['Braço (direito)', ' cm'], braco_e: ['Braço (esquerdo)', ' cm'],
+  coxa_d: ['Coxa (direita)', ' cm'], coxa_e: ['Coxa (esquerda)', ' cm'],
+  gordura: ['% de gordura (bioimpedância)', '%'],
+  peitoral: ['Dobra peitoral', ' mm'], triceps: ['Dobra tríceps', ' mm'], subescapular: ['Dobra subescapular', ' mm'],
+  suprailiaca: ['Dobra suprailíaca', ' mm'], abdominal: ['Dobra abdominal', ' mm'], coxa: ['Dobra coxa', ' mm'],
+  axilar: ['Dobra axilar média', ' mm'],
+};
+const ROTULOS_COMPUTED_AVALIACAO = {
+  somaDobras: ['Soma das dobras', ' mm'], densidade: ['Densidade corporal', ' g/cm³'],
+  bf: ['% de gordura (Siri)', '%'], massaGorda: ['Massa gorda', ' kg'], massaMagra: ['Massa magra', ' kg'],
+  imc: ['IMC', ''], rcq: ['Relação cintura-quadril', ''],
+};
+// Chaves "*Label" (bfLabel, imcLabel, rcqLabel...) são anexadas ao valor da
+// métrica principal ("16.7% — Atlético"), não viram linha própria.
+function chaveLabelPara(chave) { return `${chave}Label`; }
+
+function escHtmlAv(v) { return escapeHtml(v == null ? '' : String(v)); }
+
+function formatarNumeroAv(v, casas) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(v);
+  const c = casas != null ? casas : (Math.abs(n) < 10 ? 2 : 1);
+  return n.toFixed(c).replace('.', ',');
+}
+
+// Linhas de exibição (rótulo + valor formatado) pra uma avaliação — usado
+// tanto no histórico completo quanto, campo a campo, na comparação.
+function linhasDetalheAvaliacao(av) {
+  const linhas = [];
+  const fields = av.fields || {};
+  Object.keys(fields).forEach((chave) => {
+    if (chave.endsWith('Label')) return;
+    const valor = fields[chave];
+    if (valor === '' || valor == null) return;
+    const [rotulo, unidade] = ROTULOS_CAMPOS_AVALIACAO[chave] || [chave, ''];
+    const numerico = typeof valor === 'number' || (!Number.isNaN(parseFloat(String(valor).replace(',', '.'))) && String(valor).trim() !== '');
+    linhas.push({
+      chave: `fields.${chave}`,
+      rotulo,
+      valorTexto: numerico ? `${formatarNumeroAv(valor)}${unidade}` : escHtmlAv(valor),
+      valorNumerico: numerico ? Number(String(valor).replace(',', '.')) : null,
+      unidade,
+    });
+  });
+  const computed = av.computed || {};
+  Object.keys(computed).forEach((chave) => {
+    if (chave.endsWith('Label')) return;
+    const valor = computed[chave];
+    if (valor === '' || valor == null) return;
+    const [rotulo, unidade] = ROTULOS_COMPUTED_AVALIACAO[chave] || [chave, ''];
+    const rotuloExtra = computed[chaveLabelPara(chave)];
+    const numerico = typeof valor === 'number';
+    linhas.push({
+      chave: `computed.${chave}`,
+      rotulo,
+      valorTexto: (numerico ? `${formatarNumeroAv(valor, chave === 'densidade' ? 5 : chave === 'rcq' ? 2 : undefined)}${unidade}` : escHtmlAv(valor)) + (rotuloExtra ? ` — ${escHtmlAv(rotuloExtra)}` : ''),
+      valorNumerico: numerico ? valor : null,
+      unidade,
+    });
+  });
+  return linhas;
+}
+
+// Gráfico de evolução maior, em fundo claro (a janela do relatório é
+// impressa/salva em PDF — fundo escuro desperdiça tinta e fica ruim
+// impresso). Mesma ideia do sparklineHub, só que com eixo de datas.
+function graficoEvolucaoAv(pontos, unidade) {
+  const W = 320, H = 120, PAD_X = 10, PAD_Y = 18;
+  const valores = pontos.map((p) => p.valor);
+  let min = Math.min(...valores), max = Math.max(...valores);
+  const folga = Math.max((max - min) * 0.2, Math.abs(max) * 0.03 || 1);
+  min -= folga; max += folga;
+  const px = (i) => PAD_X + (i / (pontos.length - 1)) * (W - PAD_X * 2);
+  const py = (v) => H - PAD_Y - ((v - min) / (max - min || 1)) * (H - PAD_Y * 2);
+  const d = pontos.map((p, i) => `${i ? 'L' : 'M'}${px(i).toFixed(1)} ${py(p.valor).toFixed(1)}`).join(' ');
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}">
+    <path d="${d}" fill="none" stroke="#2a8f5e" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    ${pontos.map((p, i) => `
+      <circle cx="${px(i).toFixed(1)}" cy="${py(p.valor).toFixed(1)}" r="${i === pontos.length - 1 ? 3.5 : 2.5}" fill="#2a8f5e"/>
+      <text x="${px(i).toFixed(1)}" y="${H - 3}" text-anchor="middle" font-size="9" fill="#5d6b7d">${formatarData(p.data).slice(0, 5)}</text>
+      <text x="${px(i).toFixed(1)}" y="${(py(p.valor) - 7).toFixed(1)}" text-anchor="middle" font-size="10" font-weight="700" fill="#17202b">${formatarNumeroAv(p.valor)}${unidade}</text>
+    `).join('')}
+  </svg>`;
+}
+
+// Une TODAS as chaves numéricas (fields.* e computed.*) presentes em pelo
+// menos uma avaliação da lista — diferente de METRICAS_HUB (curado, 1-2 por
+// tipo), aqui é "todas as informações", uma seção de gráfico por métrica.
+function metricasPresentesNaLista(lista) {
+  const chaves = new Map(); // chave completa -> {rotulo, unidade}
+  lista.forEach((av) => {
+    linhasDetalheAvaliacao(av).forEach((l) => {
+      if (l.valorNumerico == null) return;
+      if (!chaves.has(l.chave)) chaves.set(l.chave, { rotulo: l.rotulo, unidade: l.unidade });
+    });
+  });
+  return [...chaves.entries()].map(([chave, meta]) => ({ chave, ...meta }));
+}
+
+function valorNumericoPorChave(av, chaveCompleta) {
+  const linha = linhasDetalheAvaliacao(av).find((l) => l.chave === chaveCompleta);
+  return linha ? linha.valorNumerico : null;
+}
+
+const ESTILO_RELATORIO_AV =
+  'body{font:13px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#17202b;max-width:760px;margin:0 auto;padding:28px;}'
+  + 'h1{font-size:20px;margin:0 0 2px;}h2{font-size:15px;margin:22px 0 8px;border-bottom:1px solid #d7dde7;padding-bottom:4px;}'
+  + 'h3{font-size:13.5px;margin:14px 0 4px;}.sub{color:#5d6b7d;font-size:12px;margin:0 0 16px;}'
+  + 'table{border-collapse:collapse;width:100%;font-size:12.5px;margin:6px 0;}'
+  + 'th,td{padding:5px 8px;border-bottom:1px solid #e6eaf0;text-align:right;}'
+  + 'th:first-child,td:first-child{text-align:left;}thead th{color:#5d6b7d;font-weight:600;font-size:11.5px;}'
+  + '.grade-graficos{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;margin:10px 0 20px;}'
+  + '.gr-caixa{background:#f7f8fa;border:1px solid #e6eaf0;border-radius:9px;padding:12px;page-break-inside:avoid;}'
+  + '.gr-caixa h4{margin:0 0 2px;font-size:13px;}.gr-delta{font-size:12px;margin-bottom:6px;}'
+  + '.gr-caixa svg{width:100%;height:auto;display:block;overflow:visible;}'
+  + '.bom{color:#2f9e44;}.ruim{color:#d1433c;}.neutro{color:#5d6b7d;}'
+  + '.rodape{margin-top:26px;border-top:1px solid #d7dde7;padding-top:10px;color:#5d6b7d;font-size:11.5px;}'
+  + '@media print{body{padding:0;}h2{page-break-after:avoid;}.gr-caixa{page-break-inside:avoid;}}';
+
+function abrirJanelaRelatorioAv(titulo, corpo) {
+  const w = window.open('', '_blank');
+  if (!w) { mostrarToast('O navegador bloqueou a janela do relatório. Autorize pop-ups deste site.', true); return; }
+  w.document.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${escHtmlAv(titulo)}</title>`
+    + `<style>${ESTILO_RELATORIO_AV}</style></head><body>${corpo}`
+    + `<div class="rodape">Gerado em ${new Date().toLocaleString('pt-BR')}. Para salvar em PDF, use Ctrl+P (ou Cmd+P) e escolha "Salvar como PDF".</div>`
+    + '</body></html>');
+  w.document.close();
+}
+
+function gerarRelatorioCompletoAvaliacoes() {
+  const lista = avaliacoesHubAtual;
+  if (!lista.length) return;
+  const nomeAluno = document.getElementById('hub-saudacao').textContent.replace(/^Olá,\s*/, '').replace(/!$/, '');
+
+  const porTipo = {};
+  lista.forEach((av) => { (porTipo[av.tipo] = porTipo[av.tipo] || []).push(av); });
+
+  let html = `<h1>Relatório completo de avaliação física</h1>`
+    + `<p class="sub">${escHtmlAv(nomeAluno)} · ${lista.length} avaliaç${lista.length === 1 ? 'ão registrada' : 'ões registradas'}</p>`;
+
+  // Evolução: uma seção por tipo com 2+ registros, um gráfico por métrica
+  // numérica presente (todas, não só a curada) — mesma ideia de
+  // Relatorio.completo no AvaliaPro (gruposEvolucao).
+  let temEvolucao = false;
+  Object.entries(porTipo).forEach(([tipo, avsDoTipo]) => {
+    if (avsDoTipo.length < 2) return;
+    const metricas = metricasPresentesNaLista(avsDoTipo);
+    const caixas = metricas.map((m) => {
+      const pontos = avsDoTipo
+        .map((av) => ({ data: av.data, valor: valorNumericoPorChave(av, m.chave) }))
+        .filter((p) => p.valor != null);
+      if (pontos.length < 2) return '';
+      const delta = pontos[pontos.length - 1].valor - pontos[0].valor;
+      const seta = delta > 0.005 ? '▲' : delta < -0.005 ? '▼' : '=';
+      return `<div class="gr-caixa"><h4>${escHtmlAv(m.rotulo)}</h4>`
+        + `<div class="gr-delta neutro">${seta} ${formatarNumeroAv(Math.abs(delta))}${m.unidade} desde a primeira</div>`
+        + graficoEvolucaoAv(pontos, m.unidade) + '</div>';
+    }).filter(Boolean).join('');
+    if (caixas) {
+      temEvolucao = true;
+      html += `<h2>${escHtmlAv(tipo)}</h2><div class="grade-graficos">${caixas}</div>`;
+    }
+  });
+  if (!temEvolucao) {
+    html += '<p class="sub">Ainda não há avaliações suficientes (mínimo 2 do mesmo tipo) para gerar gráficos de evolução.</p>';
+  }
+
+  // Histórico completo: uma seção por avaliação, com TODOS os campos.
+  html += '<h2>Histórico completo</h2>';
+  lista.forEach((av) => {
+    const linhas = linhasDetalheAvaliacao(av);
+    html += `<h3>${escHtmlAv(av.tipo)} — ${formatarData(av.data)}${av.protocolo ? ` <span style="font-weight:400;color:#5d6b7d;">(${escHtmlAv(av.protocolo)})</span>` : ''}</h3>`;
+    html += linhas.length
+      ? `<table><tbody>${linhas.map((l) => `<tr><td>${escHtmlAv(l.rotulo)}</td><td>${l.valorTexto}</td></tr>`).join('')}</tbody></table>`
+      : '<p class="sub">Sem detalhes registrados.</p>';
+  });
+
+  abrirJanelaRelatorioAv(`Relatório completo — ${nomeAluno}`, html);
+}
+
+document.getElementById('btn-relatorio-completo-avaliacoes').addEventListener('click', gerarRelatorioCompletoAvaliacoes);
+
+// ---------------- Comparador de duas avaliações do mesmo tipo -----------
+function popularComparadorAvaliacoes() {
+  const selTipo = document.getElementById('comparar-avaliacao-tipo');
+  const porTipo = {};
+  avaliacoesHubAtual.forEach((av, idx) => { (porTipo[av.tipo] = porTipo[av.tipo] || []).push(idx); });
+  const tiposComparaveis = Object.keys(porTipo).filter((t) => porTipo[t].length >= 2);
+
+  document.getElementById('bloco-comparar-avaliacoes').classList.toggle('oculto', tiposComparaveis.length === 0);
+  if (!tiposComparaveis.length) return;
+
+  const tipoAnterior = selTipo.value;
+  selTipo.innerHTML = tiposComparaveis.map((t) => `<option value="${escHtmlAv(t)}">${escHtmlAv(t)}</option>`).join('');
+  selTipo.value = tiposComparaveis.includes(tipoAnterior) ? tipoAnterior : tiposComparaveis[0];
+  popularSelectsComparacao();
+}
+
+function popularSelectsComparacao() {
+  const tipo = document.getElementById('comparar-avaliacao-tipo').value;
+  const indices = [];
+  avaliacoesHubAtual.forEach((av, idx) => { if (av.tipo === tipo) indices.push(idx); });
+  const opcoes = indices.map((idx) => {
+    const av = avaliacoesHubAtual[idx];
+    return `<option value="${idx}">${formatarData(av.data)}${av.protocolo ? ` (${escHtmlAv(av.protocolo)})` : ''}</option>`;
+  }).join('');
+  const selA = document.getElementById('comparar-avaliacao-a');
+  const selB = document.getElementById('comparar-avaliacao-b');
+  selA.innerHTML = opcoes;
+  selB.innerHTML = opcoes;
+  // Por padrão compara a primeira com a mais recente do tipo escolhido.
+  selA.value = indices[0];
+  selB.value = indices[indices.length - 1];
+  document.getElementById('resultado-comparar-avaliacoes').innerHTML = '';
+}
+
+document.getElementById('comparar-avaliacao-tipo').addEventListener('change', popularSelectsComparacao);
+
+document.getElementById('btn-comparar-avaliacoes').addEventListener('click', () => {
+  const idxA = Number(document.getElementById('comparar-avaliacao-a').value);
+  const idxB = Number(document.getElementById('comparar-avaliacao-b').value);
+  const alvo = document.getElementById('resultado-comparar-avaliacoes');
+  if (idxA === idxB) { alvo.innerHTML = '<p style="color:#fbbf24;font-size:13px">Escolha duas avaliações diferentes.</p>'; return; }
+  const avA = avaliacoesHubAtual[idxA];
+  const avB = avaliacoesHubAtual[idxB];
+  // Sempre mostra a mais antiga primeiro, independente da ordem escolhida.
+  const [maisAntiga, maisRecente] = new Date(avA.data) <= new Date(avB.data) ? [avA, avB] : [avB, avA];
+
+  const linhasA = linhasDetalheAvaliacao(maisAntiga);
+  const linhasB = linhasDetalheAvaliacao(maisRecente);
+  const chaves = [...new Map([...linhasA, ...linhasB].map((l) => [l.chave, l.rotulo])).entries()];
+
+  let html = `<table class="tabela-comparacao-av" style="margin-top:10px"><thead><tr><th>Medida</th><th>${formatarData(maisAntiga.data)}</th><th>${formatarData(maisRecente.data)}</th><th>Diferença</th></tr></thead><tbody>`;
+  chaves.forEach(([chave, rotulo]) => {
+    const lA = linhasA.find((l) => l.chave === chave);
+    const lB = linhasB.find((l) => l.chave === chave);
+    if (!lA && !lB) return;
+    let diffTexto = '—';
+    if (lA && lB && lA.valorNumerico != null && lB.valorNumerico != null) {
+      const diff = lB.valorNumerico - lA.valorNumerico;
+      diffTexto = `${diff > 0 ? '+' : ''}${formatarNumeroAv(diff)}${lA.unidade || ''}`;
+    }
+    html += `<tr><td>${escHtmlAv(rotulo)}</td><td>${lA ? lA.valorTexto : '—'}</td><td>${lB ? lB.valorTexto : '—'}</td><td>${diffTexto}</td></tr>`;
+  });
+  html += '</tbody></table>';
+  alvo.innerHTML = html;
+});
 
 document.getElementById('btn-buscar-hub').addEventListener('click', async () => {
   const cpf = document.getElementById('input-cpf-hub').value.trim();

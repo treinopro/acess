@@ -354,6 +354,11 @@ if ('serviceWorker' in navigator) {
   .avaliacao-delta.bom { color: #10b981; }
   .avaliacao-delta.ruim { color: #fb923c; }
   .avaliacao-delta.neutro { color: #64748b; }
+  #bloco-comparar-avaliacoes select { width: 100%; background: #0f172a; color: #e2e8f0; border: 1px solid #1e293b; border-radius: 8px; padding: 8px; font-size: 14px; }
+  .tabela-comparacao-av { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .tabela-comparacao-av th, .tabela-comparacao-av td { padding: 7px 6px; border-bottom: 1px solid #1e293b; text-align: right; color: #cbd5e1; }
+  .tabela-comparacao-av th:first-child, .tabela-comparacao-av td:first-child { text-align: left; }
+  .tabela-comparacao-av thead th { color: #64748b; font-weight: 600; font-size: 12px; }
   .avaliacao-sparkline { display: block; margin-top: 4px; }
   .avaliacao-data-linha { font-size: 13px; color: #64748b; margin-top: 8px; }
 </style>
@@ -469,7 +474,26 @@ if ('serviceWorker' in navigator) {
     <!-- Minhas avaliações -->
     <div class="cartao oculto" id="painel-hub-avaliacoes" style="text-align:left">
       <h3>Minhas avaliações</h3>
+      <button type="button" class="botao-grande secundario oculto" id="btn-relatorio-completo-avaliacoes" style="margin:0 0 14px">📄 Relatório completo (PDF)</button>
       <div id="conteudo-avaliacoes-hub"></div>
+
+      <div class="oculto" id="bloco-comparar-avaliacoes" style="margin-top:18px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.1)">
+        <h4 style="margin:0 0 10px">Comparar duas avaliações</h4>
+        <label style="font-size:13px">Tipo</label>
+        <select id="comparar-avaliacao-tipo" style="width:100%;margin-bottom:8px"></select>
+        <div style="display:flex;gap:8px">
+          <div style="flex:1">
+            <label style="font-size:13px">Primeira</label>
+            <select id="comparar-avaliacao-a" style="width:100%"></select>
+          </div>
+          <div style="flex:1">
+            <label style="font-size:13px">Segunda</label>
+            <select id="comparar-avaliacao-b" style="width:100%"></select>
+          </div>
+        </div>
+        <button type="button" class="botao-grande primario" id="btn-comparar-avaliacoes" style="margin:10px 0">Comparar</button>
+        <div id="resultado-comparar-avaliacoes"></div>
+      </div>
     </div>
 
     <!-- Contas: lista + seleção -->

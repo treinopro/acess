@@ -28,9 +28,15 @@ router.post('/login', loginLimiter, async (req, res, next) => {
   try {
     const { identificador, senha } = loginSchema.parse(req.body);
 
+    // 2026-09-10: comparação era sensível a maiúsculas/minúsculas — "Junior"
+    // ou "JUNIOR" falhavam mesmo com a senha certa, só o "junior" exato
+    // (igual ao gravado no banco) funcionava. Isso quebra sozinho em celular:
+    // teclados costumam capitalizar a primeira letra automaticamente. LOWER()
+    // dos dois lados resolve pra usuario/email, sem exigir digitar exato.
+    const identificadorNormalizado = identificador.toLowerCase();
     const result = await db.execute({
-      sql: 'SELECT * FROM usuarios WHERE email = ? OR usuario = ?',
-      args: [identificador, identificador],
+      sql: 'SELECT * FROM usuarios WHERE LOWER(email) = ? OR LOWER(usuario) = ?',
+      args: [identificadorNormalizado, identificadorNormalizado],
     });
 
     const usuario = result.rows[0];

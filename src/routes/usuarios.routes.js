@@ -34,11 +34,16 @@ router.post('/', async (req, res, next) => {
     const dados = usuarioSchema.parse(req.body);
     const usuarioLogin = dados.usuario ? dados.usuario : null;
 
-    const existenteEmail = await db.execute({ sql: 'SELECT id FROM usuarios WHERE email = ?', args: [dados.email] });
+    // 2026-09-10: comparação por LOWER() — login (auth.routes.js) passou a
+    // aceitar usuario/email em qualquer caixa, então a checagem de duplicata
+    // aqui precisa ser igualmente insensível a maiúsculas/minúsculas, senão
+    // dava pra cadastrar "Junior" mesmo já existindo "junior", e o login
+    // ficaria ambíguo entre os dois.
+    const existenteEmail = await db.execute({ sql: 'SELECT id FROM usuarios WHERE LOWER(email) = LOWER(?)', args: [dados.email] });
     if (existenteEmail.rows[0]) return res.status(409).json({ erro: 'Já existe um usuário com este e-mail.' });
 
     if (usuarioLogin) {
-      const existenteUsuario = await db.execute({ sql: 'SELECT id FROM usuarios WHERE usuario = ?', args: [usuarioLogin] });
+      const existenteUsuario = await db.execute({ sql: 'SELECT id FROM usuarios WHERE LOWER(usuario) = LOWER(?)', args: [usuarioLogin] });
       if (existenteUsuario.rows[0]) return res.status(409).json({ erro: 'Já existe um usuário com esse nome de login.' });
     }
 

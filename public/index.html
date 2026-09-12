@@ -204,10 +204,8 @@
         <div class="perfil-tabs">
           <button class="perfil-tab-btn ativo" data-tab="dados">Dados pessoais</button>
           <button class="perfil-tab-btn" data-tab="biometria">Biometria &amp; acesso</button>
-          <button class="perfil-tab-btn" data-tab="anamnese">Anamnese</button>
           <button class="perfil-tab-btn" data-tab="avaliacoes">Avaliações</button>
           <button class="perfil-tab-btn" data-tab="matriculas">Matrículas</button>
-          <button class="perfil-tab-btn" data-tab="agendamentos">Agendamentos</button>
           <button class="perfil-tab-btn" data-tab="financeiro">Financeiro</button>
           <button class="perfil-tab-btn" data-tab="treino">Treino</button>
         </div>
@@ -332,9 +330,15 @@
           </div>
         </div>
 
-        <!-- ABA: Anamnese -->
-        <div class="perfil-tab-painel oculto" data-tab-painel="anamnese">
-          <form id="form-anamnese" class="form-painel">
+        <!-- ABA: Anamnese + Avaliações físicas + Agendamentos (mescladas, 2026-09-11 —
+             pedido do dono: eram 3 abas separadas com pouco conteúdo cada, ficam melhor
+             juntas numa só, cada seção com seu formulário recolhido por padrão) -->
+        <div class="perfil-tab-painel oculto" data-tab-painel="avaliacoes">
+          <div class="secao-topo" style="align-items:center">
+            <h3 style="margin:0">Anamnese</h3>
+            <button type="button" class="btn-secundario" id="btn-toggle-anamnese">✎ Editar anamnese</button>
+          </div>
+          <form id="form-anamnese" class="form-painel oculto">
             <div class="grid-2">
               <div><label>Peso (kg)</label><input id="anamnese-peso" type="number" step="0.1" /></div>
               <div><label>Altura (cm)</label><input id="anamnese-altura" type="number" step="0.1" /></div>
@@ -349,12 +353,12 @@
               <button type="submit" class="btn-primario">Salvar anamnese</button>
             </div>
           </form>
-        </div>
 
-        <!-- ABA: Avaliações físicas -->
-        <div class="perfil-tab-painel oculto" data-tab-painel="avaliacoes">
-          <form id="form-avaliacao" class="form-painel">
-            <h3 style="margin-top:0">Nova avaliação</h3>
+          <div class="secao-topo" style="align-items:center;margin-top:24px">
+            <h3 style="margin:0">Nova avaliação</h3>
+            <button type="button" class="btn-secundario" id="btn-toggle-avaliacao">+ Nova avaliação</button>
+          </div>
+          <form id="form-avaliacao" class="form-painel oculto">
             <div class="grid-2">
               <div><label>Data *</label><input id="avaliacao-data" type="date" required /></div>
               <div><label>Idade</label><input id="avaliacao-idade" readonly placeholder="—" /></div>
@@ -384,6 +388,12 @@
             <thead><tr><th>Data</th><th>Tipo</th><th>Resumo</th><th>Ações</th></tr></thead>
             <tbody id="lista-avaliacoes"></tbody>
           </table>
+
+          <h3 style="margin:24px 0 0">Últimos agendamentos</h3>
+          <table class="tabela">
+            <thead><tr><th>Data</th><th>Turma</th><th>Status</th></tr></thead>
+            <tbody id="perfil-lista-agendamentos"></tbody>
+          </table>
         </div>
 
         <!-- ABA: Matrículas -->
@@ -410,15 +420,6 @@
           <table class="tabela">
             <thead><tr><th>Plano</th><th>Início</th><th>Fim</th><th>Status</th><th>Ações</th></tr></thead>
             <tbody id="perfil-lista-matriculas"></tbody>
-          </table>
-        </div>
-
-        <!-- ABA: Agendamentos -->
-        <div class="perfil-tab-painel oculto" data-tab-painel="agendamentos">
-          <h3 style="margin-top:0">Últimos agendamentos</h3>
-          <table class="tabela">
-            <thead><tr><th>Data</th><th>Turma</th><th>Status</th></tr></thead>
-            <tbody id="perfil-lista-agendamentos"></tbody>
           </table>
         </div>
 

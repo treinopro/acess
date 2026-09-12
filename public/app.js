@@ -1482,7 +1482,7 @@ async function abrirPerfilAluno(alunoId, abaInicial = 'dados') {
   await carregarPerfilAluno();
 }
 
-// ---------------- Abas do perfil do aluno (Dados / Biometria / Anamnese / Avaliações / Matrículas / Agendamentos / Financeiro) ----------------
+// ---------------- Abas do perfil do aluno (Dados / Biometria / Avaliações [Anamnese+Avaliações+Agendamentos] / Matrículas / Financeiro) ----------------
 
 function trocarAbaPerfil(nomeAba) {
   document.querySelectorAll('.perfil-tab-btn').forEach((b) => b.classList.toggle('ativo', b.dataset.tab === nomeAba));
@@ -2986,6 +2986,14 @@ async function popularSelectPlanosDoPerfil() {
 
 document.getElementById('btn-toggle-matricula-perfil').addEventListener('click', () => {
   document.getElementById('form-matricula-perfil').classList.toggle('oculto');
+});
+
+document.getElementById('btn-toggle-avaliacao').addEventListener('click', () => {
+  document.getElementById('form-avaliacao').classList.toggle('oculto');
+});
+
+document.getElementById('btn-toggle-anamnese').addEventListener('click', () => {
+  document.getElementById('form-anamnese').classList.toggle('oculto');
 });
 
 document.getElementById('btn-ir-matricular-perfil').addEventListener('click', () => {

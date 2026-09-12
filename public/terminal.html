@@ -102,7 +102,17 @@ if ('serviceWorker' in navigator) {
      como o QR e os botões saíram do fluxo normal (viraram uma barra
      flutuante fixa no rodapé, ver .barra-flutuante-inferior), sobra bem
      mais espaço vertical só pro vídeo. */
-  #video-inicio { width: min(97vw, 900px); height: auto; aspect-ratio: 4 / 3; max-height: 62vh; }
+  /* 2026-09-11: o tablet fica montado em retrato (vertical), mas a caixa
+     acima ainda forçava proporção 4:3 (paisagem) com object-fit: cover —
+     isso cortava boa parte do quadro (topo/base ou laterais) pra "encaixar"
+     a imagem vertical dentro de uma moldura horizontal. Pedido explícito do
+     dono: aparecer o quadro INTEIRO, em pé. Troca pra proporção 3:4
+     (retrato) com a ALTURA como dimensão principal (mais natural num tablet
+     vertical, onde sobra altura de tela, não largura) e object-fit: contain
+     (nunca recorta, mesmo que a proporção real da câmera não seja
+     exatamente 3:4 — na pior hipótese sobra uma tarja preta fina, o que é
+     bem melhor que perder parte do rosto). */
+  #video-inicio { height: min(78vh, 900px); width: auto; aspect-ratio: 3 / 4; max-width: 92vw; object-fit: contain; }
   /* Efeito espelho só na exibição (UX natural, como uma câmera de selfie) —
      não afeta a leitura de QR nem o reconhecimento facial, que processam o
      quadro bruto da câmera via canvas/vídeo/imagem, não a versão espelhada na tela. */

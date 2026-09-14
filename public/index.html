@@ -198,7 +198,15 @@
       <section id="secao-perfil-aluno" class="secao oculto">
         <div class="secao-topo">
           <h2 id="perfil-nome-aluno">Perfil do aluno</h2>
-          <button class="btn-secundario" id="btn-voltar-alunos">&larr; Voltar para Alunos</button>
+          <div style="display:flex;gap:10px;align-items:center">
+            <select id="perfil-status" title="Status do aluno">
+              <option value="ativo">ativo</option>
+              <option value="inativo">inativo</option>
+              <option value="trancado">trancado</option>
+              <option value="inadimplente">inadimplente</option>
+            </select>
+            <button class="btn-secundario" id="btn-voltar-alunos">&larr; Voltar para Alunos</button>
+          </div>
         </div>
 
         <div class="perfil-tabs">

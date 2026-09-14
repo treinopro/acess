@@ -1657,6 +1657,7 @@ async function carregarPerfilAluno() {
     atualizarCampoIdade('perfil-idade', 'perfil-nascimento');
     atualizarCampoIdade('avaliacao-idade', 'perfil-nascimento', 'avaliacao-data');
     document.getElementById('perfil-categoria').value = aluno.categoria || 'aluno';
+    document.getElementById('perfil-status').value = aluno.status || 'ativo';
     document.getElementById('perfil-observacoes').value = aluno.observacoes || '';
     document.getElementById('perfil-biometria-id').value = aluno.biometria_id || '';
     document.getElementById('perfil-link-acesso').value = aluno.codigo_acesso
@@ -2323,6 +2324,22 @@ document.getElementById('btn-excluir-aluno').addEventListener('click', async () 
     mostrarToast('Aluno excluído.');
     voltarParaAlunos();
   } catch (err) { mostrarToast(err.message, true); }
+});
+
+// Status do aluno também editável direto no perfil (2026-09-14) — antes só
+// dava pra mudar pela lista de Alunos; mesmo endpoint e mesmas opções do
+// <select data-acao="status"> de lá.
+document.getElementById('perfil-status').addEventListener('change', async (ev) => {
+  const novoStatus = ev.target.value;
+  const statusAnterior = perfilAtualAlunoCache?.status || 'ativo';
+  try {
+    await api(`/api/alunos/${perfilAtualId}/status`, { method: 'PATCH', body: JSON.stringify({ status: novoStatus }) });
+    if (perfilAtualAlunoCache) perfilAtualAlunoCache.status = novoStatus;
+    mostrarToast('Status atualizado.');
+  } catch (err) {
+    ev.target.value = statusAnterior;
+    mostrarToast(err.message, true);
+  }
 });
 
 document.getElementById('form-biometria').addEventListener('submit', async (ev) => {

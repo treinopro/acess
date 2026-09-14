@@ -17,17 +17,14 @@ const TERMINAL_TOKEN = '533910a1b2ff8e90e62194b1b2f61c1e641e724e9d00b2d4f50e96bb
 // nada, então pode sumir rápido).
 const DURACAO_RESULTADO_MS = 3000;
 
-// 2026-07-21 (pedido explícito): tempo limite pra pessoa girar a catraca
-// depois de um acesso LIBERADO — separado de DURACAO_RESULTADO_MS porque
-// aqui tem uma ação física real esperando (girar a roleta), não só ler uma
-// mensagem. Mantido perto do tempo que a própria catraca Henry fica destravada
-// esperando a rotação antes de travar sozinha de novo (RELEASE_TIME em
-// src/services/henryCatraca.service.js, 10s por padrão — configurável via
-// HENRY_RELEASE_TIME_DECIMOS) — assim a tela do totem não volta a "aproxime-se
-// para reconhecimento" enquanto a catraca ainda está fisicamente destravada
-// esperando alguém passar. Passado esse tempo, a mensagem some do painel e o
-// totem volta ao estado normal de espera (travada/aguardando o próximo).
-const DURACAO_RESULTADO_LIBERADO_MS = 8000;
+// 2026-09-14 (pedido explícito: mensagem "liberado" demorando muito pra
+// sumir): reduzido de 8000 pra 4000 — a MENSAGEM na tela não precisa
+// acompanhar o tempo que a catraca Henry fica destravada de verdade
+// (RELEASE_TIME em src/services/henryCatraca.service.js, 10s por padrão,
+// configurável via HENRY_RELEASE_TIME_DECIMOS e INDEPENDENTE deste valor) —
+// a catraca continua destravada pelo tempo dela mesma depois que a tela já
+// voltou a escanear; só a mensagem some antes.
+const DURACAO_RESULTADO_LIBERADO_MS = 4000;
 
 // Intervalo (ms) entre tentativas de detecção no loop contínuo da tela inicial.
 // 2026-07-31 (relato: reconhecimento demorando a detectar quem chega):

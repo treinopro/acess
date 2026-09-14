@@ -59,24 +59,24 @@ async function herdarMidiaDaBiblioteca(dados) {
 }
 
 // Dispara notificacaoTreino.notificarAtualizacaoTreinoSeguro pro aluno DONO
-// do treino identificado por treinoId — busca aluno_id/nome/email/nome do
-// treino via JOIN (nenhuma das rotas abaixo tem isso à mão de propósito,
-// treino_exercicios só guarda treino_id). Fire-and-forget: nunca é
-// `await`ado por quem chama, pra não atrasar a resposta HTTP por causa de
-// push/e-mail lento (mesmo padrão de POST / acima). Pedido explícito do
-// dono do sistema (2026-08-27): qualquer atualização em um treino já
-// existente avisa o aluno.
+// do treino identificado por treinoId — busca aluno_id/nome do treino
+// (nenhuma das rotas abaixo tem isso à mão de propósito, treino_exercicios
+// só guarda treino_id). Fire-and-forget: nunca é `await`ado por quem chama,
+// pra não atrasar a resposta HTTP por causa de push lento (mesmo padrão de
+// POST / acima). Pedido explícito do dono do sistema (2026-08-27): qualquer
+// atualização em um treino já existente avisa o aluno — e (2026-09-14)
+// várias mudanças seguidas viram um push só, ver JANELA_DEBOUNCE_MS em
+// notificacaoTreino.service.js.
 function dispararNotificacaoAtualizacao(treinoId, detalhe) {
   db.execute({
-    sql: `SELECT t.nome as treino_nome, a.id as aluno_id, a.nome as aluno_nome, a.email as aluno_email
-          FROM treinos t JOIN alunos a ON a.id = t.aluno_id WHERE t.id = ?`,
+    sql: `SELECT nome as treino_nome, aluno_id FROM treinos WHERE id = ?`,
     args: [treinoId],
   })
     .then((r) => {
       const row = r.rows[0];
       if (!row) return;
       notificacaoTreino.notificarAtualizacaoTreinoSeguro(
-        { id: row.aluno_id, nome: row.aluno_nome, email: row.aluno_email },
+        { id: row.aluno_id },
         { treinoNome: row.treino_nome, detalhe },
       );
     })
@@ -135,23 +135,14 @@ router.post('/', async (req, res, next) => {
       args: [id, dados.aluno_id, dados.nome, JSON.stringify(dados.dias_semana), ordem, visivelPortal, dados.data_fim || null],
     });
 
-    // Aviso automático (push + e-mail) pro aluno — best-effort, disparado sem
-    // `await` de propósito (fire-and-forget) pra não atrasar a resposta da
-    // criação do treino em si por causa de push/e-mail lento. Só dispara
-    // quando o treino já nasce visível no portal — um treino criado
-    // visivel_portal=false (ainda em montagem) não deveria avisar o aluno de
-    // nada até o professor decidir mostrar de verdade.
+    // Aviso automático (push) pro aluno — best-effort, disparado sem `await`
+    // de propósito (fire-and-forget) pra não atrasar a resposta da criação
+    // do treino em si por causa de push lento. Só dispara quando o treino já
+    // nasce visível no portal — um treino criado visivel_portal=false (ainda
+    // em montagem) não deveria avisar o aluno de nada até o professor
+    // decidir mostrar de verdade.
     if (visivelPortal) {
-      db.execute({ sql: 'SELECT nome, email FROM alunos WHERE id = ?', args: [dados.aluno_id] })
-        .then((alunoResult) => {
-          const aluno = alunoResult.rows[0];
-          if (!aluno) return;
-          notificacaoTreino.notificarNovoTreinoSeguro(
-            { id: dados.aluno_id, nome: aluno.nome, email: aluno.email },
-            { treinoNome: dados.nome },
-          );
-        })
-        .catch(() => { /* best-effort — não deve afetar a resposta da criação do treino */ });
+      notificacaoTreino.notificarNovoTreinoSeguro({ id: dados.aluno_id }, { treinoNome: dados.nome });
     }
 
     res.status(201).json({

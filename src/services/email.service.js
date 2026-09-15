@@ -59,12 +59,27 @@ function obterTransporter() {
     throw new Error('Envio de e-mail não configurado: defina GMAIL_USER e GMAIL_APP_PASSWORD nas variáveis de ambiente (.env local / Northflank em produção).');
   }
   if (!transporterCache) {
+    // 2026-09-15 (relato: envio em massa pra ~180 alunos parou na metade com
+    // "454-4.7.0 Too many login attempts" — esse é o limite do Gmail pra
+    // tentativas de LOGIN por conta, diferente da cota diária de envios).
+    // Sem `pool`, cada sendMail() abre conexão E autentica do zero — um
+    // login novo por e-mail. Com pool:true + maxConnections:1, a MESMA
+    // conexão/login autenticado é reaproveitada pra todos os envios em
+    // sequência (só reconecta se cair ou passar de maxMessages). rateLimit
+    // é defesa extra contra o limite de MENSAGENS por minuto do Gmail (~100
+    // motion, ficamos bem abaixo), separado do limite de login que era o
+    // problema real aqui.
     transporterCache = nodemailer.createTransport({
       service: 'gmail',
       auth: {
         user: gmailUser(),
         pass: gmailSenhaApp(),
       },
+      pool: true,
+      maxConnections: 1,
+      maxMessages: Infinity,
+      rateDelta: 2000,
+      rateLimit: 5,
     });
   }
   return transporterCache;

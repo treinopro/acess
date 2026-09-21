@@ -77,6 +77,8 @@ const ALTERACOES_INCREMENTAIS = [
   "ALTER TABLE treino_exercicios ADD COLUMN precisa_ajuste_carga INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE treino_execucoes ADD COLUMN peso_usado TEXT",
   "ALTER TABLE treino_execucoes ADD COLUMN repeticoes_max INTEGER",
+  // Horário da última modificação do cadastro do aluno (2026-09-21).
+  "ALTER TABLE alunos ADD COLUMN atualizado_em TEXT",
 ];
 
 // Divide um arquivo .sql em statements individuais (o driver libsql nao aceita

@@ -72,7 +72,11 @@ CREATE TABLE IF NOT EXISTS alunos (
   -- (só importa quando notificar_vencimento = 1). Padrão 3 pra bater com o
   -- mesmo limiar já usado no aviso visual da home do portal.
   notificar_vencimento_dias_antes INTEGER NOT NULL DEFAULT 3,
-  criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+  criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+  -- Última modificação do cadastro (UTC, mesmo formato de criado_em). NULL =
+  -- nunca modificado desde o cadastro. Preenchido pelas rotas de alunos.routes.js
+  -- e pelo portal quando o aluno edita os próprios dados.
+  atualizado_em TEXT
 );
 
 -- Anamnese / avaliacao de saude inicial (dado sensivel - ver LGPD no README)
@@ -718,6 +722,10 @@ CREATE INDEX IF NOT EXISTS idx_acessos_catraca_aluno ON acessos_catraca(aluno_id
 -- principal suspeito. Com o índice, SQLite anda pra trás por ele e para nos
 -- primeiros 500, sem tocar no resto da tabela.
 CREATE INDEX IF NOT EXISTS idx_acessos_catraca_criado_em ON acessos_catraca(criado_em);
+-- Lista de acessos dentro do cadastro do aluno (GET /api/alunos/:id/acessos):
+-- "mais recentes" e "por período" filtram por aluno_id e ordenam/filtram por
+-- criado_em — este índice composto evita varrer todos os acessos do aluno.
+CREATE INDEX IF NOT EXISTS idx_acessos_catraca_aluno_criado_em ON acessos_catraca(aluno_id, criado_em);
 CREATE INDEX IF NOT EXISTS idx_mensagens_agendadas_status_data ON mensagens_agendadas(status, agendado_para);
 CREATE INDEX IF NOT EXISTS idx_pagamentos_cobranca_cobranca ON pagamentos_cobranca(cobranca_id);
 CREATE INDEX IF NOT EXISTS idx_anamnese_respostas_anamnese ON anamnese_respostas(anamnese_id);

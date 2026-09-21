@@ -1475,6 +1475,9 @@ window.addEventListener('beforeunload', (ev) => {
 
 async function abrirPerfilAluno(alunoId, abaInicial = 'dados') {
   perfilAtualId = alunoId;
+  perfilAcessosCarregadoPara = null;
+  document.getElementById('perfil-acessos-de').value = '';
+  document.getElementById('perfil-acessos-ate').value = '';
   document.querySelectorAll('.secao').forEach((s) => s.classList.add('oculto'));
   document.getElementById('secao-perfil-aluno').classList.remove('oculto');
   trocarAbaPerfil(abaInicial); // por padrão sempre volta pra primeira aba ao abrir um aluno diferente — Pendências
@@ -1487,7 +1490,60 @@ async function abrirPerfilAluno(alunoId, abaInicial = 'dados') {
 function trocarAbaPerfil(nomeAba) {
   document.querySelectorAll('.perfil-tab-btn').forEach((b) => b.classList.toggle('ativo', b.dataset.tab === nomeAba));
   document.querySelectorAll('.perfil-tab-painel').forEach((p) => p.classList.toggle('oculto', p.dataset.tabPainel !== nomeAba));
+  if (nomeAba === 'acessos' && perfilAtualId && perfilAcessosCarregadoPara !== perfilAtualId) carregarAcessosRecentesPerfil();
 }
+
+// Aba Acessos: só carrega ao abrir a aba (os mais recentes) — o período completo só é buscado
+// ao clicar em "Buscar período", pra não pesar a abertura do cadastro nem o banco.
+let perfilAcessosCarregadoPara = null;
+
+function renderizarAcessosPerfil(lista, resumo) {
+  const tbody = document.getElementById('perfil-acessos-lista');
+  document.getElementById('perfil-acessos-resumo').textContent = resumo;
+  tbody.innerHTML = lista.length ? '' : '<tr><td colspan="4">Nenhum acesso encontrado.</td></tr>';
+  lista.forEach((a) => {
+    tbody.appendChild(el(`
+      <tr>
+        <td>${parseDataHoraServidor(a.criado_em).toLocaleString('pt-BR')}</td>
+        <td>${escapeHtml(a.metodo)}</td>
+        <td><span class="badge ${a.resultado === 'liberado' ? 'ativo' : 'inadimplente'}">${escapeHtml(a.resultado)}</span></td>
+        <td>${escapeHtml(a.mensagem) || '—'}</td>
+      </tr>
+    `));
+  });
+}
+
+async function carregarAcessosRecentesPerfil() {
+  const alunoId = perfilAtualId;
+  try {
+    const lista = await api(`/api/alunos/${alunoId}/acessos`);
+    if (alunoId !== perfilAtualId) return;
+    perfilAcessosCarregadoPara = alunoId;
+    renderizarAcessosPerfil(lista, lista.length
+      ? `Últimos ${lista.length} acesso(s). Escolha um período para ver o histórico completo.`
+      : 'Nenhum acesso registrado. Escolha um período para buscar.');
+  } catch (err) { mostrarToast(err.message, true); }
+}
+
+async function buscarAcessosPeriodoPerfil() {
+  const de = document.getElementById('perfil-acessos-de').value;
+  const ate = document.getElementById('perfil-acessos-ate').value;
+  if (!de || !ate) { mostrarToast('Selecione a data inicial e a final do período.', true); return; }
+  if (de > ate) { mostrarToast('A data inicial não pode ser depois da final.', true); return; }
+  const alunoId = perfilAtualId;
+  try {
+    const lista = await api(`/api/alunos/${alunoId}/acessos?data_inicio=${de}&data_fim=${ate}`);
+    if (alunoId !== perfilAtualId) return;
+    renderizarAcessosPerfil(lista, `${lista.length} acesso(s) de ${formatarDataOuDataHora(de)} a ${formatarDataOuDataHora(ate)}${lista.length >= 500 ? ' (mostrando os 500 mais recentes — reduza o período)' : ''}.`);
+  } catch (err) { mostrarToast(err.message, true); }
+}
+
+document.getElementById('btn-perfil-acessos-buscar').addEventListener('click', buscarAcessosPeriodoPerfil);
+document.getElementById('btn-perfil-acessos-recentes').addEventListener('click', () => {
+  document.getElementById('perfil-acessos-de').value = '';
+  document.getElementById('perfil-acessos-ate').value = '';
+  carregarAcessosRecentesPerfil();
+});
 
 document.querySelectorAll('.perfil-tab-btn').forEach((btn) => {
   btn.addEventListener('click', () => trocarAbaPerfil(btn.dataset.tab));
@@ -1659,6 +1715,7 @@ async function carregarPerfilAluno() {
     document.getElementById('perfil-categoria').value = aluno.categoria || 'aluno';
     document.getElementById('perfil-status').value = aluno.status || 'ativo';
     document.getElementById('perfil-observacoes').value = aluno.observacoes || '';
+    document.getElementById('perfil-datas-registro').textContent = `Cadastrado em ${aluno.criado_em ? parseDataHoraServidor(aluno.criado_em).toLocaleString('pt-BR') : '—'} · Última modificação: ${aluno.atualizado_em ? parseDataHoraServidor(aluno.atualizado_em).toLocaleString('pt-BR') : 'nenhuma desde o cadastro'}`;
     document.getElementById('perfil-biometria-id').value = aluno.biometria_id || '';
     document.getElementById('perfil-link-acesso').value = aluno.codigo_acesso
       ? `${window.location.origin}/meu-acesso.html?codigo=${aluno.codigo_acesso}`

@@ -212,6 +212,7 @@
         <div class="perfil-tabs">
           <button class="perfil-tab-btn ativo" data-tab="dados">Dados pessoais</button>
           <button class="perfil-tab-btn" data-tab="biometria">Biometria &amp; acesso</button>
+          <button class="perfil-tab-btn" data-tab="acessos">Acessos</button>
           <button class="perfil-tab-btn" data-tab="avaliacoes">Avaliações</button>
           <button class="perfil-tab-btn" data-tab="matriculas">Matrículas</button>
           <button class="perfil-tab-btn" data-tab="financeiro">Financeiro</button>
@@ -252,6 +253,7 @@
             </div>
             <label>Observações</label>
             <textarea id="perfil-observacoes" rows="2"></textarea>
+            <p id="perfil-datas-registro" style="font-size:12.5px;color:#667085;margin:8px 0 0"></p>
             <div class="form-acoes">
               <button type="submit" class="btn-primario">Salvar dados</button>
               <button type="button" class="btn-secundario perigo" id="btn-excluir-aluno">Excluir aluno</button>
@@ -336,6 +338,21 @@
               </div>
             </div>
           </div>
+        </div>
+
+        <!-- ABA: Acessos (catraca/totem) — ao abrir mostra só os mais recentes; o período completo só carrega ao clicar em Buscar -->
+        <div class="perfil-tab-painel oculto" data-tab-painel="acessos">
+          <div class="form-painel" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
+            <div><label>Período de</label><input type="date" id="perfil-acessos-de" /></div>
+            <div><label>até</label><input type="date" id="perfil-acessos-ate" /></div>
+            <button type="button" class="btn-primario" id="btn-perfil-acessos-buscar">Buscar período</button>
+            <button type="button" class="btn-secundario" id="btn-perfil-acessos-recentes">Mostrar só os mais recentes</button>
+          </div>
+          <p id="perfil-acessos-resumo" style="font-size:12.5px;color:#667085;margin:8px 0"></p>
+          <table class="tabela">
+            <thead><tr><th>Data/Hora</th><th>Método</th><th>Resultado</th><th>Mensagem</th></tr></thead>
+            <tbody id="perfil-acessos-lista"></tbody>
+          </table>
         </div>
 
         <!-- ABA: Anamnese + Avaliações físicas + Agendamentos (mescladas, 2026-09-11 —

@@ -10,6 +10,7 @@ const catracaGateway = require('../services/catracaGateway.service');
 const dbResiliente = require('../services/dbResiliente.service');
 const filaCadastroOffline = require('../services/filaCadastroOffline.service');
 const emailBoasVindas = require('../services/emailBoasVindas.service');
+const { sqlAtualizadoEm } = require('../services/alunoAtualizadoEm.service');
 // Vendorizado (não é um symlink pro AvaliaPro) porque o deploy na nuvem
 // não tem acesso à pasta do AvaliaPro no notebook — ver o comentário no
 // topo de vendor/avaliapro-core/anthropometry.js para como manter em dia.
@@ -186,12 +187,12 @@ router.post('/importar', async (req, res, next) => {
       try {
         if (existente) {
           await db.execute({
-            sql: `UPDATE alunos SET nome = ?, email = ?, telefone = ?, cpf = ?, data_nascimento = ?, observacoes = ?
+            sql: `UPDATE alunos SET nome = ?, email = ?, telefone = ?, cpf = ?, data_nascimento = ?, observacoes = ?${sqlAtualizadoEm()}
                   WHERE id = ?`,
             args: [dados.nome, dados.email, dados.telefone, dados.cpf, dados.data_nascimento, dados.observacoes, existente.id],
           });
           if (statusValido) {
-            await db.execute({ sql: 'UPDATE alunos SET status = ? WHERE id = ?', args: [statusValido, existente.id] });
+            await db.execute({ sql: `UPDATE alunos SET status = ?${sqlAtualizadoEm()} WHERE id = ?`, args: [statusValido, existente.id] });
           }
           atualizados++;
         } else {
@@ -427,7 +428,7 @@ router.put('/:id', async (req, res, next) => {
     }
 
     async function aplicarOnline() {
-      const sets = campos.map((c) => `${c} = ?`).join(', ');
+      const sets = campos.map((c) => `${c} = ?`).join(', ') + sqlAtualizadoEm();
       const args = [...campos.map((c) => dados[c]), req.params.id];
       await db.execute({ sql: `UPDATE alunos SET ${sets} WHERE id = ?`, args });
     }
@@ -486,7 +487,7 @@ router.patch('/:id/status', async (req, res, next) => {
     const status = z.enum(['ativo', 'inativo', 'trancado', 'inadimplente']).parse(req.body.status);
 
     async function aplicarOnline() {
-      await db.execute({ sql: 'UPDATE alunos SET status = ? WHERE id = ?', args: [status, req.params.id] });
+      await db.execute({ sql: `UPDATE alunos SET status = ?${sqlAtualizadoEm()} WHERE id = ?`, args: [status, req.params.id] });
     }
 
     if (!dbResiliente.MODO_TOTEM_OFFLINE) {
@@ -545,7 +546,7 @@ router.post('/desativar-em-massa', async (req, res, next) => {
     const resultados = [];
     for (const alunoId of alunoIds) {
       try {
-        const result = await db.execute({ sql: "UPDATE alunos SET status = 'inativo' WHERE id = ?", args: [alunoId] });
+        const result = await db.execute({ sql: `UPDATE alunos SET status = 'inativo'${sqlAtualizadoEm()} WHERE id = ?`, args: [alunoId] });
         if (result.rowsAffected === 0) {
           resultados.push({ aluno_id: alunoId, ok: false, erro: 'Aluno não encontrado.' });
           continue;
@@ -570,7 +571,7 @@ router.patch('/:id/biometria', async (req, res, next) => {
   try {
     const biometriaId = z.string().min(1).parse(req.body.biometria_id);
     await db.execute({
-      sql: 'UPDATE alunos SET biometria_id = ? WHERE id = ?',
+      sql: `UPDATE alunos SET biometria_id = ?${sqlAtualizadoEm()} WHERE id = ?`,
       args: [biometriaId, req.params.id],
     });
     acessoTerminal.notificarAgenteAtualizacaoAluno(req.params.id);
@@ -582,7 +583,7 @@ router.patch('/:id/biometria', async (req, res, next) => {
 
 router.delete('/:id/biometria', async (req, res, next) => {
   try {
-    await db.execute({ sql: 'UPDATE alunos SET biometria_id = NULL WHERE id = ?', args: [req.params.id] });
+    await db.execute({ sql: `UPDATE alunos SET biometria_id = NULL${sqlAtualizadoEm()} WHERE id = ?`, args: [req.params.id] });
     // biometria_id acabou de virar NULL — notificarAgenteAtualizacaoAluno não
     // vai encontrar mais nada pra mandar (checa aluno.biometria_id), então o
     // registro antigo só some do cache do agente no próximo pull periódico
@@ -612,7 +613,7 @@ router.delete('/:id/biometria/catraca', async (req, res, next) => {
     }
     const resultado = await catracaGateway.excluirBiometriaCatraca({ matricula: biometriaId });
     if (resultado.sucesso) {
-      await db.execute({ sql: 'UPDATE alunos SET biometria_id = NULL WHERE id = ?', args: [req.params.id] });
+      await db.execute({ sql: `UPDATE alunos SET biometria_id = NULL${sqlAtualizadoEm()} WHERE id = ?`, args: [req.params.id] });
     }
     res.json(resultado);
   } catch (err) {
@@ -685,7 +686,7 @@ router.post('/:id/biometria/cadastrar-nova', async (req, res, next) => {
 
     const resultado = await catracaGateway.cadastrarBiometriaCatraca({ matricula });
     if (resultado.sucesso) {
-      await db.execute({ sql: 'UPDATE alunos SET biometria_id = ? WHERE id = ?', args: [matricula, req.params.id] });
+      await db.execute({ sql: `UPDATE alunos SET biometria_id = ?${sqlAtualizadoEm()} WHERE id = ?`, args: [matricula, req.params.id] });
       acessoTerminal.notificarAgenteAtualizacaoAluno(req.params.id);
     }
     res.json({ ...resultado, biometria_id: matricula });
@@ -702,7 +703,7 @@ router.patch('/:id/codigo-acesso', async (req, res, next) => {
   try {
     if (req.query.regenerar) {
       const novoCodigo = acessoTerminal.gerarCodigoAcesso();
-      await db.execute({ sql: 'UPDATE alunos SET codigo_acesso = ? WHERE id = ?', args: [novoCodigo, req.params.id] });
+      await db.execute({ sql: `UPDATE alunos SET codigo_acesso = ?${sqlAtualizadoEm()} WHERE id = ?`, args: [novoCodigo, req.params.id] });
       return res.json({ codigo_acesso: novoCodigo });
     }
     const codigo = await acessoTerminal.garantirCodigoAcesso(req.params.id);
@@ -715,7 +716,7 @@ router.patch('/:id/codigo-acesso', async (req, res, next) => {
 // DELETE /api/alunos/:id/face — remove o descritor facial (permite recadastrar no totem)
 router.delete('/:id/face', async (req, res, next) => {
   try {
-    await db.execute({ sql: 'UPDATE alunos SET face_descriptor = NULL WHERE id = ?', args: [req.params.id] });
+    await db.execute({ sql: `UPDATE alunos SET face_descriptor = NULL${sqlAtualizadoEm()} WHERE id = ?`, args: [req.params.id] });
     res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -748,7 +749,7 @@ router.put('/:id/face', async (req, res, next) => {
 router.patch('/:id/foto', async (req, res, next) => {
   try {
     const { foto_url: fotoUrl } = z.object({ foto_url: z.string().max(500000).optional().nullable() }).parse(req.body);
-    const result = await db.execute({ sql: 'UPDATE alunos SET foto_url = ? WHERE id = ?', args: [fotoUrl || null, req.params.id] });
+    const result = await db.execute({ sql: `UPDATE alunos SET foto_url = ?${sqlAtualizadoEm()} WHERE id = ?`, args: [fotoUrl || null, req.params.id] });
     if (result.rowsAffected === 0) return res.status(404).json({ erro: 'Aluno não encontrado.' });
     res.json({ ok: true });
   } catch (err) {
@@ -771,6 +772,46 @@ router.delete('/:id', async (req, res, next) => {
     await db.execute({ sql: 'DELETE FROM alunos WHERE id = ?', args: [req.params.id] });
 
     res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/alunos/:id/acessos — lista de acessos (catraca/totem) do aluno, exibida no cadastro.
+//   sem parâmetros           -> só os mais recentes (?limite=, padrão 10, máx 50) — carga leve ao abrir o cadastro
+//   ?data_inicio=&data_fim=  -> todos do período (AAAA-MM-DD, dois obrigatórios), máx 500
+// Usa idx_acessos_catraca_aluno_criado_em (aluno_id, criado_em); o filtro de período compara
+// criado_em direto (sem date()) pra o índice ser aproveitado. criado_em é UTC — o dia local
+// (Brasil, UTC-3) vira o intervalo [dia+03:00, dia seguinte+03:00).
+router.get('/:id/acessos', async (req, res, next) => {
+  try {
+    const { data_inicio: dataInicio, data_fim: dataFim } = req.query;
+    if ((dataInicio && !dataFim) || (!dataInicio && dataFim)) {
+      return res.status(400).json({ erro: 'Informe data inicial e final do período.' });
+    }
+    const dataValida = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d);
+    if (dataInicio && (!dataValida(dataInicio) || !dataValida(dataFim))) {
+      return res.status(400).json({ erro: 'Datas inválidas (use AAAA-MM-DD).' });
+    }
+
+    let sql;
+    let args;
+    if (dataInicio) {
+      const fim = new Date(`${dataFim}T00:00:00Z`);
+      fim.setUTCDate(fim.getUTCDate() + 1);
+      const fimStr = fim.toISOString().slice(0, 10);
+      sql = `SELECT id, metodo, resultado, mensagem, criado_em FROM acessos_catraca
+             WHERE aluno_id = ? AND criado_em >= ? AND criado_em < ?
+             ORDER BY criado_em DESC LIMIT 500`;
+      args = [req.params.id, `${dataInicio} 03:00:00`, `${fimStr} 03:00:00`];
+    } else {
+      const limite = Math.min(Math.max(parseInt(req.query.limite, 10) || 10, 1), 50);
+      sql = `SELECT id, metodo, resultado, mensagem, criado_em FROM acessos_catraca
+             WHERE aluno_id = ? ORDER BY criado_em DESC LIMIT ?`;
+      args = [req.params.id, limite];
+    }
+    const result = await db.execute({ sql, args });
+    res.json(result.rows);
   } catch (err) {
     next(err);
   }

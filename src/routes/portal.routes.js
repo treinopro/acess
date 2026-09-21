@@ -29,6 +29,7 @@ const express = require('express');
 const { v4: uuid } = require('uuid');
 const { z } = require('zod');
 const db = require('../db/client');
+const { sqlAtualizadoEm } = require('../services/alunoAtualizadoEm.service');
 const acessoTerminal = require('../services/acessoTerminal.service');
 const pagamentoContas = require('../services/pagamentoContas.service');
 const mercadopago = require('../services/payment/mercadopago.service');
@@ -221,7 +222,7 @@ router.post('/completar-cadastro', limitadorSenhaPortal, async (req, res, next) 
     const aluno = autenticado.aluno;
 
     await db.execute({
-      sql: 'UPDATE alunos SET nome = ?, telefone = ?, email = ?, data_nascimento = ? WHERE id = ?',
+      sql: `UPDATE alunos SET nome = ?, telefone = ?, email = ?, data_nascimento = ?${sqlAtualizadoEm()} WHERE id = ?`,
       args: [dados.nome, dados.telefone, dados.email, dados.data_nascimento, aluno.id],
     });
 

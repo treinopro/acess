@@ -246,6 +246,9 @@ const server = http.createServer(app);
 agenteGateway.attach(server);
 
 const PORT = process.env.PORT || 3000;
+// Cria alunos.atualizado_em (e um índice) se ainda não existirem — idempotente, best-effort.
+require('./services/alunoAtualizadoEm.service').garantirColuna().catch(() => {});
+
 server.listen(PORT, () => {
   console.log(`Servidor rodando em http://localhost:${PORT}`);
   console.log(`Agente local da catraca deve conectar em ws://localhost:${PORT}/agente/socket?token=<AGENTE_TOKEN> (ou wss:// em produção).`);

@@ -67,17 +67,23 @@ function proximaEtapaPendente(pipeline) {
 
 // Exercícios que o aluno reportou mais de 13 repetições no portal (ver
 // LIMITE_REPETICOES_SEM_AJUSTE em portal.routes.js) — sinal de que a carga
-// prescrita ficou fácil demais. Some sozinho da lista quando o professor
-// atualiza o campo "carga" desse exercício (ver PUT /exercicios/:id em
-// treinos.routes.js, que zera precisa_ajuste_carga nesse momento).
+// prescrita ficou fácil demais. Cada exercício individual some sozinho da
+// lista quando o professor atualiza o campo "carga" dele (ver PUT
+// /exercicios/:id em treinos.routes.js, que zera precisa_ajuste_carga nesse
+// momento) — os exercícios já ficam destacados direto na ficha do treino
+// (ver "precisaAjuste" em app.js), então aqui em Pendências agrupamos por
+// TREINO (não por exercício): um aluno com 3 exercícios pra ajustar no mesmo
+// treino gera 1 card só, não 3 — a pendência inteira some quando o último
+// exercício daquele treino for ajustado.
 async function listarPendenciasAjusteCarga() {
   const result = await db.execute(`
-    SELECT te.id, te.exercicio, te.ultimo_peso_usado, te.ultimo_repeticoes_max, te.concluido_em,
-           t.aluno_id, a.nome as aluno_nome
+    SELECT t.id as treino_id, t.nome as treino_nome, t.aluno_id, a.nome as aluno_nome,
+           COUNT(*) as qtd_exercicios, MAX(te.concluido_em) as concluido_em
     FROM treino_exercicios te
     JOIN treinos t ON t.id = te.treino_id
     JOIN alunos a ON a.id = t.aluno_id
     WHERE te.precisa_ajuste_carga = 1
+    GROUP BY t.id
   `);
   return result.rows;
 }
@@ -93,13 +99,15 @@ router.get('/', async (req, res, next) => {
       listarPendenciasAjusteCarga(),
     ]);
 
-    const pendenciasAjusteCarga = ajustesCarga.map((e) => ({
+    const pendenciasAjusteCarga = ajustesCarga.map((t) => ({
       tipo: 'ajuste_carga',
-      id: e.id,
-      aluno_id: e.aluno_id,
-      aluno_nome: e.aluno_nome,
-      detalhe: `${e.exercicio}: aluno fez ${e.ultimo_repeticoes_max} repetições${e.ultimo_peso_usado ? ` com ${e.ultimo_peso_usado}` : ''} — considere aumentar a carga.`,
-      data_referencia: (e.concluido_em || '').slice(0, 10) || new Date().toISOString().slice(0, 10),
+      id: t.treino_id,
+      aluno_id: t.aluno_id,
+      aluno_nome: t.aluno_nome,
+      detalhe: t.qtd_exercicios > 1
+        ? `${t.treino_nome}: ${t.qtd_exercicios} exercícios passaram de 13 repetições — considere aumentar a carga.`
+        : `${t.treino_nome}: 1 exercício passou de 13 repetições — considere aumentar a carga.`,
+      data_referencia: (t.concluido_em || '').slice(0, 10) || new Date().toISOString().slice(0, 10),
     }));
 
     const pendenciasServicos = servicos.map((s) => ({

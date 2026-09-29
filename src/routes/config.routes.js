@@ -457,6 +457,90 @@ async function obterCooldownAcesso() {
   };
 }
 
+// ---------------- Biometria da catraca por horário (admin) ----------------
+// 2026-09-29 (pedido do dono): ele desabilitou o leitor de digital (Leitor 3)
+// direto na interface web da catraca, pra usar só reconhecimento facial pelo
+// tablet — mas o tablet nem sempre está na academia, e sem o leitor de
+// digital ninguém consegue entrar nesses horários. Aqui o admin define
+// janelas em que o Leitor 3 deve ficar HABILITADO (Biometria) como
+// alternativa; fora delas, o agente local mantém o leitor desabilitado.
+// `janelas` é uma lista de { inicio: 'HH:MM', fim: 'HH:MM' } (sem cruzar
+// meia-noite, de propósito — mais simples de entender e cobre o caso real:
+// antes de abrir/depois de fechar). Quem de fato aplica isso na catraca é o
+// `agente-local` (ver biometriaAgendada.js), que puxa esta configuração
+// periodicamente via GET /api/terminal/biometria-catraca-horario
+// (terminal.routes.js) — o servidor na nuvem nunca fala direto com a catraca.
+const PADROES_BIOMETRIA_CATRACA = {
+  biometria_catraca_agendamento_ativo: 'false',
+  biometria_catraca_janelas: '[]',
+};
+const CHAVES_BIOMETRIA_CATRACA = Object.keys(PADROES_BIOMETRIA_CATRACA);
+
+// GET /api/config/biometria-catraca-horario — admin only
+router.get('/biometria-catraca-horario', autenticar, apenasAdmin, async (req, res, next) => {
+  try {
+    res.json(await obterConfigBiometriaCatraca());
+  } catch (err) {
+    next(err);
+  }
+});
+
+const JanelaSchema = z.object({
+  inicio: z.string().regex(/^\d{2}:\d{2}$/),
+  fim: z.string().regex(/^\d{2}:\d{2}$/),
+}).refine((j) => j.inicio < j.fim, { message: 'O horário final precisa ser depois do inicial (sem cruzar a meia-noite).' });
+
+const BiometriaCatracaConfigSchema = z.object({
+  biometria_catraca_agendamento_ativo: z.boolean().optional(),
+  biometria_catraca_janelas: z.array(JanelaSchema).max(10).optional(),
+});
+
+// PUT /api/config/biometria-catraca-horario — admin only
+router.put('/biometria-catraca-horario', autenticar, apenasAdmin, async (req, res, next) => {
+  try {
+    const dados = BiometriaCatracaConfigSchema.parse(req.body);
+    const chaves = Object.keys(dados);
+    if (chaves.length === 0) return res.status(400).json({ erro: 'Nenhum campo informado.' });
+
+    for (const chave of chaves) {
+      const valor = chave === 'biometria_catraca_janelas' ? JSON.stringify(dados[chave]) : String(dados[chave]);
+      await db.execute({
+        sql: 'INSERT INTO configuracoes (chave, valor) VALUES (?, ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor',
+        args: [chave, valor],
+      });
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Lê a configuração de agendamento do Leitor 3 (biometria) da catraca —
+ * usada pelo GET acima (painel admin) e por GET /api/terminal/biometria-
+ * catraca-horario (terminal.routes.js, consumido pelo agente-local).
+ */
+async function obterConfigBiometriaCatraca() {
+  const result = await db.execute({
+    sql: `SELECT chave, valor FROM configuracoes WHERE chave IN (${CHAVES_BIOMETRIA_CATRACA.map(() => '?').join(',')})`,
+    args: CHAVES_BIOMETRIA_CATRACA,
+  });
+  const config = { ...PADROES_BIOMETRIA_CATRACA };
+  result.rows.forEach((row) => { config[row.chave] = row.valor; });
+  let janelas = [];
+  try {
+    const lista = JSON.parse(config.biometria_catraca_janelas);
+    if (Array.isArray(lista)) janelas = lista;
+  } catch {
+    janelas = [];
+  }
+  return {
+    ativo: config.biometria_catraca_agendamento_ativo === 'true',
+    janelas,
+  };
+}
+
 // GET /api/config/chamar-professor-horario — admin only (ver comentário de
 // PADROES_CHAMAR_PROFESSOR acima)
 router.get('/chamar-professor-horario', autenticar, apenasAdmin, async (req, res, next) => {
@@ -521,4 +605,6 @@ async function obterConfigChamarProfessor() {
   };
 }
 
-module.exports = { router, escreverBackupStream, obterCooldownAcesso, obterConfigChamarProfessor };
+module.exports = {
+  router, escreverBackupStream, obterCooldownAcesso, obterConfigChamarProfessor, obterConfigBiometriaCatraca,
+};

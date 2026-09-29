@@ -15,7 +15,7 @@ const { primeiroVencimento, ehRecorrente } = require('../services/cobrancas.serv
 const { criarLimitador } = require('../middleware/rateLimit');
 const { normalizarCpf } = require('../utils/cpf');
 const db = require('../db/client');
-const { obterCooldownAcesso } = require('./config.routes');
+const { obterCooldownAcesso, obterConfigBiometriaCatraca } = require('./config.routes');
 
 const router = express.Router();
 
@@ -201,6 +201,21 @@ terminal.get('/cache-autorizacao', limitadorCacheAutorizacao, autenticarTerminal
       obterCooldownAcesso(),
     ]);
     res.json({ atualizado_em: Date.now(), itens, cooldown_biometria_segundos: cooldown.cooldown_biometria_segundos });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/terminal/biometria-catraca-horario — configuração de agendamento
+// do Leitor 3 (biometria) da catraca (ver PADROES_BIOMETRIA_CATRACA em
+// config.routes.js), puxada periodicamente pelo agente-local
+// (biometriaAgendada.js). Independente de BIOMETRIA_CATRACA_ATIVA — essa flag
+// é sobre o agente tratar leituras da catraca como método de acesso via
+// software; isto aqui é só ligar/desligar o leitor de digital no próprio
+// equipamento, via a interface web dele.
+terminal.get('/biometria-catraca-horario', autenticarTerminal, async (req, res, next) => {
+  try {
+    res.json(await obterConfigBiometriaCatraca());
   } catch (err) {
     next(err);
   }

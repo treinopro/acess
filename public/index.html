@@ -2056,6 +2056,26 @@
           </div>
         </form>
 
+        <form id="form-config-biometria-catraca" class="form-painel">
+          <h3 style="margin-top:0">Biometria da catraca por horário</h3>
+          <p style="margin-top:0;color:#667085;font-size:13px">
+            Se o leitor de digital (Leitor 3) da catraca estiver desabilitado pra usar só reconhecimento facial,
+            defina aqui horários em que ele deve voltar a ficar habilitado como alternativa — útil pros períodos em
+            que o tablet do facial não está na academia. Aplicado automaticamente pelo agente local (checagem a
+            cada minuto); fora dessas janelas, o leitor fica desabilitado.
+          </p>
+          <label style="display:flex;align-items:center;gap:8px;margin:10px 0">
+            <input type="checkbox" id="cfg-biometria-catraca-ativo" style="width:auto" /> Ativar agendamento
+          </label>
+          <div id="cfg-biometria-catraca-janelas"></div>
+          <div class="form-acoes" style="margin-top:8px">
+            <button type="button" class="btn-secundario" id="btn-biometria-catraca-adicionar-janela">+ Adicionar janela</button>
+          </div>
+          <div class="form-acoes">
+            <button type="submit" class="btn-primario">Salvar</button>
+          </div>
+        </form>
+
         <div class="form-painel">
           <h3 style="margin-top:0">Backup</h3>
           <p style="margin-top:0;color:#667085;font-size:13px">

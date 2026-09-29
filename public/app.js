@@ -435,7 +435,10 @@ function carregarSecao(nome) {
   if (nome === 'contas-pagar') carregarSecaoContasPagar();
   if (nome === 'pagamento-rapido') iniciarPagamentoRapido();
   if (nome === 'usuarios') carregarUsuarios();
-  if (nome === 'config') { carregarConfiguracoesForm(); carregarConfigCooldown(); carregarConfigChamarProfessor(); carregarConfigBackup(); carregarPendenciasSincronizacao(); }
+  if (nome === 'config') {
+    carregarConfiguracoesForm(); carregarConfigCooldown(); carregarConfigChamarProfessor();
+    carregarConfigBiometriaCatraca(); carregarConfigBackup(); carregarPendenciasSincronizacao();
+  }
   if (nome === 'recuperacao') carregarSecaoRecuperacao();
   if (nome === 'relatorios') carregarSecaoRelatorios();
   if (nome === 'biblioteca') carregarSecaoBiblioteca();
@@ -1005,6 +1008,62 @@ document.getElementById('form-config-chamar-professor').addEventListener('submit
   try {
     await api('/api/config/chamar-professor-horario', { method: 'PUT', body: JSON.stringify(dados) });
     mostrarToast('Horário do "Chamar professor" salvo.');
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+// ---------------- Biometria da catraca por horário (admin) ----------------
+// Mesmo padrão do cooldown-acesso acima — ver /api/config/biometria-catraca-horario
+// em src/routes/config.routes.js. Janelas são uma lista dinâmica (o admin
+// pode ter mais de uma, ex.: antes de abrir e depois de fechar).
+function linhaJanelaBiometriaCatraca(inicio = '06:00', fim = '08:00') {
+  const linha = el(`
+    <div class="grid-2" style="align-items:end;margin-bottom:8px">
+      <div><label>Habilitado de</label><input type="time" class="cfg-biometria-janela-inicio" value="${inicio}" /></div>
+      <div style="display:flex;gap:8px;align-items:end">
+        <div style="flex:1"><label>Até</label><input type="time" class="cfg-biometria-janela-fim" value="${fim}" /></div>
+        <button type="button" class="btn-secundario perigo" title="Remover esta janela">Remover</button>
+      </div>
+    </div>
+  `);
+  linha.querySelector('button').addEventListener('click', () => linha.remove());
+  return linha;
+}
+
+async function carregarConfigBiometriaCatraca() {
+  try {
+    const config = await api('/api/config/biometria-catraca-horario');
+    document.getElementById('cfg-biometria-catraca-ativo').checked = !!config.ativo;
+    const container = document.getElementById('cfg-biometria-catraca-janelas');
+    container.innerHTML = '';
+    (config.janelas || []).forEach((j) => container.appendChild(linhaJanelaBiometriaCatraca(j.inicio, j.fim)));
+  } catch (err) { mostrarToast(err.message, true); }
+}
+
+document.getElementById('btn-biometria-catraca-adicionar-janela').addEventListener('click', () => {
+  document.getElementById('cfg-biometria-catraca-janelas').appendChild(linhaJanelaBiometriaCatraca());
+});
+
+document.getElementById('form-config-biometria-catraca').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const janelas = [...document.querySelectorAll('#cfg-biometria-catraca-janelas > div')].map((linha) => ({
+    inicio: linha.querySelector('.cfg-biometria-janela-inicio').value,
+    fim: linha.querySelector('.cfg-biometria-janela-fim').value,
+  }));
+  if (janelas.some((j) => !j.inicio || !j.fim)) {
+    mostrarToast('Preencha os dois horários de cada janela (ou remova a que ficou incompleta).', true);
+    return;
+  }
+  if (janelas.some((j) => j.inicio >= j.fim)) {
+    mostrarToast('O horário final precisa ser depois do inicial em cada janela (sem cruzar a meia-noite).', true);
+    return;
+  }
+  const dados = {
+    biometria_catraca_agendamento_ativo: document.getElementById('cfg-biometria-catraca-ativo').checked,
+    biometria_catraca_janelas: janelas,
+  };
+  try {
+    await api('/api/config/biometria-catraca-horario', { method: 'PUT', body: JSON.stringify(dados) });
+    mostrarToast('Agendamento de biometria da catraca salvo.');
   } catch (err) { mostrarToast(err.message, true); }
 });
 

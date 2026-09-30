@@ -209,16 +209,11 @@ terminal.get('/cache-autorizacao', limitadorCacheAutorizacao, autenticarTerminal
 // GET /api/terminal/biometria-catraca-horario — configuração de agendamento
 // do Leitor 3 (biometria) da catraca (ver PADROES_BIOMETRIA_CATRACA em
 // config.routes.js), puxada periodicamente pelo agente-local
-// (biometriaAgendada.js). Independente de BIOMETRIA_CATRACA_ATIVA — essa flag
-// é sobre o agente tratar leituras da catraca como método de acesso via
+// (biometriaAgendada.js), numa cadência baixa (poucas vezes por hora — a
+// config quase não muda). Independente de BIOMETRIA_CATRACA_ATIVA — essa
+// flag é sobre o agente tratar leituras da catraca como método de acesso via
 // software; isto aqui é só ligar/desligar o leitor de digital no próprio
 // equipamento, via a interface web dele.
-//
-// `totem_conectado` (2026-09-30) é embutido aqui em vez de num endpoint
-// próprio pra não precisar de um segundo pull periódico no agente: reflete o
-// MESMO canal SSE que o totem já mantém aberto pra receber "acabou de
-// liberar" (ver totemEventos.service.js) — sinal em tempo real, não algo
-// lido do banco.
 terminal.get('/biometria-catraca-horario', autenticarTerminal, async (req, res, next) => {
   try {
     const config = await obterConfigBiometriaCatraca();
@@ -226,6 +221,24 @@ terminal.get('/biometria-catraca-horario', autenticarTerminal, async (req, res, 
   } catch (err) {
     next(err);
   }
+});
+
+// GET /api/terminal/totem-conectado — SÓ o sinal de presença do totem, sem
+// tocar o banco (2026-09-30). Separado da rota acima de propósito: pra
+// reagir rápido a uma queda do tablet (ver biometriaAgendada.js), o agente
+// local checa isto a cada poucos segundos — colocar isso dentro de
+// /biometria-catraca-horario faria essa checagem rápida ler o banco toda
+// vez à toa, já que a CONFIGURAÇÃO em si (janelas, ativo) quase nunca muda e
+// não precisa dessa frequência (ver histórico de estourar cota de leitura
+// do Turso por causa de outra tela que reconsultava demais). Aqui é só
+// `totemEventos.quantidadeClientesConectados()` — leitura em memória, sem
+// nenhuma query.
+const limitadorTotemConectado = criarLimitador({
+  janelaMs: 60 * 1000, maximo: 30,
+  mensagem: 'Muitas requisições de checagem de presença do totem. Aguarde um pouco.',
+});
+terminal.get('/totem-conectado', limitadorTotemConectado, autenticarTerminal, (req, res) => {
+  res.json({ conectado: totemEventos.quantidadeClientesConectados() > 0 });
 });
 
 // ---------------------------------------------------------------------------

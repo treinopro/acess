@@ -2079,10 +2079,11 @@
             Habilitar automaticamente se o tablet do facial cair (além das janelas acima)
           </label>
           <p style="margin:0;color:#667085;font-size:13px">
-            Detecta em tempo real se o tablet está conectado (mesmo canal usado pra tocar o som de liberação) — se
-            ficar cerca de 3 minutos seguidos sem conexão, a qualquer hora do dia, o agente habilita a biometria
-            sozinho como alternativa. Assim que o tablet volta a se conectar, a biometria é desabilitada de novo
-            sozinha (a menos que ainda esteja dentro de alguma janela programada acima).
+            Detecta em tempo real se o tablet está conectado (mesmo canal usado pra tocar o som de liberação) — assim
+            que ele ficar sem conexão, a qualquer hora do dia, o agente habilita a biometria sozinho como
+            alternativa (checagem a cada 10s — pra ninguém ficar sem nenhum jeito de entrar enquanto o tablet está
+            fora do ar). Assim que o tablet volta a se conectar, a biometria é desabilitada de novo sozinha (a menos
+            que ainda esteja dentro de alguma janela programada acima).
           </p>
 
           <div class="form-acoes">

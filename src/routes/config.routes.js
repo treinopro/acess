@@ -464,10 +464,16 @@ async function obterCooldownAcesso() {
 // digital ninguém consegue entrar nesses horários. Aqui o admin define
 // janelas em que o Leitor 3 deve ficar HABILITADO (Biometria) como
 // alternativa; fora delas, o agente local mantém o leitor desabilitado.
-// `janelas` é uma lista de { inicio: 'HH:MM', fim: 'HH:MM' } (sem cruzar
-// meia-noite, de propósito — mais simples de entender e cobre o caso real:
-// antes de abrir/depois de fechar). Quem de fato aplica isso na catraca é o
-// `agente-local` (ver biometriaAgendada.js), que puxa esta configuração
+// `janelas` é uma lista de { inicio: 'HH:MM', fim: 'HH:MM' } — PODE cruzar a
+// meia-noite (ex.: 21:00–06:30, pra cobrir a noite inteira mesmo com o PC do
+// agente desligado: a catraca guarda esse estado sozinha, então "habilitar"
+// antes de desligar o PC já deixa a biometria valendo a noite toda e de
+// manhã, mesmo sem o agente rodando pra aplicar nada nesse meio tempo — ver
+// deveEstarHabilitado() em agente-local/biometriaAgendada.js). Quando
+// inicio > fim, a janela é tratada como virando a noite (ex.: 21:00–06:30 =
+// das 21:00 até a meia-noite, MAIS da meia-noite até as 06:30). Quem de fato
+// aplica isso na catraca é o `agente-local` (ver biometriaAgendada.js), que
+// puxa esta configuração
 // periodicamente via GET /api/terminal/biometria-catraca-horario
 // (terminal.routes.js) — o servidor na nuvem nunca fala direto com a catraca.
 const PADROES_BIOMETRIA_CATRACA = {
@@ -488,7 +494,7 @@ router.get('/biometria-catraca-horario', autenticar, apenasAdmin, async (req, re
 const JanelaSchema = z.object({
   inicio: z.string().regex(/^\d{2}:\d{2}$/),
   fim: z.string().regex(/^\d{2}:\d{2}$/),
-}).refine((j) => j.inicio < j.fim, { message: 'O horário final precisa ser depois do inicial (sem cruzar a meia-noite).' });
+}).refine((j) => j.inicio !== j.fim, { message: 'Horário inicial e final não podem ser iguais.' });
 
 const BiometriaCatracaConfigSchema = z.object({
   biometria_catraca_agendamento_ativo: z.boolean().optional(),

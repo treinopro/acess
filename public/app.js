@@ -1053,8 +1053,8 @@ document.getElementById('form-config-biometria-catraca').addEventListener('submi
     mostrarToast('Preencha os dois horários de cada janela (ou remova a que ficou incompleta).', true);
     return;
   }
-  if (janelas.some((j) => j.inicio >= j.fim)) {
-    mostrarToast('O horário final precisa ser depois do inicial em cada janela (sem cruzar a meia-noite).', true);
+  if (janelas.some((j) => j.inicio === j.fim)) {
+    mostrarToast('Horário inicial e final não podem ser iguais em uma janela.', true);
     return;
   }
   const dados = {

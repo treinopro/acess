@@ -46,19 +46,19 @@ function somarMesesComDiaAlvo(dataISO, meses, diaAlvo) {
 // Vencimento da PRIMEIRA cobrança de uma matrícula nova (2026-09-02, pedido
 // explícito do dono — cartaz "Atenção, aluno! Só existem 2 datas de
 // vencimento: dia 10 e dia 20"): aplica a mesma regra de diaVencimentoPadrao
-// já usada nos ciclos seguintes (gerarCobrancasRecorrentes acima), mas com
-// UM cuidado a mais que ali não existe — rola pro mês seguinte se o dia-alvo
-// (10 ou 20) já tiver passado dentro do próprio mês da matrícula. Ex.: aluno
-// entra dia 12 → dia-alvo é 10, mas dia 10 JÁ PASSOU esse mês, então vence
-// dia 10 do mês QUE VEM, não "hoje mesmo/atrasado". Aluno que entra dia 5 →
-// dia-alvo 10 ainda não passou → vence dia 10 deste mês mesmo. Isso é o que
-// o cartaz quer dizer com "é sempre o vencimento MAIS PRÓXIMO" — nunca uma
-// data que já ficou pra trás.
+// já usada nos ciclos seguintes (gerarCobrancasRecorrentes acima) — SEMPRE
+// dentro do mês da própria matrícula, nunca rola pro mês seguinte (corrigido
+// 30/09/2026 — a versão anterior rolava pro mês seguinte quando o dia-alvo já
+// tinha passado, ex.: matrícula dia 30 vencia só dia 20 do mês SEGUINTE;
+// pedido explícito do dono foi usar o dia-alvo do PRÓPRIO mês mesmo já tendo
+// passado, nascendo com a cobrança já vencida nesse caso). Ex.: aluno entra
+// dia 12 → dia-alvo é 10 → vence dia 10 deste mesmo mês (já vencida). Aluno
+// entra dia 30 → dia-alvo é 20 → vence dia 20 deste mesmo mês (já vencida).
+// Aluno entra dia 5 → dia-alvo 10 ainda não passou → vence dia 10 deste mês,
+// no futuro, igual antes.
 function primeiroVencimento(dataInicioISO) {
-  const dia = Number(dataInicioISO.slice(8, 10));
   const diaAlvo = diaVencimentoPadrao(dataInicioISO);
-  const mesesAvancar = dia > diaAlvo ? 1 : 0;
-  return somarMesesComDiaAlvo(dataInicioISO, mesesAvancar, diaAlvo);
+  return somarMesesComDiaAlvo(dataInicioISO, 0, diaAlvo);
 }
 
 // Cria a cobrança referente a um ciclo (mensalidade) de uma matrícula.

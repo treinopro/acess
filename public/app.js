@@ -1033,6 +1033,7 @@ async function carregarConfigBiometriaCatraca() {
   try {
     const config = await api('/api/config/biometria-catraca-horario');
     document.getElementById('cfg-biometria-catraca-ativo').checked = !!config.ativo;
+    document.getElementById('cfg-biometria-catraca-reagir-desconexao').checked = !!config.reagirDesconexao;
     const container = document.getElementById('cfg-biometria-catraca-janelas');
     container.innerHTML = '';
     (config.janelas || []).forEach((j) => container.appendChild(linhaJanelaBiometriaCatraca(j.inicio, j.fim)));
@@ -1060,6 +1061,7 @@ document.getElementById('form-config-biometria-catraca').addEventListener('submi
   const dados = {
     biometria_catraca_agendamento_ativo: document.getElementById('cfg-biometria-catraca-ativo').checked,
     biometria_catraca_janelas: janelas,
+    biometria_catraca_reagir_desconexao: document.getElementById('cfg-biometria-catraca-reagir-desconexao').checked,
   };
   try {
     await api('/api/config/biometria-catraca-horario', { method: 'PUT', body: JSON.stringify(dados) });

@@ -476,9 +476,19 @@ async function obterCooldownAcesso() {
 // puxa esta configuração
 // periodicamente via GET /api/terminal/biometria-catraca-horario
 // (terminal.routes.js) — o servidor na nuvem nunca fala direto com a catraca.
+// `biometria_catraca_reagir_desconexao` (2026-09-30, mesmo pedido): além das
+// janelas fixas, habilita a biometria automaticamente sempre que o TOTEM
+// estiver desconectado do servidor (detectado pelo mesmo canal SSE que já
+// existia pra tocar o som/tela verde de confirmação — ver
+// totemEventos.service.js/quantidadeClientesConectados) — cobre o caso de o
+// tablet cair/descarregar/perder rede fora de qualquer janela programada. O
+// agente local (biometriaAgendada.js) só trata como "desconectado de
+// verdade" depois de algumas checagens seguidas sem nenhum totem conectado
+// (evita ligar/desligar o leitor à toa numa reconexão rápida de rede).
 const PADROES_BIOMETRIA_CATRACA = {
   biometria_catraca_agendamento_ativo: 'false',
   biometria_catraca_janelas: '[]',
+  biometria_catraca_reagir_desconexao: 'false',
 };
 const CHAVES_BIOMETRIA_CATRACA = Object.keys(PADROES_BIOMETRIA_CATRACA);
 
@@ -499,6 +509,7 @@ const JanelaSchema = z.object({
 const BiometriaCatracaConfigSchema = z.object({
   biometria_catraca_agendamento_ativo: z.boolean().optional(),
   biometria_catraca_janelas: z.array(JanelaSchema).max(10).optional(),
+  biometria_catraca_reagir_desconexao: z.boolean().optional(),
 });
 
 // PUT /api/config/biometria-catraca-horario — admin only
@@ -544,6 +555,7 @@ async function obterConfigBiometriaCatraca() {
   return {
     ativo: config.biometria_catraca_agendamento_ativo === 'true',
     janelas,
+    reagirDesconexao: config.biometria_catraca_reagir_desconexao === 'true',
   };
 }
 

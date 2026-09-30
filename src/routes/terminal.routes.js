@@ -213,9 +213,16 @@ terminal.get('/cache-autorizacao', limitadorCacheAutorizacao, autenticarTerminal
 // é sobre o agente tratar leituras da catraca como método de acesso via
 // software; isto aqui é só ligar/desligar o leitor de digital no próprio
 // equipamento, via a interface web dele.
+//
+// `totem_conectado` (2026-09-30) é embutido aqui em vez de num endpoint
+// próprio pra não precisar de um segundo pull periódico no agente: reflete o
+// MESMO canal SSE que o totem já mantém aberto pra receber "acabou de
+// liberar" (ver totemEventos.service.js) — sinal em tempo real, não algo
+// lido do banco.
 terminal.get('/biometria-catraca-horario', autenticarTerminal, async (req, res, next) => {
   try {
-    res.json(await obterConfigBiometriaCatraca());
+    const config = await obterConfigBiometriaCatraca();
+    res.json({ ...config, totem_conectado: totemEventos.quantidadeClientesConectados() > 0 });
   } catch (err) {
     next(err);
   }

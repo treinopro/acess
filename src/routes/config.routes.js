@@ -2,6 +2,7 @@ const express = require('express');
 const { z } = require('zod');
 const db = require('../db/client');
 const { autenticar, apenasAdmin } = require('../middleware/auth');
+const agenteGateway = require('../services/agenteGateway.service');
 
 const router = express.Router();
 
@@ -526,6 +527,18 @@ router.put('/biometria-catraca-horario', autenticar, apenasAdmin, async (req, re
         args: [chave, valor],
       });
     }
+
+    // Empurra a config nova pro agente local NA HORA, em vez de esperar o
+    // próximo pull dele (2026-09-30 — pergunta do dono: por que ficar
+    // reconsultando de tempos em tempos, já que isso só muda quando o admin
+    // salva aqui?). Best-effort de propósito (mesmo padrão de
+    // notificarAgenteAtualizacaoAluno em acessoTerminal.service.js): se o
+    // agente estiver desconectado agora, ele sincroniza sozinho assim que
+    // reconectar (ver ws.on('open') em agente-local/agente.js) — nunca
+    // bloqueia esta resposta por causa disso.
+    obterConfigBiometriaCatraca()
+      .then((config) => agenteGateway.enviarComando('atualizar_biometria_agendada', config))
+      .catch(() => {});
 
     res.json({ ok: true });
   } catch (err) {

@@ -143,10 +143,29 @@ function mostrarConfirmacaoLiberacaoExterna({ metodo, alunoNome, motivo } = {}) 
   });
 }
 
+// 2026-09-30: além de avisar "liberação externa", esta mesma conexão SSE é o
+// sinal que o painel admin usa pra saber se O TOTEM ESTÁ CONECTADO agora
+// (ver totemEventos.service.js/quantidadeClientesConectados — usado por
+// biometriaAgendada.js no agente local pra decidir se liga a biometria da
+// catraca como alternativa). Achado real (30/09/2026): um tablet parado a
+// noite inteira, tela apagando sozinha por inatividade — sem ninguém tocar
+// nele — ficou HORAS reportando "desconectado" pro servidor mesmo com o
+// reconhecimento facial aparentemente "funcionando" quando alguém finalmente
+// usou de manhã. Causa: navegadores móveis suspendem conexões em segundo
+// plano quando a tela apaga/o app perde foco, e a reconexão automática
+// nativa do EventSource nem sempre acontece sozinha nesse cenário — só
+// quando a página recebe alguma interação/atenção de novo. Por isso, em vez
+// de confiar só na reconexão nativa, fechamos e recriamos esta conexão toda
+// vez que a página volta a ficar visível (tela acende de novo) — garante uma
+// conexão fresca em vez de uma que pode ter morrido em silêncio.
+let fonteEventosExternos = null;
+
 function iniciarEscutaLiberacoesExternas() {
   if (!('EventSource' in window)) return; // navegador muito antigo — segue sem esse aviso extra, sem quebrar o resto
   try {
+    if (fonteEventosExternos) fonteEventosExternos.close(); // fecha qualquer conexão anterior (pode estar morta em silêncio) antes de abrir outra
     const fonte = new EventSource(`/api/terminal/eventos/stream?token=${encodeURIComponent(TERMINAL_TOKEN)}`);
+    fonteEventosExternos = fonte;
     fonte.addEventListener('liberado', (evento) => {
       let dados = {};
       try { dados = JSON.parse(evento.data); } catch { /* payload malformado — segue com objeto vazio, cai no aviso genérico */ }
@@ -155,13 +174,19 @@ function iniciarEscutaLiberacoesExternas() {
     // Sem handler de erro customizado de propósito: o EventSource já tenta
     // reconectar sozinho (comportamento nativo do navegador) — um totem que
     // fica minutos sem rede volta a receber eventos assim que a rede volta,
-    // sem nenhum código adicional aqui.
+    // sem nenhum código adicional aqui. O reforço pra quando isso NÃO basta
+    // (tela apagada/app em segundo plano) é o listener de visibilitychange
+    // logo abaixo.
   } catch {
     // Best-effort — se falhar ao abrir a conexão, o totem continua
     // funcionando normalmente, só sem esse aviso extra de liberações externas.
   }
 }
 iniciarEscutaLiberacoesExternas();
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') iniciarEscutaLiberacoesExternas();
+});
 
 let audioCtxSom = null;
 function tocarBeep(vezes = 1) {

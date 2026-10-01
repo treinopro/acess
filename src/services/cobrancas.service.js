@@ -125,17 +125,27 @@ async function gerarCobrancasRecorrentes({ ateData } = {}) {
     const diaAlvo = diaVencimentoPadrao(matricula.data_inicio);
 
     // Data do próximo vencimento: com base na última cobrança gerada para esta
-    // matrícula, ou na data de início se ainda não existe nenhuma. Soma em
-    // MESES (não em dias fixos) e alinha no dia-alvo (10 ou 20) da matrícula —
-    // ver comentário de MESES_POR_TIPO acima sobre por que dias fixos causam
-    // cobrança fantasma.
+    // matrícula, ou no dia-alvo (10 ou 20) do mês de início se ainda não existe
+    // nenhuma. Soma em MESES (não em dias fixos) e alinha no dia-alvo da
+    // matrícula — ver comentário de MESES_POR_TIPO acima sobre por que dias
+    // fixos causam cobrança fantasma.
+    //
+    // Corrigido 01/10/2026: antes, a PRIMEIRA cobrança de uma matrícula sem
+    // histórico usava `matricula.data_inicio` crua (sem bucket nenhum) — só a
+    // partir da segunda cobrança em diante é que caía no dia 10/20. Isso gerou
+    // cobrança com vencimento no dia exato da matrícula (ex.: 08/09, 14/09) em
+    // vez do dia-alvo, violando a mesma regra "só existem 2 datas de
+    // vencimento: dia 10 e dia 20" que motivou primeiroVencimento() abaixo.
+    // Agora usa somarMesesComDiaAlvo(..., 0, diaAlvo) também na primeira
+    // cobrança — mesmo mês de início, sem rolar pro mês seguinte, igual
+    // primeiroVencimento().
     const ultimaCobranca = await db.execute({
       sql: `SELECT vencimento FROM cobrancas WHERE matricula_id = ? ORDER BY vencimento DESC LIMIT 1`,
       args: [matricula.id],
     });
     let proximoVencimento = ultimaCobranca.rows[0]
       ? somarMesesComDiaAlvo(ultimaCobranca.rows[0].vencimento, MESES_POR_TIPO[matricula.plano_tipo], diaAlvo)
-      : matricula.data_inicio;
+      : somarMesesComDiaAlvo(matricula.data_inicio, 0, diaAlvo);
 
     // Gera TODOS os ciclos que faltarem até `limite` (não só o próximo) — é
     // isso que permite "gerar contas dos próximos meses de uma vez", em vez

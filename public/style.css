@@ -378,6 +378,21 @@ body {
   width: 100%; padding: 9px 11px; border: 1px solid #d0d5dd; border-radius: 8px; font-size: 14px; font-family: inherit;
 }
 .modal-card textarea { resize: vertical; }
+
+/* Modal "Adicionar exercício": séries/reps/carga/intervalo valendo pra todos + ajuste por exercício */
+.exercicio-medidas-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 10px; }
+.exercicio-ajuste-linha {
+  display: grid; grid-template-columns: minmax(0, 1.7fr) repeat(4, minmax(0, 1fr)); gap: 6px; align-items: center; margin-bottom: 6px;
+}
+.exercicio-ajuste-linha input { padding: 6px 8px; font-size: 13px; }
+.exercicio-ajuste-linha .exercicio-ajuste-nome { font-size: 13px; color: #344054; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.exercicio-ajuste-cabecalho { font-size: 11px; font-weight: 600; color: #667085; margin-bottom: 4px; }
+@media (max-width: 640px) {
+  .exercicio-medidas-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .exercicio-ajuste-cabecalho { display: none; }
+  .exercicio-ajuste-linha { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .exercicio-ajuste-linha .exercicio-ajuste-nome { grid-column: 1 / -1; white-space: normal; font-weight: 600; }
+}
 .modal-card input:disabled, .modal-card select:disabled { background: #f2f4f7; color: #98a2b3; }
 
 /* ---------- Toast ---------- */

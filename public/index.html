@@ -583,12 +583,32 @@
                     <div id="exercicio-lib-preview"></div>
                     <label id="exercicio-nome-label">Exercício *</label>
                     <input id="exercicio-nome" />
-                    <div class="grid-2">
-                      <div><label>Séries</label><input id="exercicio-series" placeholder="ex: 4x12" /></div>
-                      <div><label>Carga</label><input id="exercicio-carga" placeholder="ex: 20kg" /></div>
+
+                    <!-- Modo criação: séries/repetições/carga/intervalo preenchidos UMA vez valem pra todos os exercícios
+                         marcados; cada exercício ainda pode ser ajustado individualmente na lista logo abaixo. -->
+                    <div id="exercicio-medidas-todos" class="oculto" style="margin-top:12px;padding:12px;background:#f9fafb;border-radius:8px">
+                      <strong style="font-size:13px">Séries, repetições, carga e intervalo — valem pra todos os exercícios</strong>
+                      <div class="exercicio-medidas-grid">
+                        <div><label>Séries</label><input id="exercicio-todos-series" placeholder="ex: 3" /></div>
+                        <div><label>Repetições</label><input id="exercicio-todos-reps" placeholder="ex: 12 ou 8-12" /></div>
+                        <div><label>Carga</label><input id="exercicio-todos-carga" placeholder="ex: 20kg" /></div>
+                        <div><label>Intervalo</label><input id="exercicio-todos-intervalo" placeholder="ex: 60s" /></div>
+                      </div>
+                      <div id="exercicio-ajuste-individual" class="oculto" style="margin-top:12px">
+                        <p style="font-size:12px;color:#667085;margin:0 0 6px">Ajuste individual — mude só o que for diferente em um exercício; os outros campos continuam seguindo os valores acima.</p>
+                        <div class="exercicio-ajuste-linha exercicio-ajuste-cabecalho"><span>Exercício</span><span>Séries</span><span>Reps</span><span>Carga</span><span>Intervalo</span></div>
+                        <div id="exercicio-ajuste-lista"></div>
+                      </div>
+                    </div>
+
+                    <div id="exercicio-medidas-edicao">
+                      <div class="grid-2">
+                        <div><label>Séries</label><input id="exercicio-series" placeholder="ex: 4x12" /></div>
+                        <div><label>Carga</label><input id="exercicio-carga" placeholder="ex: 20kg" /></div>
+                      </div>
                     </div>
                     <div class="grid-2">
-                      <div><label>Intervalo</label><input id="exercicio-intervalo" placeholder="ex: 60s" /></div>
+                      <div id="exercicio-intervalo-wrap"><label>Intervalo</label><input id="exercicio-intervalo" placeholder="ex: 60s" /></div>
                       <div>
                         <label>Método de treino</label>
                         <select id="exercicio-metodo">

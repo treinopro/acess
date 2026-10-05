@@ -2149,7 +2149,7 @@ function renderizarListaLibMulti(filtro) {
   box.querySelectorAll('.exercicio-lib-check').forEach((chk) => {
     chk.addEventListener('change', () => {
       if (chk.checked) bibliotecaMultiSelecionados.add(chk.value); else bibliotecaMultiSelecionados.delete(chk.value);
-      atualizarContadorLibMulti();
+      aoMudarSelecaoExercicios();
     });
   });
 }
@@ -2157,8 +2157,95 @@ function renderizarListaLibMulti(filtro) {
 function atualizarContadorLibMulti() {
   const n = bibliotecaMultiSelecionados.size;
   document.getElementById('exercicio-multi-contador').textContent = n
-    ? `${n} exercício(s) selecionado(s) — a metodologia preenchida abaixo será aplicada a todos eles.`
+    ? `${n} exercício(s) selecionado(s) — método, observação e dica abaixo valem pra todos; séries, repetições, carga e intervalo também, mas dá pra ajustar cada exercício.`
     : '';
+}
+
+// Séries/repetições/carga/intervalo (2026-10-05): preenchidos uma vez no bloco
+// "valem pra todos" e copiados pra cada exercício marcado; cada linha da lista
+// de ajuste individual pode divergir. Um campo que o professor editou à mão
+// (valor diferente do geral) fica "manual" e NÃO é mais sobrescrito quando o
+// valor geral muda — voltar pro mesmo valor do geral devolve o seguimento.
+const CAMPOS_MEDIDA = ['series', 'reps', 'carga', 'intervalo'];
+const CHAVE_EXERCICIO_AVULSO = '__avulso__';
+let medidasPorExercicio = new Map(); // chave (id da biblioteca | avulso) -> { valores, manuais:Set }
+
+function medidasGerais() {
+  const geral = {};
+  CAMPOS_MEDIDA.forEach((campo) => { geral[campo] = document.getElementById(`exercicio-todos-${campo}`).value.trim(); });
+  return geral;
+}
+
+function exerciciosDoModalCriacao() {
+  const lista = [...bibliotecaMultiSelecionados].map((idBiblioteca) => {
+    const ex = bibliotecaCache.find((e) => e.id === idBiblioteca);
+    return { chave: idBiblioteca, nome: ex ? ex.nome : 'Exercício', biblioteca_id: idBiblioteca };
+  });
+  const nomeManual = document.getElementById('exercicio-nome').value.trim();
+  if (nomeManual) lista.push({ chave: CHAVE_EXERCICIO_AVULSO, nome: nomeManual, biblioteca_id: null });
+  return lista;
+}
+
+function renderizarAjusteIndividual() {
+  const itens = exerciciosDoModalCriacao();
+  const geral = medidasGerais();
+  const chavesAtuais = new Set(itens.map((i) => i.chave));
+  [...medidasPorExercicio.keys()].forEach((k) => { if (!chavesAtuais.has(k)) medidasPorExercicio.delete(k); });
+  itens.forEach((i) => {
+    if (!medidasPorExercicio.has(i.chave)) medidasPorExercicio.set(i.chave, { valores: { ...geral }, manuais: new Set() });
+  });
+
+  const area = document.getElementById('exercicio-ajuste-individual');
+  const lista = document.getElementById('exercicio-ajuste-lista');
+  area.classList.toggle('oculto', itens.length === 0);
+  lista.innerHTML = itens.map((i) => {
+    const { valores } = medidasPorExercicio.get(i.chave);
+    return `
+      <div class="exercicio-ajuste-linha" data-chave="${escapeHtml(i.chave)}">
+        <span class="exercicio-ajuste-nome" title="${escapeHtml(i.nome)}">${escapeHtml(i.nome)}</span>
+        ${CAMPOS_MEDIDA.map((campo) => `<input data-campo="${campo}" value="${escapeHtml(valores[campo])}" aria-label="${campo} — ${escapeHtml(i.nome)}" />`).join('')}
+      </div>`;
+  }).join('');
+
+  lista.querySelectorAll('.exercicio-ajuste-linha').forEach((linha) => {
+    const estado = medidasPorExercicio.get(linha.dataset.chave);
+    linha.querySelectorAll('input').forEach((inp) => {
+      inp.addEventListener('input', () => {
+        const campo = inp.dataset.campo;
+        estado.valores[campo] = inp.value.trim();
+        if (estado.valores[campo] !== medidasGerais()[campo]) estado.manuais.add(campo); else estado.manuais.delete(campo);
+      });
+    });
+  });
+}
+
+function aoMudarSelecaoExercicios() {
+  atualizarContadorLibMulti();
+  renderizarAjusteIndividual();
+}
+
+CAMPOS_MEDIDA.forEach((campo) => {
+  document.getElementById(`exercicio-todos-${campo}`).addEventListener('input', (ev) => {
+    const novo = ev.target.value.trim();
+    medidasPorExercicio.forEach((estado, chave) => {
+      if (estado.manuais.has(campo)) return;
+      estado.valores[campo] = novo;
+      const inp = document.querySelector(`#exercicio-ajuste-lista .exercicio-ajuste-linha[data-chave="${CSS.escape(chave)}"] input[data-campo="${campo}"]`);
+      if (inp) inp.value = novo;
+    });
+  });
+});
+document.getElementById('exercicio-nome').addEventListener('input', () => {
+  if (!document.getElementById('exercicio-modo-criacao').classList.contains('oculto')) renderizarAjusteIndividual();
+});
+
+// "3" + "12" -> "3x12". Só um dos dois preenchido: mantém o que foi digitado
+// (compatível com quem escreve "4x12" direto no campo de séries).
+function comporSeriesReps(series, reps) {
+  if (series && reps) return `${series}x${reps}`;
+  if (series) return series;
+  if (reps) return `${reps} reps`;
+  return null;
 }
 
 document.getElementById('exercicio-lib-busca').addEventListener('input', (ev) => renderizarListaLibMulti(ev.target.value));
@@ -2190,15 +2277,23 @@ async function abrirFormExercicio(exercicio) {
     nomeLabel.textContent = 'Exercício *';
     btnSalvar.textContent = 'Salvar exercício';
     titulo.textContent = `Editar exercício — ${exercicio.exercicio}`;
+    document.getElementById('exercicio-medidas-todos').classList.add('oculto');
+    document.getElementById('exercicio-medidas-edicao').classList.remove('oculto');
+    document.getElementById('exercicio-intervalo-wrap').classList.remove('oculto');
   } else {
     // Adicionando exercício(s) novo(s) — pode marcar vários da biblioteca.
     modoEdicao.classList.add('oculto');
     modoCriacao.classList.remove('oculto');
     bibliotecaMultiSelecionados = new Set();
+    medidasPorExercicio = new Map();
+    CAMPOS_MEDIDA.forEach((campo) => { document.getElementById(`exercicio-todos-${campo}`).value = ''; });
+    document.getElementById('exercicio-medidas-todos').classList.remove('oculto');
+    document.getElementById('exercicio-medidas-edicao').classList.add('oculto');
+    document.getElementById('exercicio-intervalo-wrap').classList.add('oculto');
     await garantirBibliotecaCarregada();
     document.getElementById('exercicio-lib-busca').value = '';
     renderizarListaLibMulti('');
-    atualizarContadorLibMulti();
+    aoMudarSelecaoExercicios();
     document.getElementById('exercicio-lib-preview').innerHTML = '';
     nomeLabel.textContent = 'Exercício avulso (opcional se já marcou algum acima)';
     btnSalvar.textContent = 'Salvar exercício(s)';
@@ -2219,10 +2314,10 @@ document.getElementById('btn-fechar-modal-exercicio').addEventListener('click', 
 document.getElementById('form-exercicio').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const id = document.getElementById('exercicio-id').value;
+  // Campos comuns a todos (criação e edição). Séries/carga/intervalo são
+  // lidos à parte: na edição vêm dos campos do modal, na criação vêm da lista
+  // de ajuste individual (ver renderizarAjusteIndividual).
   const metodologia = {
-    series: document.getElementById('exercicio-series').value.trim() || null,
-    carga: document.getElementById('exercicio-carga').value.trim() || null,
-    intervalo: document.getElementById('exercicio-intervalo').value.trim() || null,
     observacao: document.getElementById('exercicio-observacao').value.trim() || null,
     metodo: document.getElementById('exercicio-metodo').value || null,
     dica: document.getElementById('exercicio-dica').value.trim() || null,
@@ -2237,6 +2332,9 @@ document.getElementById('form-exercicio').addEventListener('submit', async (ev) 
       const dados = {
         exercicio: nomeManual,
         ...metodologia,
+        series: document.getElementById('exercicio-series').value.trim() || null,
+        carga: document.getElementById('exercicio-carga').value.trim() || null,
+        intervalo: document.getElementById('exercicio-intervalo').value.trim() || null,
         biblioteca_id: document.getElementById('exercicio-lib-select').value || null,
         video_url: videoManual,
       };
@@ -2251,17 +2349,32 @@ document.getElementById('form-exercicio').addEventListener('submit', async (ev) 
       // filtrada pela busca, então um exercício marcado numa busca anterior já
       // não está mais no DOM quando o formulário é enviado — só o Set sobrevive
       // às trocas de filtro (bug real: só o último marcado era salvo).
-      const selecionados = [...bibliotecaMultiSelecionados].map((idBiblioteca) => {
-        const ex = bibliotecaCache.find((e) => e.id === idBiblioteca);
-        return { exercicio: ex ? ex.nome : 'Exercício', biblioteca_id: idBiblioteca, video_url: null };
-      });
-      if (nomeManual) selecionados.push({ exercicio: nomeManual, biblioteca_id: null, video_url: videoManual });
+      const selecionados = exerciciosDoModalCriacao().map((i) => ({
+        chave: i.chave,
+        exercicio: i.nome,
+        biblioteca_id: i.biblioteca_id,
+        video_url: i.biblioteca_id ? null : videoManual,
+      }));
       if (!selecionados.length) { mostrarToast('Selecione ao menos um exercício da biblioteca ou digite um nome.', true); return; }
 
-      for (const item of selecionados) {
-        await api(`/api/treinos/${treinoAtivoId}/exercicios`, { method: 'POST', body: JSON.stringify({ ...item, ...metodologia }) });
+      // Séries/reps/carga/intervalo de cada exercício vêm da lista de ajuste
+      // individual (que já nasce com os valores gerais e só diverge onde o
+      // professor mexeu).
+      const geral = medidasGerais();
+      for (const { chave, ...item } of selecionados) {
+        const v = medidasPorExercicio.get(chave)?.valores || geral;
+        await api(`/api/treinos/${treinoAtivoId}/exercicios`, {
+          method: 'POST',
+          body: JSON.stringify({
+            ...item,
+            ...metodologia,
+            series: comporSeriesReps(v.series, v.reps),
+            carga: v.carga || null,
+            intervalo: v.intervalo || null,
+          }),
+        });
       }
-      mostrarToast(selecionados.length > 1 ? `${selecionados.length} exercícios salvos com a mesma metodologia.` : 'Exercício salvo.');
+      mostrarToast(selecionados.length > 1 ? `${selecionados.length} exercícios salvos.` : 'Exercício salvo.');
     }
     document.getElementById('modal-exercicio').classList.add('oculto');
     await carregarTreinosPerfil();

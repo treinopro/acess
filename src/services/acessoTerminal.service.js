@@ -285,11 +285,11 @@ async function encontrarMelhorMatchFacialParaAcesso(descriptorRecebido) {
 /** Salva/atualiza o descritor facial de um aluno (cadastro ou re-cadastro). */
 // fotoDataUrl (2026-07-28, opcional): foto de perfil capturada JUNTO com o
 // cadastro facial (recorte do próprio rosto detectado, comprimido em JPEG no
-// cliente antes de enviar — ver facial-guiado.js/obterFotoRecorte). Só
-// preenche foto_url se o aluno AINDA NÃO tiver uma foto (nunca sobrescreve
-// uma foto já definida, seja de outro cadastro facial anterior ou de um
-// upload manual direto no painel — ver PATCH /api/alunos/:id/foto, que é o
-// único caminho que sobrescreve de propósito).
+// cliente antes de enviar — ver facial-guiado.js/obterFotoRecorte). Sempre
+// SUBSTITUI a foto de perfil quando vem uma (2026-10-06, pedido do dono):
+// antes só preenchia se o aluno ainda não tivesse foto, e quem apagava e
+// recadastrava o rosto ficava com a foto antiga no perfil. Sem foto no envio
+// (recorte falhou no cliente), mantém a que já existe.
 async function salvarFaceDescriptor(alunoId, descriptor, fotoDataUrl) {
   await db.execute({
     sql: 'UPDATE alunos SET face_descriptor = ? WHERE id = ?',
@@ -297,7 +297,7 @@ async function salvarFaceDescriptor(alunoId, descriptor, fotoDataUrl) {
   });
   if (fotoDataUrl) {
     await db.execute({
-      sql: "UPDATE alunos SET foto_url = ? WHERE id = ? AND (foto_url IS NULL OR foto_url = '')",
+      sql: 'UPDATE alunos SET foto_url = ? WHERE id = ?',
       args: [fotoDataUrl, alunoId],
     });
   }

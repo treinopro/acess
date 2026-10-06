@@ -725,8 +725,8 @@ router.delete('/:id/face', async (req, res, next) => {
 
 // PUT /api/alunos/:id/face { descriptor, foto? } — cadastra o rosto direto pelo painel
 // admin (câmera do computador da recepção), sem precisar levar o aluno ao totem.
-// foto (opcional) é a mesma foto de perfil capturada junto no cliente — só
-// preenche foto_url se o aluno ainda não tiver uma (ver salvarFaceDescriptor).
+// foto (opcional) é a mesma foto de perfil capturada junto no cliente — substitui
+// a foto de perfil atual do aluno (ver salvarFaceDescriptor).
 router.put('/:id/face', async (req, res, next) => {
   try {
     const { descriptor, foto } = z.object({

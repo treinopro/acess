@@ -2712,7 +2712,13 @@ let streamCameraPerfil = null;
 // 2026-08-04: frontal/traseira — ver btn-trocar-camera-perfil abaixo (pedido
 // explícito pra poder cadastrar o rosto do aluno usando a câmera traseira do
 // celular/tablet, mais fácil de mirar do que virar a tela pra frontal).
-let facingModePerfilAtual = 'user';
+// 2026-10-06: a traseira passou a ser o PADRÃO toda vez que a câmera abre
+// (pedido do dono). 'environment' é só preferência — num PC com webcam única
+// o navegador usa a webcam normalmente.
+const FACING_MODE_PADRAO_PERFIL = 'environment';
+let facingModePerfilAtual = FACING_MODE_PADRAO_PERFIL;
+let cadastroFacialPerfilAtual = null; // { cancelar } do cadastro guiado em andamento
+let abrindoCameraPerfil = false;
 
 async function iniciarCameraPerfil(video) {
   // 2026-07-22: sem constraints, alguns notebooks escolhem uma resolução
@@ -2721,17 +2727,29 @@ async function iniciarCameraPerfil(video) {
   // equivalente em terminal.js/iniciarCamera).
   streamCameraPerfil = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facingModePerfilAtual, width: { ideal: 1280 } } });
   video.srcObject = streamCameraPerfil;
-  // Traseira não deve vir espelhada — só a frontal tem o efeito "espelho" esperado.
-  video.style.transform = facingModePerfilAtual === 'environment' ? 'none' : 'scaleX(-1)';
+  // Só a câmera frontal tem o efeito "espelho". Usa o que o aparelho REALMENTE
+  // abriu (pode divergir do pedido): se não informar, webcam de PC espelha e
+  // celular (traseira) não.
+  const facingReal = streamCameraPerfil.getVideoTracks()[0]?.getSettings?.().facingMode;
+  const ehCelular = /Android|iPhone|iPad|Mobi/i.test(navigator.userAgent);
+  const espelhar = facingReal ? facingReal === 'user' : !ehCelular;
+  video.style.transform = espelhar ? 'scaleX(-1)' : 'none';
   await video.play().catch(() => {}); // autoplay já cobre a maioria dos casos; isso só garante antes de liberar o botão
 }
 
 function pararCameraPerfil() {
+  // Interrompe o cadastro guiado em andamento (se houver) — senão o laço dele
+  // continua rodando em segundo plano e estraga o cadastro seguinte (ver
+  // `cancelado` em facial-guiado.js).
+  if (cadastroFacialPerfilAtual) {
+    cadastroFacialPerfilAtual.cancelar();
+    cadastroFacialPerfilAtual = null;
+  }
   if (streamCameraPerfil) {
     streamCameraPerfil.getTracks().forEach((t) => t.stop());
     streamCameraPerfil = null;
   }
-  facingModePerfilAtual = 'user';
+  facingModePerfilAtual = FACING_MODE_PADRAO_PERFIL;
   const video = document.getElementById('video-facial-perfil');
   video.srcObject = null;
   document.getElementById('video-wrap-facial-perfil').classList.add('oculto');
@@ -2743,36 +2761,48 @@ function pararCameraPerfil() {
 }
 
 document.getElementById('btn-abrir-camera-perfil').addEventListener('click', async () => {
+  // Toque duplo no celular disparava dois cadastros guiados ao mesmo tempo
+  // (o botão só some depois de carregar os modelos e abrir a câmera).
+  if (abrindoCameraPerfil || cadastroFacialPerfilAtual) return;
+  abrindoCameraPerfil = true;
   const status = document.getElementById('status-facial-perfil');
   const video = document.getElementById('video-facial-perfil');
   try {
-    status.textContent = 'Carregando modelos e abrindo câmera...';
-    await carregarModelosFaciais();
-    await iniciarCameraPerfil(video);
-  } catch (err) {
-    status.textContent = `Não foi possível abrir a câmera: ${err.message}`;
-    return;
+    try {
+      status.textContent = 'Carregando modelos e abrindo câmera...';
+      await carregarModelosFaciais();
+      await iniciarCameraPerfil(video);
+    } catch (err) {
+      status.textContent = `Não foi possível abrir a câmera: ${err.message}`;
+      return;
+    }
+
+    document.getElementById('video-wrap-facial-perfil').classList.remove('oculto');
+    document.getElementById('dica-facial-perfil').classList.remove('oculto');
+    document.getElementById('progresso-wrap-facial-perfil').classList.remove('oculto');
+    document.getElementById('btn-abrir-camera-perfil').classList.add('oculto');
+    document.getElementById('btn-cancelar-camera-perfil').classList.remove('oculto');
+
+    const alunoDoCadastro = perfilAtualId; // se o admin trocar de aluno no meio, o rosto vai pro aluno certo
+    cadastroFacialPerfilAtual = await executarCadastroFacialGuiado({
+      video,
+      statusEl: status,
+      enviarDescritor: async (descriptor, foto) => {
+        pararCameraPerfil();
+        await api(`/api/alunos/${alunoDoCadastro}/face`, {
+          method: 'PUT',
+          body: JSON.stringify({ descriptor, foto }),
+        });
+        mostrarToast('Rosto cadastrado com sucesso.');
+        if (foto && alunoDoCadastro === perfilAtualId) {
+          atualizarFotoPerfilExibida(foto); // já mostra a foto nova; o recarregamento abaixo confirma o que ficou salvo
+          carregarPerfilAluno();
+        }
+      },
+    });
+  } finally {
+    abrindoCameraPerfil = false;
   }
-
-  document.getElementById('video-wrap-facial-perfil').classList.remove('oculto');
-  document.getElementById('dica-facial-perfil').classList.remove('oculto');
-  document.getElementById('progresso-wrap-facial-perfil').classList.remove('oculto');
-  document.getElementById('btn-abrir-camera-perfil').classList.add('oculto');
-  document.getElementById('btn-cancelar-camera-perfil').classList.remove('oculto');
-
-  await executarCadastroFacialGuiado({
-    video,
-    statusEl: status,
-    enviarDescritor: async (descriptor, foto) => {
-      pararCameraPerfil();
-      await api(`/api/alunos/${perfilAtualId}/face`, {
-        method: 'PUT',
-        body: JSON.stringify({ descriptor, foto }),
-      });
-      mostrarToast('Rosto cadastrado com sucesso.');
-      if (foto) carregarPerfilAluno(); // atualiza a foto de perfil na tela, se essa captura preencheu uma
-    },
-  });
 });
 
 document.getElementById('btn-cancelar-camera-perfil').addEventListener('click', pararCameraPerfil);
@@ -7113,7 +7143,13 @@ function abrirFormExercicioLib(ex) {
   document.getElementById('lib-instrucoes').value = ex?.instrucoes || '';
   document.getElementById('lib-notas').value = ex?.notas || '';
   document.getElementById('lib-video-preview').innerHTML = ex?.video_url ? videoPreviewHtml(ex.video_url) : '';
-  document.getElementById('form-exercicio-lib').classList.remove('oculto');
+  const form = document.getElementById('form-exercicio-lib');
+  form.classList.remove('oculto');
+  // O formulário fica no topo da seção, acima da grade — com a página rolada
+  // lá embaixo (clicou em Editar num card do fim da lista) ele abria fora da
+  // tela e parecia que "não editava" (2026-10-06).
+  form.scrollIntoView({ block: 'start' });
+  document.getElementById('lib-nome').focus({ preventScroll: true });
 }
 
 document.getElementById('btn-novo-exercicio-lib').addEventListener('click', () => abrirFormExercicioLib(null));

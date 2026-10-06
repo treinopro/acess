@@ -237,7 +237,7 @@ function passoFacialCumprido(passoId, poseAtual, poseBase, contexto) {
 // 2026-07-28: recorta um quadrado ao redor do rosto detectado (com uma
 // margem, pra não cortar queixo/testa) a partir do MESMO quadro final do
 // cadastro guiado, e comprime em JPEG antes de mandar — vira a foto de
-// perfil padrão do aluno (só preenche se ele ainda não tiver nenhuma, ver
+// perfil do aluno (substitui a atual a cada novo cadastro de rosto, ver
 // salvarFaceDescriptor no servidor). Tamanho generoso o bastante pra não
 // ficar pixelado no perfil (320x320), mas comprimido o bastante (JPEG 0.82)
 // pra não pesar no banco — na prática fica na casa de poucas dezenas de KB.
@@ -337,6 +337,20 @@ async function executarCadastroFacialGuiado({
   // reconhecimento, não de retrato).
   let fotoReferenciaFrontal = null;
 
+  // 2026-10-06 (pedido do dono): a foto de perfil passa a ser o quadro do
+  // passo "longe" ("afaste um pouco o rosto") quando a pessoa está olhando
+  // pra frente nele — rosto inteiro, sem o enquadramento apertado do "perto".
+  // Sem esse quadro (passo pulado por timeout, ou pose não frontal), cai nas
+  // regras antigas abaixo.
+  let fotoFrontalAfastada = null;
+
+  // cancelar() (devolvido no fim): quem chamou fechou a câmera/saiu da tela —
+  // o laço para de vez em vez de continuar rodando em segundo plano. Sem isso,
+  // um cadastro cancelado deixava um laço "zumbi" com o relógio do passo
+  // inicial já estourado; no cadastro seguinte ele concluía na primeira
+  // detecção de rosto, com UMA foto só e sem pedir a sequência de poses.
+  let cancelado = false;
+
   async function concluirCaptura(deteccaoFinal, quadroFinal, usarQuadroAtualParaFoto) {
     statusEl.textContent = 'Cadastrando...';
     try {
@@ -350,9 +364,9 @@ async function executarCadastroFacialGuiado({
       // "centro") — em qualquer captura por timeout/rede de segurança,
       // prefere a foto de referência do "centro" (frontal, confirmada),
       // já que não dá pra confiar na pose do quadro exato do timeout.
-      const foto = usarQuadroAtualParaFoto
+      const foto = fotoFrontalAfastada || (usarQuadroAtualParaFoto
         ? obterFotoRecorte(quadroFinal, deteccaoFinal)
-        : (fotoReferenciaFrontal || obterFotoRecorte(quadroFinal, deteccaoFinal));
+        : (fotoReferenciaFrontal || obterFotoRecorte(quadroFinal, deteccaoFinal)));
       await enviarDescritor(embedding, foto);
       statusEl.textContent = 'Rosto cadastrado com sucesso!';
       if (barraProgresso) barraProgresso.style.width = '100%';
@@ -369,6 +383,7 @@ async function executarCadastroFacialGuiado({
     // finally — um erro pontual (frame instável, canvas indisponível por um
     // instante) nunca deve travar o cadastro guiado pra sempre.
     try {
+      if (cancelado) return;
       if (!_elementoCameraPronto(video)) return;
 
       const quadro = _desenharQuadro(video);
@@ -389,6 +404,11 @@ async function executarCadastroFacialGuiado({
 
       if (!deteccao) {
         quadrosConfirmandoPasso = 0;
+        // O relógio do passo só corre com o rosto à vista. Antes, quem
+        // demorava pra enquadrar (ex.: mirando o rosto do aluno com a câmera
+        // traseira) estourava o tempo do passo sem nunca ter sido avaliado, e
+        // na primeira detecção o passo era pulado/encerrado na hora.
+        inicioPassoEm = Date.now();
         if (circulo) circulo.classList.remove('guia-ativo');
         return;
       }
@@ -409,10 +429,15 @@ async function executarCadastroFacialGuiado({
           marcarPassoOk();
           avancarPasso();
         } else if (Date.now() - inicioPassoEm > TIMEOUT_POR_PASSO_FACIAL_MS) {
-          // Ainda não deu tempo de confirmar o "centro" — não existe uma foto
-          // de referência melhor ainda, então usa o quadro atual mesmo (a
-          // pessoa já está sendo instruída a centralizar desde o início).
-          await concluirCaptura(deteccao, quadro, true);
+          // Rosto à vista há bastante tempo mas sem firmar 2 quadros seguidos
+          // (tremendo/borrado): segue pra sequência usando esta pose como
+          // referência. Antes encerrava o cadastro aqui, com UMA foto só e
+          // sem pedir nenhuma das poses (giro, aproximar, queixo) — o bug
+          // relatado de "tira uma foto e acabou". Cada passo seguinte já tem
+          // o próprio timeout, então continua sem poder travar.
+          fotoReferenciaFrontal = obterFotoRecorte(quadro, deteccao);
+          marcarPassoOk();
+          avancarPasso();
         }
         return;
       }
@@ -444,6 +469,10 @@ async function executarCadastroFacialGuiado({
       if (cumprido) {
         quadrosConfirmandoPasso += 1;
         if (circulo) circulo.classList.add('guia-ativo');
+        if (passo.id === 'longe'
+          && Math.abs(pose.yaw - poseBase.yaw) < 0.12 && Math.abs(pose.pitch - poseBase.pitch) < 0.14) {
+          fotoFrontalAfastada = obterFotoRecorte(quadro, deteccao) || fotoFrontalAfastada; // olhando de frente, rosto mais afastado
+        }
         if (quadrosConfirmandoPasso >= QUADROS_PARA_CONFIRMAR_PASSO_FACIAL) {
           marcarPassoOk();
           avancarPasso();
@@ -462,10 +491,11 @@ async function executarCadastroFacialGuiado({
     } catch (err) {
       console.error('Erro num ciclo do cadastro facial guiado (ignorado — tentando de novo):', err);
     } finally {
-      if (passoAtual < PASSOS_CAPTURA_GUIADA.length) {
+      if (!cancelado && passoAtual < PASSOS_CAPTURA_GUIADA.length) {
         setTimeout(tick, 400);
       }
     }
   };
   tick();
+  return { cancelar: () => { cancelado = true; } };
 }

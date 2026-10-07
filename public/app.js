@@ -1781,6 +1781,7 @@ async function carregarPerfilAluno() {
     document.getElementById('perfil-link-acesso').value = aluno.codigo_acesso
       ? `${window.location.origin}/meu-acesso.html?codigo=${aluno.codigo_acesso}`
       : '';
+    atualizarInfoAmostrasFace(aluno.id, Boolean(aluno.face_descriptor));
 
     document.getElementById('anamnese-peso').value = anamnese?.peso_kg ?? '';
     document.getElementById('anamnese-altura').value = anamnese?.altura_cm ?? '';
@@ -2698,6 +2699,35 @@ document.getElementById('btn-remover-face').addEventListener('click', async () =
   try {
     await api(`/api/alunos/${perfilAtualId}/face`, { method: 'DELETE' });
     mostrarToast('Reconhecimento facial removido.');
+    atualizarInfoAmostrasFace(perfilAtualId, false);
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+// Aprendizado facial (2026-10-07): o sistema guarda até N amostras do rosto do aluno
+// vindas de acessos reais no totem (ver faceGaleria.service.js). Aqui só mostra a
+// contagem e deixa zerar, caso o reconhecimento comece a errar.
+async function atualizarInfoAmostrasFace(alunoId, temRosto) {
+  const info = document.getElementById('info-amostras-face');
+  const btn = document.getElementById('btn-zerar-amostras-face');
+  info.textContent = '';
+  btn.classList.add('oculto');
+  if (!temRosto) return;
+  try {
+    const r = await api(`/api/alunos/${alunoId}/face/amostras`);
+    if (alunoId !== perfilAtualId) return; // trocou de aluno enquanto carregava
+    info.textContent = r.aprendizado_ativo
+      ? `Reconhecimento aprendido: ${r.quantidade} de ${r.maximo} amostras (o sistema guarda variações do rosto nos acessos pelo totem).`
+      : 'Aprendizado automático do reconhecimento facial está desativado.';
+    btn.classList.toggle('oculto', r.quantidade === 0);
+  } catch { /* só informativo */ }
+}
+
+document.getElementById('btn-zerar-amostras-face').addEventListener('click', async () => {
+  if (!confirmar('Esquecer o que o sistema aprendeu do rosto deste aluno nos acessos? Volta a valer só o rosto do cadastro.')) return;
+  try {
+    await api(`/api/alunos/${perfilAtualId}/face/amostras`, { method: 'DELETE' });
+    mostrarToast('Rosto aprendido zerado.');
+    atualizarInfoAmostrasFace(perfilAtualId, true);
   } catch (err) { mostrarToast(err.message, true); }
 });
 

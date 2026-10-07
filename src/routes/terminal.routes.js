@@ -139,6 +139,13 @@ terminal.post('/acesso/facial', limitadorIdentificacao, autenticarTerminal, asyn
     const resultado = await acessoTerminal.tentarLiberar({ aluno: match.aluno, metodo: 'facial', mensagemDiagnostico });
     const detalheSimilaridade = process.env.NODE_ENV === 'production' ? {} : { similaridade: match.similaridade };
     res.json({ ...resultado, ...detalheSimilaridade });
+
+    // Aprendizado facial (2026-10-07): depois de responder ao totem, deixa a
+    // galeria guardar este rosto como amostra nova quando o acerto é confiante
+    // — ver regras em faceGaleria.service.js. Nunca atrasa nem derruba o acesso.
+    acessoTerminal.aprenderComAcessoFacial({ match, descriptor }).then((r) => {
+      if (r && r.aprendeu) console.log(`[faceGaleria] amostra nova aprendida (aluno ${match.aluno.id}, similaridade ${match.similaridade.toFixed(3)}, total ${r.totalAmostras}).`);
+    }).catch(() => {});
   } catch (err) {
     next(err);
   }

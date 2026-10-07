@@ -16,6 +16,7 @@ const filaAcessosOffline = require('./filaAcessosOffline.service');
 const { formatarDataSqliteUtc } = require('../utils/data');
 const { normalizarCpf } = require('../utils/cpf');
 const totemEventos = require('./totemEventos.service');
+const faceGaleria = require('./faceGaleria.service');
 const { obterCooldownAcesso } = require('../routes/config.routes');
 
 // 2026-07-27: reconhecimento facial trocado de face-api.js pro SFace
@@ -263,8 +264,62 @@ async function encontrarMelhorMatchFacialEm(cliente, descriptorRecebido) {
   };
 }
 
+/**
+ * Versão ONLINE do reconhecimento (2026-10-07): usa a galeria em memória
+ * (rosto do cadastro + amostras aprendidas — ver faceGaleria.service.js) em vez
+ * de ler todos os alunos com rosto a cada tentativa, e só busca a linha
+ * completa do aluno que ganhou. Mesmo formato de retorno de
+ * encontrarMelhorMatchFacialEm, que continua sendo usada no modo offline.
+ */
+async function encontrarMelhorMatchFacialOnline(descriptorRecebido) {
+  const avaliar = (r) => {
+    const margemSuficiente = r.similaridadeSegundoMelhor == null
+      || (r.similaridade - r.similaridadeSegundoMelhor) >= MARGEM_MINIMA_SEGUNDO_MELHOR_COSSENO;
+    return Boolean(r.alunoId) && r.similaridade >= FACE_MATCH_LIMIAR_COSSENO && margemSuficiente;
+  };
+
+  let r = await faceGaleria.melhorMatch(descriptorRecebido);
+  // Sem match e o cache já tem mais de 10s: pode ser um rosto recém-cadastrado
+  // por outro processo (ex.: painel na nuvem x totem local) — relê uma vez.
+  if (!avaliar(r) && faceGaleria.idadeDoCacheMs() > 10 * 1000) {
+    faceGaleria.invalidar();
+    r = await faceGaleria.melhorMatch(descriptorRecebido);
+  }
+
+  let aluno = null;
+  if (r.alunoId) {
+    const linha = await db.execute({ sql: 'SELECT * FROM alunos WHERE id = ?', args: [r.alunoId] });
+    aluno = linha.rows[0] || null;
+  }
+  return {
+    aluno,
+    similaridade: r.similaridade,
+    similaridadeSegundoMelhor: r.similaridadeSegundoMelhor,
+    dentroDoLimite: Boolean(aluno) && avaliar(r),
+    candidatosComparados: r.candidatosComparados,
+    limite: FACE_MATCH_LIMIAR_COSSENO,
+    origem: 'galeria',
+  };
+}
+
 async function encontrarMelhorMatchFacial(descriptorRecebido) {
-  return encontrarMelhorMatchFacialEm(db, descriptorRecebido);
+  return encontrarMelhorMatchFacialOnline(descriptorRecebido);
+}
+
+/**
+ * Chamada pela rota de acesso facial depois de um reconhecimento bem-sucedido:
+ * deixa a galeria aprender o rosto desta leitura quando é seguro (ver regras em
+ * faceGaleria.aprender). Não vale pro modo offline (o Turso está fora do ar).
+ */
+async function aprenderComAcessoFacial({ match, descriptor }) {
+  if (!match || !match.aluno || match.origem !== 'galeria') return { aprendeu: false, motivo: 'fora_da_galeria' };
+  return faceGaleria.aprender({
+    alunoId: match.aluno.id,
+    descriptor,
+    similaridade: match.similaridade,
+    similaridadeSegundoMelhor: match.similaridadeSegundoMelhor,
+    limiarAceite: FACE_MATCH_LIMIAR_COSSENO,
+  });
 }
 
 /**
@@ -277,7 +332,7 @@ async function encontrarMelhorMatchFacial(descriptorRecebido) {
 async function encontrarMelhorMatchFacialParaAcesso(descriptorRecebido) {
   return dbResiliente.comFallback(
     'encontrarMelhorMatchFacial',
-    () => encontrarMelhorMatchFacialEm(db, descriptorRecebido),
+    () => encontrarMelhorMatchFacialOnline(descriptorRecebido),
     () => encontrarMelhorMatchFacialEm(dbOffline, descriptorRecebido),
   );
 }
@@ -295,6 +350,9 @@ async function salvarFaceDescriptor(alunoId, descriptor, fotoDataUrl) {
     sql: 'UPDATE alunos SET face_descriptor = ? WHERE id = ?',
     args: [JSON.stringify(descriptor), alunoId],
   });
+  // Novo cadastro de rosto = recomeça: as amostras aprendidas eram do visual
+  // antigo (e a galeria em memória precisa enxergar o rosto novo já).
+  await faceGaleria.limparAmostras(alunoId);
   if (fotoDataUrl) {
     await db.execute({
       sql: 'UPDATE alunos SET foto_url = ? WHERE id = ?',
@@ -1007,6 +1065,7 @@ module.exports = {
   buscarAlunoPorCodigoAcesso,
   buscarAlunoPorBiometriaId,
   encontrarMelhorMatchFacial,
+  aprenderComAcessoFacial,
   salvarFaceDescriptor,
   verificarAutorizacaoAluno,
   listarAutorizacoesBiometricas,

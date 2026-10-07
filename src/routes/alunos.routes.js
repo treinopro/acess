@@ -6,6 +6,7 @@ const dbOffline = require('../db/clientOffline');
 const { autenticar } = require('../middleware/auth');
 const { normalizarCpf } = require('../utils/cpf');
 const acessoTerminal = require('../services/acessoTerminal.service');
+const faceGaleria = require('../services/faceGaleria.service');
 const catracaGateway = require('../services/catracaGateway.service');
 const dbResiliente = require('../services/dbResiliente.service');
 const filaCadastroOffline = require('../services/filaCadastroOffline.service');
@@ -717,6 +718,32 @@ router.patch('/:id/codigo-acesso', async (req, res, next) => {
 router.delete('/:id/face', async (req, res, next) => {
   try {
     await db.execute({ sql: `UPDATE alunos SET face_descriptor = NULL${sqlAtualizadoEm()} WHERE id = ?`, args: [req.params.id] });
+    await faceGaleria.limparAmostras(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/alunos/:id/face/amostras — quantas amostras de rosto o sistema já aprendeu
+// deste aluno nos acessos pelo totem (ver faceGaleria.service.js).
+router.get('/:id/face/amostras', async (req, res, next) => {
+  try {
+    res.json({
+      quantidade: await faceGaleria.contarAmostras(req.params.id),
+      maximo: faceGaleria.MAX_AMOSTRAS_APRENDIDAS,
+      aprendizado_ativo: faceGaleria.aprendizadoAtivo(),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/alunos/:id/face/amostras — esquece o que foi aprendido (volta a valer só o
+// rosto do cadastro). Não mexe no rosto cadastrado nem na foto de perfil.
+router.delete('/:id/face/amostras', async (req, res, next) => {
+  try {
+    await faceGaleria.limparAmostras(req.params.id);
     res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -770,6 +797,7 @@ router.delete('/:id', async (req, res, next) => {
       await db.execute({ sql: `DELETE FROM ${tabela} WHERE aluno_id = ?`, args: [req.params.id] });
     }
     await db.execute({ sql: 'DELETE FROM alunos WHERE id = ?', args: [req.params.id] });
+    await faceGaleria.limparAmostras(req.params.id);
 
     res.json({ ok: true });
   } catch (err) {

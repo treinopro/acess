@@ -344,6 +344,20 @@ CREATE TABLE IF NOT EXISTS acessos_catraca (
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Amostras de rosto aprendidas nos acessos pelo totem (2026-10-07) — até 4 por
+-- aluno além do rosto do cadastro (alunos.face_descriptor). Tabela à parte e não
+-- coluna em `alunos` de propósito: o espelho offline (syncOfflineCache.js) copia
+-- `alunos` coluna a coluna. Também é criada sozinha pelo servidor ao subir
+-- (src/services/faceGaleria.service.js).
+CREATE TABLE IF NOT EXISTS face_amostras (
+  id TEXT PRIMARY KEY,
+  aluno_id TEXT NOT NULL,
+  descriptor TEXT NOT NULL,
+  similaridade REAL,
+  criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_face_amostras_aluno ON face_amostras(aluno_id);
+
 -- Pagamentos individuais de uma conta a receber. Permite pagamento parcial/parcelado:
 -- cada conta pode ter varios registros aqui, e quando a soma bate o valor total da
 -- conta ela e marcada como quitada automaticamente (fluxo inspirado no Secullum).

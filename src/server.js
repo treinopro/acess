@@ -248,6 +248,8 @@ agenteGateway.attach(server);
 const PORT = process.env.PORT || 3000;
 // Cria alunos.atualizado_em (e um índice) se ainda não existirem — idempotente, best-effort.
 require('./services/alunoAtualizadoEm.service').garantirColuna().catch(() => {});
+// Cria a tabela face_amostras (aprendizado facial) se ainda não existir — idempotente, best-effort.
+require('./services/faceGaleria.service').garantirTabela().catch(() => {});
 
 server.listen(PORT, () => {
   console.log(`Servidor rodando em http://localhost:${PORT}`);

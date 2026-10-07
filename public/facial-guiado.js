@@ -197,6 +197,8 @@ const PASSOS_CAPTURA_GUIADA = [
 
 const QUADROS_PARA_CONFIRMAR_PASSO_FACIAL = 2; // "segura" a pose por 2 detecções seguidas antes de avançar
 const TIMEOUT_POR_PASSO_FACIAL_MS = 6000; // não conseguiu cumprir o passo? pula sozinho — nunca trava o cadastro
+const FRAMES_SEM_ROSTO_TOLERADOS = 2; // quadros seguidos sem rosto que ainda não zeram a confirmação do passo
+const FRAMES_SEM_ROSTO_PARA_AVISAR = 5; // ~2s sem rosto: avisa na tela em vez de parecer travado
 
 // Decide se o passo atual foi cumprido, sempre relativo à pose de referência
 // (capturada no passo "centro"). Limiares generosos de propósito — o
@@ -298,6 +300,7 @@ async function executarCadastroFacialGuiado({
   let passoAtual = 0;
   let poseBase = null;
   let quadrosConfirmandoPasso = 0;
+  let framesSemRosto = 0; // quadros seguidos sem detectar rosto
   let inicioPassoEm = Date.now();
   const contexto = { direcaoGiro1: 0 };
 
@@ -403,15 +406,30 @@ async function executarCadastroFacialGuiado({
       }
 
       if (!deteccao) {
-        quadrosConfirmandoPasso = 0;
-        // O relógio do passo só corre com o rosto à vista. Antes, quem
-        // demorava pra enquadrar (ex.: mirando o rosto do aluno com a câmera
-        // traseira) estourava o tempo do passo sem nunca ter sido avaliado, e
-        // na primeira detecção o passo era pulado/encerrado na hora.
-        inicioPassoEm = Date.now();
-        if (circulo) circulo.classList.remove('guia-ativo');
+        framesSemRosto += 1;
+        // O detector perde o rosto por um instante com frequência (queixo
+        // levantado, câmera traseira, luz): 1-2 quadros sem rosto NÃO zeram a
+        // confirmação da pose, senão o passo quase nunca fecha.
+        if (framesSemRosto > FRAMES_SEM_ROSTO_TOLERADOS) {
+          quadrosConfirmandoPasso = 0;
+          if (circulo) circulo.classList.remove('guia-ativo');
+        }
+        if (passoAtual === 0) {
+          // Só o passo inicial espera a pessoa aparecer antes de contar o
+          // tempo (quem demora pra enquadrar com a câmera traseira estourava
+          // o tempo sem nunca ter sido avaliado). Nos demais passos o
+          // relógio corre sempre — 2026-10-06 zerar aqui em todos os passos
+          // fazia o tempo limite NUNCA vencer quando o detector perdia o
+          // rosto de vez em quando (ex.: ao levantar o queixo), e o cadastro
+          // travava na instrução.
+          inicioPassoEm = Date.now();
+        } else if (framesSemRosto === FRAMES_SEM_ROSTO_PARA_AVISAR) {
+          statusEl.textContent = 'Não estou vendo seu rosto — volte a enquadrar no círculo';
+        }
         return;
       }
+      if (framesSemRosto >= FRAMES_SEM_ROSTO_PARA_AVISAR) atualizarUI(); // tira o aviso e volta a instrução do passo
+      framesSemRosto = 0;
 
       const pose = calcularPoseFacial(deteccao);
       const passo = PASSOS_CAPTURA_GUIADA[passoAtual];

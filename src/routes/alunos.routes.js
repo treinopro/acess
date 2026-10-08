@@ -12,6 +12,11 @@ const dbResiliente = require('../services/dbResiliente.service');
 const filaCadastroOffline = require('../services/filaCadastroOffline.service');
 const emailBoasVindas = require('../services/emailBoasVindas.service');
 const { sqlAtualizadoEm } = require('../services/alunoAtualizadoEm.service');
+
+// Espera máxima pelo Turso nas consultas do PAINEL (lista/busca de alunos, aluno, perfil)
+// antes de cair no espelho local — só vale no processo com MODO_TOTEM_OFFLINE=true. Bem mais
+// que os timeouts do totem (4s/1.5s): aqui dado antigo é pior que uma resposta lenta.
+const TIMEOUT_PAINEL_MS = Number(process.env.TIMEOUT_TURSO_PAINEL_MS) || 15000;
 // Vendorizado (não é um symlink pro AvaliaPro) porque o deploy na nuvem
 // não tem acesso à pasta do AvaliaPro no notebook — ver o comentário no
 // topo de vendor/avaliapro-core/anthropometry.js para como manter em dia.
@@ -244,11 +249,14 @@ router.get('/', async (req, res, next) => {
 
     const where = condicoes.length ? `WHERE ${condicoes.join(' AND ')}` : '';
     const sql = `SELECT * FROM alunos ${where} ORDER BY nome`;
+    let usouEspelho = false;
     const result = await dbResiliente.comFallback(
       'buscarAlunos',
       () => db.execute({ sql, args }),
-      () => dbOffline.execute({ sql, args }),
+      () => { usouEspelho = true; return dbOffline.execute({ sql, args }); },
+      { timeoutMs: TIMEOUT_PAINEL_MS },
     );
+    if (usouEspelho) res.setHeader('X-Dados-Offline', '1'); // o painel mostra um aviso (ver api() em app.js)
     res.json(result.rows);
   } catch (err) {
     next(err);
@@ -293,11 +301,14 @@ router.post('/pendencias-sincronizacao/:pendenciaId/resolver', async (req, res, 
 // GET /api/alunos/:id — mesmo fallback offline da busca acima.
 router.get('/:id', async (req, res, next) => {
   try {
+    let usouEspelho = false;
     const result = await dbResiliente.comFallback(
       'buscarAlunoPorId',
       () => db.execute({ sql: 'SELECT * FROM alunos WHERE id = ?', args: [req.params.id] }),
-      () => dbOffline.execute({ sql: 'SELECT * FROM alunos WHERE id = ?', args: [req.params.id] }),
+      () => { usouEspelho = true; return dbOffline.execute({ sql: 'SELECT * FROM alunos WHERE id = ?', args: [req.params.id] }); },
+      { timeoutMs: TIMEOUT_PAINEL_MS },
     );
+    if (usouEspelho) res.setHeader('X-Dados-Offline', '1');
     if (!result.rows[0]) return res.status(404).json({ erro: 'Aluno não encontrado.' });
     res.json(result.rows[0]);
   } catch (err) {
@@ -930,7 +941,8 @@ router.get('/:id/perfil', async (req, res, next) => {
       };
     }
 
-    const resultado = await dbResiliente.comFallback('buscarPerfilAluno', buscarOnline, buscarOffline);
+    const resultado = await dbResiliente.comFallback('buscarPerfilAluno', buscarOnline, buscarOffline, { timeoutMs: TIMEOUT_PAINEL_MS });
+    if (modoOffline) res.setHeader('X-Dados-Offline', '1');
     if (!resultado) return res.status(404).json({ erro: 'Aluno não encontrado.' });
     res.json({ ...resultado, modo_offline: modoOffline });
   } catch (err) {

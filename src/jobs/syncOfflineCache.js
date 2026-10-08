@@ -40,9 +40,40 @@ function log(...args) {
   console.log(`[syncOfflineCache ${new Date().toISOString()}]`, ...args);
 }
 
+// Colunas que cada tabela tem no local.db (preenchido por alinharColunas).
+const colunasLocais = {};
+
+/**
+ * Garante que o local.db tenha todas as colunas que a tabela já tem no Turso.
+ * Sem isso, qualquer coluna criada só no Turso (ex.: alunos.atualizado_em,
+ * criada pelo servidor ao subir) faz o INSERT do espelho falhar ("table alunos
+ * has no column named ...") e o batch inteiro é desfeito: o espelho ficou
+ * congelado desde 11/09/2026 e o painel, ao cair no fallback, não mostrava os
+ * alunos novos. Aqui só ADICIONA colunas ao local.db (nunca mexe no Turso).
+ */
+async function alinharColunas(tabela) {
+  const [remotas, locais] = await Promise.all([
+    db.execute(`PRAGMA table_info(${tabela})`),
+    dbOffline.execute(`PRAGMA table_info(${tabela})`),
+  ]);
+  const nomesLocais = new Set(locais.rows.map((r) => r.name));
+  for (const col of remotas.rows) {
+    if (nomesLocais.has(col.name)) continue;
+    try {
+      await dbOffline.execute(`ALTER TABLE ${tabela} ADD COLUMN "${col.name}" ${col.type || 'TEXT'}`);
+      nomesLocais.add(col.name);
+      log(`Coluna "${col.name}" adicionada em ${tabela} do local.db (existia só no Turso).`);
+    } catch (err) {
+      log(`Não foi possível adicionar a coluna "${col.name}" em ${tabela} do local.db — será ignorada na cópia:`, err.message);
+    }
+  }
+  colunasLocais[tabela] = nomesLocais;
+}
+
 function montarInserts(tabela, linhas) {
   return linhas.map((linha) => {
-    const colunas = Object.keys(linha);
+    // Só copia colunas que existem no local.db (alinharColunas já tentou criar as que faltavam).
+    const colunas = Object.keys(linha).filter((c) => !colunasLocais[tabela] || colunasLocais[tabela].has(c));
     return {
       sql: `INSERT INTO ${tabela} (${colunas.join(', ')}) VALUES (${colunas.map(() => '?').join(', ')})`,
       args: colunas.map((coluna) => linha[coluna]),
@@ -51,6 +82,9 @@ function montarInserts(tabela, linhas) {
 }
 
 async function sincronizar() {
+  for (const tabela of ['planos', 'alunos', 'matriculas', 'cobrancas', 'pagamentos_cobranca']) {
+    await alinharColunas(tabela);
+  }
   const [resultPlanos, resultAlunos, resultMatriculas, resultCobrancas, resultPagamentos] = await Promise.all([
     db.execute('SELECT * FROM planos'),
     db.execute('SELECT * FROM alunos'),

@@ -166,12 +166,27 @@ function escapeHtml(str) {
 
 // ---------------- Chamadas à API ----------------
 
+function mostrarAvisoDadosOffline(mostrar) {
+  let aviso = document.getElementById('aviso-dados-offline');
+  if (!mostrar) { if (aviso) aviso.remove(); return; }
+  if (aviso) return;
+  aviso = document.createElement('div');
+  aviso.id = 'aviso-dados-offline';
+  aviso.textContent = '⚠ Sem conexão com o banco online: você está vendo dados salvos neste computador, que podem estar desatualizados (alunos novos podem não aparecer). Tentando reconectar...';
+  aviso.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:600;background:#fef0c7;color:#93370d;border-bottom:1px solid #f79009;padding:8px 14px;font-size:13px;text-align:center';
+  document.body.appendChild(aviso);
+}
+
 async function api(caminho, opcoes = {}) {
   const headers = { ...(opcoes.headers || {}) };
   if (opcoes.body) headers['Content-Type'] = 'application/json';
   if (estado.token) headers.Authorization = `Bearer ${estado.token}`;
 
   const resp = await fetch(caminho, { ...opcoes, headers });
+  // O servidor local (modo totem) devolve este header quando não conseguiu falar com o
+  // banco online e respondeu com o espelho salvo no PC — dado possivelmente antigo.
+  if (resp.headers.get('X-Dados-Offline') === '1') mostrarAvisoDadosOffline(true);
+  else if (caminho.startsWith('/api/alunos')) mostrarAvisoDadosOffline(false);
   const contentType = resp.headers.get('content-type') || '';
   const dados = contentType.includes('application/json') ? await resp.json() : null;
 

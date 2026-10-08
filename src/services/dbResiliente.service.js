@@ -113,12 +113,17 @@ function comTimeout(promise, ms) {
  * @param {string} nomeOperacao só para o log ficar legível
  * @param {() => Promise<any>} fnOnline
  * @param {() => Promise<any>} fnOffline
+ * @param {{ timeoutMs?: number }} [opcoes] timeoutMs fixa a espera pelo Turso nesta chamada
+ *   (sobrepõe os timeouts curtos do totem). Usado pelas consultas do PAINEL: lá, dado
+ *   antigo é pior que uma consulta lenta (2026-10-08: o timeout de 1.5s em queda, num
+ *   PC cuja conexão com o Turso leva ~2-6s na 1ª consulta depois de ociosa, deixava o
+ *   painel preso no espelho local por dias, sem mostrar alunos novos).
  */
-async function comFallback(nomeOperacao, fnOnline, fnOffline) {
+async function comFallback(nomeOperacao, fnOnline, fnOffline, opcoes = {}) {
   if (!MODO_TOTEM_OFFLINE) return fnOnline();
 
   try {
-    const resultado = await comTimeout(fnOnline(), timeoutAtual());
+    const resultado = await comTimeout(fnOnline(), Number(opcoes.timeoutMs) || timeoutAtual());
     registrarRecuperacaoSeNecessario();
     return resultado;
   } catch (err) {

@@ -369,6 +369,12 @@ server.listen(PORT, () => {
 
     console.log(`[server] MODO_TOTEM_OFFLINE=true — sincronizando cache local a cada ${Math.round(SYNC_OFFLINE_INTERVALO_MS / 1000)}s, esvaziando a fila de acessos a cada ${Math.round(FILA_ACESSOS_TOTEM_FLUSH_INTERVALO_MS / 1000)}s e a fila de cadastro/pagamentos a cada ${Math.round(FILA_CADASTRO_TOTEM_FLUSH_INTERVALO_MS / 1000)}s.`);
 
+    // Mantém a conexão com o Turso aquecida (2026-10-08): neste PC a 1ª consulta depois
+    // de alguns minutos parada leva 4-6s (reconexão) e só as seguintes voltam a ~200ms —
+    // o suficiente pra estourar o timeout curto do totem e cair no espelho local sem
+    // necessidade. Um SELECT 1 a cada 30s não lê nenhuma linha (não pesa na cota).
+    setInterval(() => { dbCru.execute('SELECT 1').catch(() => {}); }, 30 * 1000);
+
     syncOfflineCache.sincronizar().catch((err) => console.error('[syncOfflineCache] erro na sincronização inicial:', err));
     setInterval(() => {
       syncOfflineCache.sincronizar().catch((err) => console.error('[syncOfflineCache] erro na sincronização agendada:', err));

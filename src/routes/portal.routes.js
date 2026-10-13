@@ -111,6 +111,13 @@ const limitadorSenhaPortal = criarLimitador({
   chavePor: (req) => `senha-portal:${req.body?.cpf || req.query?.cpf || ''}`,
 });
 
+// Cadastro INATIVO não vê treino no portal (2026-10-13, pedido do dono). Só
+// 'inativo': trancado e inadimplente continuam vendo — mensalidade em atraso
+// não esconde mais o treino (ver GET /aluno e GET /treino).
+function treinoOcultoParaAluno(aluno) {
+  return aluno.status === 'inativo';
+}
+
 async function autenticarAlunoPortal(cpf, senha) {
   const aluno = await acessoTerminal.buscarAlunoPorCpf(cpf);
   if (!aluno) return { status: 404, erro: 'CPF não encontrado. Use "Quero me cadastrar" se ainda não tem cadastro.' };
@@ -157,18 +164,17 @@ router.get('/aluno', limitadorSenhaPortal, async (req, res, next) => {
       args: [aluno.id],
     });
 
-    // Aba de treino só fica acessível com a mesma regra usada pra liberar a
-    // catraca (mensalidade em dia) — ver acessoTerminal.verificarAutorizacaoAluno
-    // e o bloqueio espelhado em GET/POST /treino abaixo (defesa em profundidade:
-    // o front usa esta flag pra nem mostrar o botão, mas as rotas de treino
-    // também recusam por conta própria caso alguém chame a API direto).
-    const autorizacaoTreino = await acessoTerminal.verificarAutorizacaoAluno(aluno);
-
+    // 2026-10-13 (pedido do dono): o treino NÃO é mais bloqueado por mensalidade
+    // em atraso (desde 15/08/2026 usava a mesma regra da catraca —
+    // verificarAutorizacaoAluno). Agora só some pro aluno quando o próprio
+    // treino é ocultado pelo professor ou chega ao fim do prazo "Ocultar do
+    // aluno após" (treinos.visivel_portal / treinos.data_fim, aplicados em
+    // GET /treino abaixo) — ou quando o cadastro do aluno está INATIVO (ver
+    // treinoOcultoParaAluno).
     res.json({
       aluno_nome: aluno.nome,
       treino_modo: aluno.treino_modo || 'nativo',
-      treino_liberado: autorizacaoTreino.autorizado,
-      treino_bloqueado_motivo: autorizacaoTreino.autorizado ? null : autorizacaoTreino.motivo,
+      treino_oculto: treinoOcultoParaAluno(aluno),
       tem_rosto_cadastrado: Boolean(aluno.face_descriptor),
       plano_atual: matricula.rows[0] || null,
       primeiro_acesso: primeiroAcesso,
@@ -241,13 +247,9 @@ router.get('/treino', limitadorSenhaPortal, async (req, res, next) => {
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
     const aluno = autenticado.aluno;
 
-    // Mesma regra de acesso da catraca (mensalidade em dia) — ver comentário
-    // em GET /aluno acima. Bloqueia a rota mesmo que o front (que já esconde
-    // o botão "Ver treino" nesse caso) seja contornado.
-    const autorizacaoTreino = await acessoTerminal.verificarAutorizacaoAluno(aluno);
-    if (!autorizacaoTreino.autorizado) {
-      return res.status(403).json({ erro: autorizacaoTreino.motivo || 'Acesso ao treino bloqueado.', bloqueado: true });
-    }
+    // Sem bloqueio por mensalidade (ver comentário em GET /aluno acima): o que
+    // esconde o treino do aluno é cadastro inativo (lista vazia) ou o filtro abaixo.
+    if (treinoOcultoParaAluno(aluno)) return res.json([]);
 
     // visivel_portal = 0: professor ocultou este treino específico pro aluno
     // (continua existindo/visível pro professor). data_fim vencido: fim do
@@ -330,11 +332,7 @@ router.post('/treino/exercicio/:id/concluir', limitadorSenhaPortal, async (req, 
     const autenticado = await autenticarAlunoPortal(dados.cpf, dados.senha);
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
     const aluno = autenticado.aluno;
-
-    const autorizacaoTreino = await acessoTerminal.verificarAutorizacaoAluno(aluno);
-    if (!autorizacaoTreino.autorizado) {
-      return res.status(403).json({ erro: autorizacaoTreino.motivo || 'Acesso ao treino bloqueado.', bloqueado: true });
-    }
+    if (treinoOcultoParaAluno(aluno)) return res.status(403).json({ erro: 'Cadastro inativo.', bloqueado: true });
 
     const dono = await db.execute({
       sql: `SELECT te.id, t.id as treino_id FROM treino_exercicios te
@@ -402,11 +400,7 @@ router.post('/treino/:id/concluir-treino', limitadorSenhaPortal, async (req, res
     const autenticado = await autenticarAlunoPortal(dados.cpf, dados.senha);
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
     const aluno = autenticado.aluno;
-
-    const autorizacaoTreino = await acessoTerminal.verificarAutorizacaoAluno(aluno);
-    if (!autorizacaoTreino.autorizado) {
-      return res.status(403).json({ erro: autorizacaoTreino.motivo || 'Acesso ao treino bloqueado.', bloqueado: true });
-    }
+    if (treinoOcultoParaAluno(aluno)) return res.status(403).json({ erro: 'Cadastro inativo.', bloqueado: true });
 
     const dono = await db.execute({
       sql: 'SELECT id FROM treinos WHERE id = ? AND aluno_id = ?',

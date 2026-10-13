@@ -418,8 +418,9 @@ CREATE TABLE IF NOT EXISTS treinos (
   -- treino (opcional): quando a data passa, o treino some sozinho do portal
   -- do aluno (ver GET /api/portal/treino) mas continua aparecendo pro
   -- professor aqui (histórico) — nenhum dos dois mexe em `ativo`/exclusão.
-  -- Ver também o bloqueio da aba inteira por mensalidade em atraso em
-  -- portal.routes.js (regra separada e independente destas duas).
+  -- Estas duas regras são a ÚNICA coisa que esconde um treino do aluno: desde
+  -- 2026-10-13 mensalidade em atraso NÃO bloqueia mais a aba de treino (entre
+  -- 15/08 e 13/10/2026 bloqueava, com a mesma regra da catraca).
   visivel_portal INTEGER NOT NULL DEFAULT 1,
   data_fim TEXT,
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))

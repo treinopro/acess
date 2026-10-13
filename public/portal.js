@@ -491,7 +491,7 @@ function preencherDashboardHub(info) {
 
   // O treino não é mais bloqueado por mensalidade em atraso (2026-10-13): só some
   // quando o professor oculta, o prazo "Ocultar do aluno após" do treino acaba, ou
-  // o cadastro do aluno está inativo (treino_oculto — o cartão inteiro some).
+  // o cadastro do aluno está inativo ou trancado (treino_oculto — o cartão inteiro some).
   document.getElementById('card-treino').classList.toggle('oculto', Boolean(info.treino_oculto));
   document.getElementById('card-treino-resumo').textContent = alunoHubTreinoModo === 'app_externo'
     ? 'Seu treino é acompanhado em outro aplicativo.'

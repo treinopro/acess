@@ -17,6 +17,32 @@ const { sqlAtualizadoEm } = require('../services/alunoAtualizadoEm.service');
 // antes de cair no espelho local — só vale no processo com MODO_TOTEM_OFFLINE=true. Bem mais
 // que os timeouts do totem (4s/1.5s): aqui dado antigo é pior que uma resposta lenta.
 const TIMEOUT_PAINEL_MS = Number(process.env.TIMEOUT_TURSO_PAINEL_MS) || 15000;
+
+// Colunas da lista de alunos: todas as da tabela MENOS as pesadas (foto_url, face_descriptor),
+// mais tem_foto/tem_rosto. Lê as colunas reais da tabela (PRAGMA) em vez de listar na mão, pra
+// não quebrar quando uma coluna nova aparecer só no Turso ou só no espelho local; guardado
+// por 10 min por banco. Se o PRAGMA falhar, cai no SELECT * de sempre.
+const COLUNAS_PESADAS_ALUNO = new Set(['foto_url', 'face_descriptor']);
+const cacheColunasLista = new Map(); // 'online' | 'offline' -> { quando, sql }
+async function colunasListaAlunos(cliente) {
+  const chave = cliente === db ? 'online' : 'offline';
+  const guardado = cacheColunasLista.get(chave);
+  if (guardado && Date.now() - guardado.quando < 10 * 60 * 1000) return guardado.sql;
+  try {
+    const info = await cliente.execute('PRAGMA table_info(alunos)');
+    const nomes = info.rows.map((r) => r.name);
+    const leves = nomes.filter((n) => !COLUNAS_PESADAS_ALUNO.has(n));
+    if (!leves.length) return '*';
+    const extras = [];
+    if (nomes.includes('face_descriptor')) extras.push("(face_descriptor IS NOT NULL AND face_descriptor != '') AS tem_rosto");
+    if (nomes.includes('foto_url')) extras.push("(foto_url IS NOT NULL AND foto_url != '') AS tem_foto");
+    const sql = [...leves.map((n) => `"${n}"`), ...extras].join(', ');
+    cacheColunasLista.set(chave, { quando: Date.now(), sql });
+    return sql;
+  } catch {
+    return '*';
+  }
+}
 // Vendorizado (não é um symlink pro AvaliaPro) porque o deploy na nuvem
 // não tem acesso à pasta do AvaliaPro no notebook — ver o comentário no
 // topo de vendor/avaliapro-core/anthropometry.js para como manter em dia.
@@ -248,12 +274,20 @@ router.get('/', async (req, res, next) => {
     }
 
     const where = condicoes.length ? `WHERE ${condicoes.join(' AND ')}` : '';
-    const sql = `SELECT * FROM alunos ${where} ORDER BY nome`;
+    // Lista LEVE (2026-10-09): sem foto_url e sem face_descriptor. Com SELECT * a resposta
+    // chegava a 7.3 MB para 232 alunos (6.7 MB só de fotos em base64) e a lista levava 6-7s
+    // neste PC; os campos que a tela usa somam ~130 KB. tem_foto/tem_rosto (0/1) cobrem o
+    // que o painel precisa saber (ex.: filtro "só sem rosto"); foto e rosto completos vêm
+    // do perfil do aluno (GET /api/alunos/:id e /:id/perfil).
+    const consultar = async (cliente) => {
+      const colunas = await colunasListaAlunos(cliente);
+      return cliente.execute({ sql: `SELECT ${colunas} FROM alunos ${where} ORDER BY nome`, args });
+    };
     let usouEspelho = false;
     const result = await dbResiliente.comFallback(
       'buscarAlunos',
-      () => db.execute({ sql, args }),
-      () => { usouEspelho = true; return dbOffline.execute({ sql, args }); },
+      () => consultar(db),
+      () => { usouEspelho = true; return consultar(dbOffline); },
       { timeoutMs: TIMEOUT_PAINEL_MS },
     );
     if (usouEspelho) res.setHeader('X-Dados-Offline', '1'); // o painel mostra um aviso (ver api() em app.js)

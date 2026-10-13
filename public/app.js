@@ -1294,11 +1294,11 @@ async function carregarAlunos() {
     if (busca) params.set('busca', busca);
     if (mostrarInativos) params.set('incluir_inativos', 'true');
     const alunosBrutos = await api(`/api/alunos${params.toString() ? '?' + params.toString() : ''}`);
-    // "Só sem rosto cadastrado" (2026-08-25): filtro só no front — GET /api/alunos já
-    // devolve face_descriptor (SELECT * na rota), então não precisa de outro round-trip
-    // nem de parâmetro novo na API pra isso.
+    // "Só sem rosto cadastrado" (2026-08-25): filtro só no front, sem parâmetro novo na API.
+    // 2026-10-09: GET /api/alunos não devolve mais o face_descriptor (era ~0.5 MB à toa) —
+    // vem tem_rosto (0/1). `?? face_descriptor` cobre um servidor ainda na versão antiga.
     const somenteSemRosto = document.getElementById('filtro-sem-rosto-alunos').checked;
-    const alunosFiltrados = somenteSemRosto ? alunosBrutos.filter((a) => !a.face_descriptor) : alunosBrutos;
+    const alunosFiltrados = somenteSemRosto ? alunosBrutos.filter((a) => !(a.tem_rosto ?? a.face_descriptor)) : alunosBrutos;
     const alunos = ordenarAlunos(alunosFiltrados);
     atualizarSetasOrdenacaoAlunos();
     const tbody = document.getElementById('lista-alunos');

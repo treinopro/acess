@@ -487,13 +487,29 @@
             </div>
           </form>
 
-          <table class="tabela">
-            <thead>
-              <tr><th>Descrição</th><th>Valor</th><th>Vencimento</th><th>Status</th><th>Data Pago</th><th>Valor Pago</th><th>Ações</th></tr>
-            </thead>
-            <tbody id="perfil-lista-cobrancas"></tbody>
-          </table>
-          <p id="perfil-financeiro-total-resumo" style="font-size:13px;color:#667085;margin-top:8px"></p>
+          <!-- Tabela de contas à esquerda; resumo à direita (como na tela Contas a Receber do sistema antigo). -->
+          <div class="financeiro-perfil-layout">
+            <div class="financeiro-perfil-tabela">
+              <table class="tabela">
+                <thead>
+                  <tr><th>Descrição</th><th>Valor</th><th>Vencimento</th><th>Status</th><th>Data Pago</th><th>Valor Pago</th><th>Ações</th></tr>
+                </thead>
+                <tbody id="perfil-lista-cobrancas"></tbody>
+              </table>
+            </div>
+            <aside class="financeiro-resumo" id="perfil-financeiro-resumo" aria-label="Resumo das contas deste aluno">
+              <h4>Resumo</h4>
+              <div class="financeiro-resumo-linha"><span>Total</span><span id="fin-resumo-total-qtd">—</span><strong id="fin-resumo-total-valor">—</strong></div>
+              <div class="financeiro-resumo-linha"><span>Pago</span><span id="fin-resumo-pago-qtd">—</span><strong id="fin-resumo-pago-valor">—</strong></div>
+              <div class="financeiro-resumo-linha"><span>A vencer</span><span id="fin-resumo-avencer-qtd">—</span><strong id="fin-resumo-avencer-valor">—</strong></div>
+              <div class="financeiro-resumo-linha" id="fin-resumo-atraso-linha"><span>Em atraso</span><span id="fin-resumo-atraso-qtd">—</span><strong id="fin-resumo-atraso-valor">—</strong></div>
+              <div class="financeiro-resumo-acesso">
+                <span>Status Acesso</span>
+                <strong id="fin-resumo-acesso">—</strong>
+              </div>
+              <p class="financeiro-resumo-motivo" id="fin-resumo-acesso-motivo"></p>
+            </aside>
+          </div>
         </div>
 
         <!-- ABA: Treino -->

@@ -2399,22 +2399,69 @@ document.getElementById('form-exercicio').addEventListener('submit', async (ev) 
 
 // ---------------- Aba Financeiro do perfil (espelha Contas a Receber, filtrado no aluno) ----------------
 
+// Resumo da lateral da aba Financeiro (2026-10-14): mesmos números do "Total / Em atraso"
+// da tela Contas a Receber do sistema antigo. Contas canceladas/estornadas não contam.
+// Em atraso = ainda não quitada e com vencimento antes de hoje (não depende do job que
+// troca pendente->atrasado); mostra só o que FALTA pagar (valor - o já pago parcialmente).
+function resumirContasAluno(contas, hoje) {
+  const r = {
+    total: { qtd: 0, valor: 0 }, pago: { qtd: 0, valor: 0 }, aVencer: { qtd: 0, valor: 0 }, emAtraso: { qtd: 0, valor: 0 },
+  };
+  contas.forEach((c) => {
+    if (c.status === 'cancelado' || c.status === 'estornado') return;
+    const valorPago = Number(c.valor_pago_centavos || 0) || (c.status === 'pago' ? c.valor_centavos : 0);
+    r.total.qtd += 1;
+    r.total.valor += c.valor_centavos;
+    r.pago.valor += valorPago;
+    if (c.status === 'pago') { r.pago.qtd += 1; return; }
+    const restante = Math.max(0, c.valor_centavos - valorPago);
+    const venceu = c.vencimento && String(c.vencimento).slice(0, 10) < hoje;
+    const alvo = venceu ? r.emAtraso : r.aVencer;
+    alvo.qtd += 1;
+    alvo.valor += restante;
+  });
+  return r;
+}
+
+function renderizarResumoFinanceiroPerfil(resumo) {
+  const campos = { total: 'total', pago: 'pago', aVencer: 'avencer', emAtraso: 'atraso' };
+  Object.entries(campos).forEach(([chave, sufixo]) => {
+    document.getElementById(`fin-resumo-${sufixo}-qtd`).textContent = resumo ? resumo[chave].qtd : '—';
+    document.getElementById(`fin-resumo-${sufixo}-valor`).textContent = resumo ? formatarMoeda(resumo[chave].valor) : '—';
+  });
+  document.getElementById('fin-resumo-atraso-linha').classList.toggle('atraso-ativo', Boolean(resumo && resumo.emAtraso.qtd > 0));
+}
+
+// Status de acesso = a mesma regra que libera a catraca (GET /api/alunos/:id/status-acesso).
+// Só informativo: se falhar, mostra "—" e não atrapalha a lista de contas.
+async function atualizarStatusAcessoResumoPerfil(alunoId) {
+  const valor = document.getElementById('fin-resumo-acesso');
+  const motivo = document.getElementById('fin-resumo-acesso-motivo');
+  valor.textContent = '…'; valor.className = ''; motivo.textContent = '';
+  try {
+    const status = await api(`/api/alunos/${alunoId}/status-acesso`);
+    if (document.getElementById('perfil-aluno-id').value !== alunoId) return; // trocou de aluno enquanto carregava
+    valor.textContent = status.liberado ? 'Liberado' : 'Bloqueado';
+    valor.className = status.liberado ? 'liberado' : 'bloqueado';
+    motivo.textContent = status.liberado ? '' : (status.motivo || '');
+  } catch {
+    valor.textContent = '—';
+  }
+}
+
 async function carregarFinanceiroPerfil() {
   const alunoId = document.getElementById('perfil-aluno-id').value;
   const tbody = document.getElementById('perfil-lista-cobrancas');
-  const resumoEl = document.getElementById('perfil-financeiro-total-resumo');
-  if (!alunoId) { tbody.innerHTML = ''; if (resumoEl) resumoEl.textContent = ''; return; }
+  if (!alunoId) { tbody.innerHTML = ''; renderizarResumoFinanceiroPerfil(null); return; }
+  atualizarStatusAcessoResumoPerfil(alunoId);
   try {
     const contas = await api(`/api/pagamentos/cobrancas?aluno_id=${alunoId}`);
     tbody.innerHTML = contas.length ? '' : '<tr><td colspan="7">Nenhuma conta encontrada.</td></tr>';
-    if (!contas.length) { if (resumoEl) resumoEl.textContent = ''; return; }
-    let totalValor = 0;
-    let totalPago = 0;
+    renderizarResumoFinanceiroPerfil(resumirContasAluno(contas, hojeLocalISO()));
+    if (!contas.length) return;
     contas.forEach((c) => {
       const valorPago = Number(c.valor_pago_centavos || 0) || (c.status === 'pago' ? c.valor_centavos : 0);
       const dataPago = c.data_pago_calc || (c.status === 'pago' ? c.pago_em : null);
-      totalValor += c.valor_centavos;
-      totalPago += valorPago;
       const tr = el(`
         <tr>
           <td>${escapeHtml(c.descricao) || '—'}</td>
@@ -2442,7 +2489,6 @@ async function carregarFinanceiroPerfil() {
       });
       tbody.appendChild(tr);
     });
-    if (resumoEl) resumoEl.textContent = `${contas.length} conta(s) — total ${formatarMoeda(totalValor)}, pago ${formatarMoeda(totalPago)}`;
   } catch (err) { mostrarToast(err.message, true); }
 }
 

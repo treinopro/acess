@@ -379,6 +379,29 @@ body {
 }
 .modal-card textarea { resize: vertical; }
 
+/* Aba Financeiro do perfil: tabela de contas + resumo na lateral direita (2026-10-14, como no sistema antigo) */
+.financeiro-perfil-layout { display: flex; gap: 16px; align-items: flex-start; }
+.financeiro-perfil-tabela { flex: 1; min-width: 0; overflow-x: auto; }
+.financeiro-perfil-tabela td:last-child { white-space: nowrap; } /* Alterar/Parcelar/Excluir lado a lado, sem quebrar em 3 linhas */
+.financeiro-perfil-tabela th, .financeiro-perfil-tabela td { padding-left: 10px; padding-right: 10px; }
+.financeiro-resumo {
+  flex: none; width: 250px; background: #fff; border: 1px solid #e4e7ec; border-radius: 10px;
+  padding: 14px 16px; font-size: 13px; color: #344054;
+}
+.financeiro-resumo h4 { margin: 0 0 10px; font-size: 13px; color: #667085; text-transform: uppercase; letter-spacing: .04em; }
+.financeiro-resumo-linha { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid #f2f4f7; }
+.financeiro-resumo-linha span:nth-child(2) { color: #667085; text-align: right; min-width: 18px; }
+.financeiro-resumo-linha strong { text-align: right; min-width: 82px; }
+.financeiro-resumo-linha.atraso-ativo, .financeiro-resumo-linha.atraso-ativo strong { color: #d92d20; font-weight: 700; }
+.financeiro-resumo-acesso { display: flex; justify-content: space-between; align-items: baseline; padding: 10px 0 2px; }
+.financeiro-resumo-acesso strong.liberado { color: #067647; }
+.financeiro-resumo-acesso strong.bloqueado { color: #d92d20; }
+.financeiro-resumo-motivo { margin: 2px 0 0; font-size: 12px; color: #667085; }
+@media (max-width: 900px) {
+  .financeiro-perfil-layout { flex-direction: column; }
+  .financeiro-resumo { width: 100%; box-sizing: border-box; order: -1; } /* no celular o resumo vem antes da tabela */
+}
+
 /* Modal "Adicionar exercício": séries/reps/carga/intervalo valendo pra todos + ajuste por exercício */
 .exercicio-medidas-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 10px; }
 .exercicio-ajuste-linha {

@@ -5099,6 +5099,82 @@ async function atualizarStatusPanico() {
   }
 }
 
+// ---------------- Armar biometria (2026-10-15) ----------------
+// Armado = o Leitor 3 (digital) da catraca fica LIGADO independente de horário, tablet,
+// bateria ou agendamento. Desarmar volta ao automático. Quem liga/desliga de fato é o
+// agente local (agente-local/biometriaAgendada.js); aqui só pedimos e mostramos o estado.
+
+let biometriaArmadoAtual = null; // null = ainda não carregou
+
+function textoBateriaTablet(s) {
+  if (!s.totem_conectado) return 'tablet fora do ar';
+  if (typeof s.bateria_nivel !== 'number') return 'tablet conectado';
+  return `tablet ${Math.round(s.bateria_nivel * 100)}%${s.carregando ? ' (carregando)' : ''}`;
+}
+
+async function atualizarStatusBiometria() {
+  const statusEl = document.getElementById('biometria-status-texto');
+  const botao = document.getElementById('btn-biometria-armar');
+  try {
+    const s = await api('/api/terminal/catraca/biometria/status');
+    biometriaArmadoAtual = Boolean(s.armado_manual);
+    const leitor = s.leitor; // { leitorLigado, motivo, ultimaFalha } ou null (agente antigo/offline)
+    let texto;
+    let classe;
+    if (s.armado_manual) {
+      classe = 'armado';
+      texto = 'ARMADO — leitor de digital ligado';
+      if (!s.agente_conectado) texto += ' (agente local offline: liga assim que reconectar)';
+      else if (leitor && leitor.leitorLigado !== true) texto += leitor.ultimaFalha ? ' (catraca não respondeu, tentando de novo...)' : ' (ligando...)';
+    } else if (leitor && leitor.leitorLigado === true) {
+      classe = 'ligado-auto';
+      texto = `ligado pelo automático (${leitor.motivo || 'regra automática'})`;
+    } else if (leitor && leitor.leitorLigado === false) {
+      classe = 'desligado';
+      texto = 'desligado (automático)';
+    } else {
+      classe = 'desligado';
+      texto = s.agente_conectado ? 'automático' : 'automático (agente local offline)';
+    }
+    statusEl.textContent = `${texto} · ${textoBateriaTablet(s)}`;
+    statusEl.className = `catraca-biometria-status ${classe}`;
+    botao.textContent = s.armado_manual ? 'Desarmar biometria' : 'Armar biometria';
+    botao.classList.toggle('armado', Boolean(s.armado_manual));
+    botao.disabled = false;
+  } catch (err) {
+    statusEl.textContent = 'não foi possível checar';
+    statusEl.className = 'catraca-biometria-status';
+    botao.disabled = biometriaArmadoAtual === null;
+  }
+}
+
+document.getElementById('btn-biometria-armar').addEventListener('click', async () => {
+  const botao = document.getElementById('btn-biometria-armar');
+  const resultadoEl = document.getElementById('catraca-resultado');
+  const armar = !biometriaArmadoAtual;
+  if (armar && !confirmar('Armar a biometria vai deixar o leitor de digital da catraca ligado, independente de horário, tablet ou bateria, até você desarmar. Continuar?')) return;
+  botao.disabled = true;
+  try {
+    await api(`/api/terminal/catraca/biometria/${armar ? 'armar' : 'desarmar'}`, { method: 'POST' });
+    resultadoEl.textContent = armar ? '✅ Biometria armada.' : '✅ Biometria desarmada — voltou ao automático.';
+    mostrarToast(armar ? 'Biometria armada.' : 'Biometria desarmada.');
+    await atualizarStatusBiometria();
+    // O agente aplica na catraca em seguida (leva alguns segundos) — reconsulta uma vez para refletir.
+    setTimeout(atualizarStatusBiometria, 4000);
+  } catch (err) {
+    resultadoEl.textContent = `⚠️ ${err.message}`;
+    mostrarToast(err.message, true);
+    botao.disabled = false;
+  }
+});
+
+// Enquanto a janela da catraca está aberta, mantém o estado fresco (bateria/leitor mudam sozinhos).
+setInterval(() => {
+  if (!document.getElementById('janela-catraca').classList.contains('oculto') && document.visibilityState === 'visible') {
+    atualizarStatusBiometria();
+  }
+}, 15000);
+
 // ---------------- "Indicar uma pessoa" habilita/desabilita o select de aluno ----------------
 
 document.getElementById('catraca-chk-indicar-pessoa').addEventListener('change', (ev) => {
@@ -5180,6 +5256,7 @@ async function carregarSecaoCatraca() {
   await popularSelectAlunos(document.getElementById('catraca-liberar-aluno'));
   await atualizarStatusPanico();
   await atualizarStatusAgenteCatraca();
+  atualizarStatusBiometria(); // sem await: pode levar até 3s esperando o agente responder
   await carregarAcessosCatraca();
 }
 

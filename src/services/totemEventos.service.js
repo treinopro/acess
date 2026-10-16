@@ -38,6 +38,46 @@ function quantidadeClientesConectados() {
   return clientes.size;
 }
 
+// ---------------------------------------------------------------------------
+// Heartbeat do tablet do totem (2026-10-15). O tablet manda "estou vivo" + nível
+// de bateria a cada ~20s (ver iniciarHeartbeatTablet em public/terminal.js).
+// Serve pra duas coisas, sempre só em memória (nunca toca o banco):
+//   1) Bateria: abaixo do limite (padrão 5%) o agente local arma a biometria
+//      ANTES do tablet apagar, enquanto a catraca ainda responde — acima do
+//      limite, desarma. O valor fica guardado (sem expirar) até chegar um
+//      heartbeat novo, pra não "desarmar" no intervalo em que o tablet some.
+//   2) Presença mais rápida: um tablet que descarrega/trava some sem fechar a
+//      conexão SSE (o servidor só percebe depois de minutos). Depois que
+//      chegou o 1º heartbeat, "conectado" também exige um heartbeat recente.
+//      Enquanto nenhum heartbeat chegou (tablet ainda com a versão antiga da
+//      página), vale só a conexão SSE, como sempre foi.
+// ---------------------------------------------------------------------------
+const HEARTBEAT_VALIDADE_MS = Number(process.env.TABLET_HEARTBEAT_VALIDADE_MS) || 120 * 1000;
+const LIMITE_BATERIA_BAIXA = (Number(process.env.TABLET_BATERIA_BAIXA_PERCENTUAL) || 5) / 100;
+let ultimoHeartbeat = null; // { em, nivel (0..1 | null), carregando (bool | null) }
+
+function registrarHeartbeat({ nivel, carregando } = {}) {
+  ultimoHeartbeat = {
+    em: Date.now(),
+    nivel: (typeof nivel === 'number' && Number.isFinite(nivel)) ? Math.min(Math.max(nivel, 0), 1) : null,
+    carregando: typeof carregando === 'boolean' ? carregando : null,
+  };
+}
+
+function estadoTablet() {
+  const temSse = clientes.size > 0;
+  const heartbeatRecente = ultimoHeartbeat !== null && (Date.now() - ultimoHeartbeat.em) <= HEARTBEAT_VALIDADE_MS;
+  const nivel = ultimoHeartbeat ? ultimoHeartbeat.nivel : null;
+  return {
+    conectado: temSse && (ultimoHeartbeat === null || heartbeatRecente),
+    bateriaNivel: nivel,
+    // "abaixo de 5%": 5% em ponto não é baixo; 4% é.
+    bateriaBaixa: nivel !== null && nivel < LIMITE_BATERIA_BAIXA,
+    carregando: ultimoHeartbeat ? ultimoHeartbeat.carregando : null,
+    ultimoHeartbeatHaMs: ultimoHeartbeat ? Date.now() - ultimoHeartbeat.em : null,
+  };
+}
+
 // 2026-09-08: canal SEPARADO para o painel "Acessos ao vivo" do admin (ver
 // /api/terminal/admin/eventos/stream em terminal.routes.js) — não reaproveita
 // o Set `clientes` acima de propósito: aquele é autenticado pelo TERMINAL_TOKEN
@@ -107,6 +147,9 @@ module.exports = {
   removerCliente,
   emitirLiberado,
   quantidadeClientesConectados,
+  registrarHeartbeat,
+  estadoTablet,
+  LIMITE_BATERIA_BAIXA,
   registrarClienteAdmin,
   removerClienteAdmin,
   emitirAcessoAdmin,

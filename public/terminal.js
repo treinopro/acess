@@ -185,8 +185,42 @@ function iniciarEscutaLiberacoesExternas() {
 iniciarEscutaLiberacoesExternas();
 
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') iniciarEscutaLiberacoesExternas();
+  if (document.visibilityState === 'visible') {
+    iniciarEscutaLiberacoesExternas();
+    enviarHeartbeatTablet();
+  }
 });
+
+// 2026-10-15: "estou vivo" + bateria a cada ~20s. O servidor usa isso pra (1) armar a
+// biometria da catraca quando a bateria cai abaixo de 5% — ANTES do tablet apagar, enquanto
+// ainda dá pra ligar o leitor — e desarmar quando voltar acima; (2) perceber mais rápido
+// que o tablet sumiu (a conexão SSE de um tablet que descarrega pode demorar minutos pra
+// "cair" do lado do servidor). Ver registrarHeartbeat em totemEventos.service.js.
+const INTERVALO_HEARTBEAT_TABLET_MS = 20 * 1000;
+let bateriaTablet = null; // BatteryManager, quando o navegador expõe (Chrome/Android sim; Safari/iOS não)
+
+async function enviarHeartbeatTablet() {
+  try {
+    if (!bateriaTablet && typeof navigator.getBattery === 'function') {
+      bateriaTablet = await navigator.getBattery();
+    }
+    const corpo = {};
+    if (bateriaTablet) {
+      corpo.nivel = bateriaTablet.level;
+      corpo.carregando = bateriaTablet.charging;
+    }
+    await fetch('/api/terminal/totem-heartbeat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Terminal-Token': TERMINAL_TOKEN },
+      body: JSON.stringify(corpo),
+      keepalive: true,
+    });
+  } catch {
+    // Best-effort: sem rede agora, o próximo ciclo tenta de novo. Nunca atrapalha o totem.
+  }
+}
+enviarHeartbeatTablet();
+setInterval(enviarHeartbeatTablet, INTERVALO_HEARTBEAT_TABLET_MS);
 
 let audioCtxSom = null;
 function tocarBeep(vezes = 1) {

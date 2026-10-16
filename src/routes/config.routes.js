@@ -486,10 +486,17 @@ async function obterCooldownAcesso() {
 // agente local (biometriaAgendada.js) só trata como "desconectado de
 // verdade" depois de algumas checagens seguidas sem nenhum totem conectado
 // (evita ligar/desligar o leitor à toa numa reconexão rápida de rede).
+// `biometria_catraca_armado_manual` (2026-10-15): botão "Armar biometria" da janela
+// Catraca do painel (ver /catraca/biometria/* em terminal.routes.js). Quando 'true' o
+// leitor fica LIGADO independente de qualquer outra variável (horário, tablet
+// conectado, bateria, agendamento desligado) até alguém desarmar — fica gravado
+// aqui (sobrevive a reinício do servidor/agente) e é empurrado pro agente na hora.
+// Não entra no PUT /biometria-catraca-horario de propósito: tem endpoints próprios.
 const PADROES_BIOMETRIA_CATRACA = {
   biometria_catraca_agendamento_ativo: 'false',
   biometria_catraca_janelas: '[]',
   biometria_catraca_reagir_desconexao: 'false',
+  biometria_catraca_armado_manual: 'false',
 };
 const CHAVES_BIOMETRIA_CATRACA = Object.keys(PADROES_BIOMETRIA_CATRACA);
 
@@ -536,15 +543,30 @@ router.put('/biometria-catraca-horario', autenticar, apenasAdmin, async (req, re
     // agente estiver desconectado agora, ele sincroniza sozinho assim que
     // reconectar (ver ws.on('open') em agente-local/agente.js) — nunca
     // bloqueia esta resposta por causa disso.
-    obterConfigBiometriaCatraca()
-      .then((config) => agenteGateway.enviarComando('atualizar_biometria_agendada', config))
-      .catch(() => {});
+    empurrarConfigBiometriaParaAgente();
 
     res.json({ ok: true });
   } catch (err) {
     next(err);
   }
 });
+
+// Empurra a config atual (incluindo o modo armado manual) pro agente local na hora.
+// Best-effort: se o agente estiver fora do ar, ele puxa a config ao reconectar.
+function empurrarConfigBiometriaParaAgente() {
+  return obterConfigBiometriaCatraca()
+    .then((config) => agenteGateway.enviarComando('atualizar_biometria_agendada', config))
+    .catch(() => {});
+}
+
+/** Liga/desliga o modo "armado manual" da biometria (botão da janela Catraca). */
+async function definirArmadoManualBiometria(armado) {
+  await db.execute({
+    sql: 'INSERT INTO configuracoes (chave, valor) VALUES (?, ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor',
+    args: ['biometria_catraca_armado_manual', armado ? 'true' : 'false'],
+  });
+  empurrarConfigBiometriaParaAgente();
+}
 
 /**
  * Lê a configuração de agendamento do Leitor 3 (biometria) da catraca —
@@ -569,6 +591,7 @@ async function obterConfigBiometriaCatraca() {
     ativo: config.biometria_catraca_agendamento_ativo === 'true',
     janelas,
     reagirDesconexao: config.biometria_catraca_reagir_desconexao === 'true',
+    armadoManual: config.biometria_catraca_armado_manual === 'true',
   };
 }
 
@@ -638,4 +661,5 @@ async function obterConfigChamarProfessor() {
 
 module.exports = {
   router, escreverBackupStream, obterCooldownAcesso, obterConfigChamarProfessor, obterConfigBiometriaCatraca,
+  definirArmadoManualBiometria,
 };

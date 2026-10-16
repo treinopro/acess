@@ -15,7 +15,8 @@ const { primeiroVencimento, ehRecorrente } = require('../services/cobrancas.serv
 const { criarLimitador } = require('../middleware/rateLimit');
 const { normalizarCpf } = require('../utils/cpf');
 const db = require('../db/client');
-const { obterCooldownAcesso, obterConfigBiometriaCatraca } = require('./config.routes');
+const agenteGateway = require('../services/agenteGateway.service');
+const { obterCooldownAcesso, obterConfigBiometriaCatraca, definirArmadoManualBiometria } = require('./config.routes');
 
 const router = express.Router();
 
@@ -224,7 +225,7 @@ terminal.get('/cache-autorizacao', limitadorCacheAutorizacao, autenticarTerminal
 terminal.get('/biometria-catraca-horario', autenticarTerminal, async (req, res, next) => {
   try {
     const config = await obterConfigBiometriaCatraca();
-    res.json({ ...config, totem_conectado: totemEventos.quantidadeClientesConectados() > 0 });
+    res.json({ ...config, totem_conectado: totemEventos.estadoTablet().conectado });
   } catch (err) {
     next(err);
   }
@@ -245,7 +246,31 @@ const limitadorTotemConectado = criarLimitador({
   mensagem: 'Muitas requisições de checagem de presença do totem. Aguarde um pouco.',
 });
 terminal.get('/totem-conectado', limitadorTotemConectado, autenticarTerminal, (req, res) => {
-  res.json({ conectado: totemEventos.quantidadeClientesConectados() > 0 });
+  const t = totemEventos.estadoTablet();
+  // bateria_baixa (2026-10-15): nível < 5% no último heartbeat do tablet — o agente
+  // arma a biometria antes do tablet apagar e desarma quando voltar a ficar > 5%.
+  res.json({
+    conectado: t.conectado,
+    bateria_nivel: t.bateriaNivel,
+    bateria_baixa: t.bateriaBaixa,
+    carregando: t.carregando,
+  });
+});
+
+// POST /api/terminal/totem-heartbeat { nivel?: 0..1, carregando?: boolean } — o tablet do
+// totem avisa que está vivo e a bateria, a cada ~20s (ver iniciarHeartbeatTablet em
+// public/terminal.js). Só memória, nunca toca o banco. Ver totemEventos.service.js.
+const limitadorHeartbeatTotem = criarLimitador({
+  janelaMs: 60 * 1000, maximo: 30,
+  mensagem: 'Muitos heartbeats do totem. Aguarde um pouco.',
+});
+terminal.post('/totem-heartbeat', limitadorHeartbeatTotem, autenticarTerminal, (req, res) => {
+  const dados = z.object({
+    nivel: z.number().min(0).max(1).optional().nullable(),
+    carregando: z.boolean().optional().nullable(),
+  }).parse(req.body || {});
+  totemEventos.registrarHeartbeat({ nivel: dados.nivel ?? null, carregando: dados.carregando ?? null });
+  res.json({ ok: true });
 });
 
 // ---------------------------------------------------------------------------
@@ -929,6 +954,67 @@ admin.post('/catraca/panico/cancelar', async (req, res, next) => {
 // GET /api/terminal/catraca/panico/status
 admin.get('/catraca/panico/status', (req, res) => {
   res.json({ ativo: Boolean(panicoInterval), config: panicoConfig });
+});
+
+// ---------------------------------------------------------------------------
+// "Armar biometria" (2026-10-15): botão da janela Catraca do painel, no mesmo estilo
+// do pânico. ARMADO = o leitor de digital (Leitor 3) fica LIGADO independente de
+// qualquer outra variável (horário programado, tablet conectado, bateria, agendamento
+// desligado) até alguém desarmar. DESARMAR volta ao funcionamento automático (horário
+// + tablet ausente + bateria < 5%). Quem aplica na catraca é o agente local
+// (biometriaAgendada.js); aqui só guarda o modo e empurra pro agente na hora.
+// ---------------------------------------------------------------------------
+async function montarStatusBiometria() {
+  const config = await obterConfigBiometriaCatraca();
+  const tablet = totemEventos.estadoTablet();
+  let leitor = null;
+  if (agenteGateway.estaConectado()) {
+    try {
+      leitor = await agenteGateway.enviarComando('status_biometria', {}, { timeoutMs: 3000 });
+    } catch { /* agente antigo (sem o comando) ou sem resposta a tempo — o painel mostra só o modo */ }
+  }
+  return {
+    armado_manual: config.armadoManual,
+    agendamento_ativo: config.ativo,
+    reagir_desconexao: config.reagirDesconexao,
+    totem_conectado: tablet.conectado,
+    bateria_nivel: tablet.bateriaNivel,
+    bateria_baixa: tablet.bateriaBaixa,
+    carregando: tablet.carregando,
+    agente_conectado: agenteGateway.estaConectado(),
+    leitor, // { leitorLigado, motivo, ... } vindo do agente, ou null
+  };
+}
+
+// GET /api/terminal/catraca/biometria/status
+admin.get('/catraca/biometria/status', async (req, res, next) => {
+  try {
+    res.json(await montarStatusBiometria());
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/terminal/catraca/biometria/armar
+admin.post('/catraca/biometria/armar', async (req, res, next) => {
+  try {
+    await definirArmadoManualBiometria(true);
+    console.log(`[biometria] ARMADA manualmente por ${req.usuario?.email || 'admin'}.`);
+    res.json({ ok: true, armado_manual: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/terminal/catraca/biometria/desarmar
+admin.post('/catraca/biometria/desarmar', async (req, res, next) => {
+  try {
+    await definirArmadoManualBiometria(false);
+    console.log(`[biometria] DESARMADA manualmente por ${req.usuario?.email || 'admin'} (volta ao automático).`);
+    res.json({ ok: true, armado_manual: false });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // POST /api/terminal/catraca/liberar-aluno { aluno_id, ip?, port?, mensagem?, motivo? }

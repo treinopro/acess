@@ -2258,6 +2258,18 @@
         software (não substitui trava mecânica de emergência exigida por norma de incêndio/saída de emergência).
       </p>
 
+      <div class="catraca-biometria-bloco" id="biometria-bloco">
+        <div class="catraca-biometria-linha">
+          <strong>Leitor de biometria:</strong>
+          <span id="biometria-status-texto" class="catraca-biometria-status">verificando...</span>
+        </div>
+        <button type="button" class="btn-secundario" id="btn-biometria-armar" disabled>Armar biometria</button>
+        <p class="catraca-aviso-panico" id="biometria-detalhe">
+          Armado = o leitor de digital fica ligado, independente de horário, tablet ou bateria. Desarmado = volta ao
+          automático (horário programado, tablet fora do ar ou bateria do tablet abaixo de 5%).
+        </p>
+      </div>
+
       <p id="catraca-resultado" class="catraca-resultado-linha"></p>
 
       <details class="catraca-avancado">

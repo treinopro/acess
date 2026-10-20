@@ -273,6 +273,20 @@ terminal.post('/totem-heartbeat', limitadorHeartbeatTotem, autenticarTerminal, (
   res.json({ ok: true });
 });
 
+// POST /api/terminal/catraca/giro { direcao?: string } — o agente local avisa que a catraca
+// girou (evento 81 do equipamento). Serve pro totem saber que quem foi liberado já passou
+// e pro servidor não negar por "cooldown" quem ainda NÃO passou. Só memória, sem banco.
+const limitadorGiroCatraca = criarLimitador({
+  janelaMs: 60 * 1000, maximo: 120,
+  mensagem: 'Muitos avisos de giro da catraca. Aguarde um pouco.',
+});
+terminal.post('/catraca/giro', limitadorGiroCatraca, autenticarTerminal, (req, res) => {
+  const dados = z.object({ direcao: z.union([z.string(), z.number()]).optional().nullable() }).parse(req.body || {});
+  const fechouLiberacao = acessoTerminal.registrarGiro({ direcao: dados.direcao ?? null });
+  if (fechouLiberacao) totemEventos.emitirGiro();
+  res.json({ ok: true, fechou_liberacao: fechouLiberacao });
+});
+
 // ---------------------------------------------------------------------------
 // Fila de reenvio de acessos (Fase 2 do modo offline/resiliente) — o agente
 // local grava cada leitura de biometria numa fila própria em disco (ver

@@ -160,12 +160,33 @@ function mostrarConfirmacaoLiberacaoExterna({ metodo, alunoNome, motivo } = {}) 
 // conexão fresca em vez de uma que pode ter morrido em silêncio.
 let fonteEventosExternos = null;
 
+// 2026-10-20: o servidor avisa (evento SSE 'giro') quando a catraca gira depois de uma
+// liberação. A tela verde "pode passar" fica visível até isso acontecer (ou até a catraca
+// travar de novo), em vez de sumir logo depois do aviso sonoro — ver processarResultado.
+let giroDetectadoEm = 0;
+const aguardandoGiro = new Set();
+function registrarGiroNoTotem() {
+  giroDetectadoEm = Date.now();
+  aguardandoGiro.forEach((liberar) => liberar());
+  aguardandoGiro.clear();
+}
+// Resolve quando a catraca girar DEPOIS de inicioMs, ou quando passar maxMs.
+function aguardarGiroOuTempo(inicioMs, maxMs) {
+  return new Promise((resolve) => {
+    if (giroDetectadoEm >= inicioMs) { resolve(); return; }
+    const liberar = () => { clearTimeout(timer); aguardandoGiro.delete(liberar); resolve(); };
+    const timer = setTimeout(liberar, maxMs);
+    aguardandoGiro.add(liberar);
+  });
+}
+
 function iniciarEscutaLiberacoesExternas() {
   if (!('EventSource' in window)) return; // navegador muito antigo — segue sem esse aviso extra, sem quebrar o resto
   try {
     if (fonteEventosExternos) fonteEventosExternos.close(); // fecha qualquer conexão anterior (pode estar morta em silêncio) antes de abrir outra
     const fonte = new EventSource(`/api/terminal/eventos/stream?token=${encodeURIComponent(TERMINAL_TOKEN)}`);
     fonteEventosExternos = fonte;
+    fonte.addEventListener('giro', () => registrarGiroNoTotem());
     fonte.addEventListener('liberado', (evento) => {
       let dados = {};
       try { dados = JSON.parse(evento.data); } catch { /* payload malformado — segue com objeto vazio, cai no aviso genérico */ }
@@ -1125,6 +1146,8 @@ async function processarResultado(chamada, { aoVoltar } = {}) {
   let cpfParaContas = null;
   let labelBotaoContas = 'Pagar contas em atraso';
   let acessoFoiLiberado = false;
+  let inicioLiberacaoMs = 0;
+  let janelaCatracaAbertaMs = DURACAO_RESULTADO_LIBERADO_MS; // quanto tempo a catraca fica destravada (o servidor informa)
   // Duração real do aviso sonoro desta tentativa (ver aguardarDuracaoResultado
   // logo abaixo) — quem manda quanto tempo a tela de resultado fica visível,
   // no lugar de um tempo fixo arbitrário.
@@ -1134,11 +1157,17 @@ async function processarResultado(chamada, { aoVoltar } = {}) {
     const r = await chamada();
     if (r.autorizado) {
       acessoFoiLiberado = true;
+      inicioLiberacaoMs = Date.now();
+      if (typeof r.catraca_aberta_por_ms === 'number') janelaCatracaAbertaMs = Math.min(Math.max(r.catraca_aberta_por_ms, 1500), 8000);
       overlay.classList.add('liberado');
       document.body.classList.add('tela-flash-liberado');
       document.getElementById('overlay-icone').textContent = '✅';
       document.getElementById('overlay-titulo').textContent = `Bem-vindo(a), ${r.aluno_nome || ''}!`;
-      document.getElementById('overlay-msg').textContent = 'Acesso liberado. Pode entrar.';
+      // ja_liberado: a mesma pessoa olhou de novo pra câmera com a catraca ainda destravada e
+      // sem ter passado (ver acessoTerminal.service.js) — reforça que é só passar.
+      document.getElementById('overlay-msg').textContent = r.ja_liberado
+        ? 'A catraca já está liberada — é só passar!'
+        : 'Acesso liberado. Pode entrar.';
       // Aviso sonoro (2026-07): "Bom treino" só no primeiro acesso liberado do
       // dia (calculado no servidor, ver acessoTerminal.service.js); nos
       // seguintes, o aviso normal de "acesso liberado" (voz ou beep, conforme
@@ -1213,6 +1242,16 @@ async function processarResultado(chamada, { aoVoltar } = {}) {
   // o beep), não um tempo fixo. A catraca em si não depende disso — o
   // destrave físico tem seu próprio tempo, independente do que está na tela
   // (ver HENRY_RELEASE_TIME_DECIMOS em henryCatraca.service.js).
+  if (acessoFoiLiberado) {
+    // Mantém "liberado" na tela até o aviso sonoro terminar E a catraca girar (alguém passou)
+    // ou o tempo destravada acabar — antes sumia junto com o som, e quem não viu a mensagem
+    // olhava de novo e recebia "negado".
+    Promise.all([
+      aguardarDuracaoResultado(promessaSom),
+      aguardarGiroOuTempo(inicioLiberacaoMs, janelaCatracaAbertaMs),
+    ]).then(fecharOverlay);
+    return;
+  }
   aguardarDuracaoResultado(promessaSom).then(fecharOverlay);
 }
 

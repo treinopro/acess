@@ -203,10 +203,13 @@ if ('serviceWorker' in navigator) {
     padding: 16px; text-align: center; background: rgba(15, 23, 42, 0.92);
   }
   .overlay-resultado.visivel { display: flex; }
-  .overlay-resultado .resultado-icone { font-size: 52px; margin-bottom: 8px; }
-  .overlay-resultado .resultado-titulo { font-size: 19px; margin-bottom: 6px; }
-  .overlay-resultado .resultado-msg { font-size: 13px; max-width: 300px; }
-  .overlay-resultado .resultado-vencimento { font-size: 13px; max-width: 300px; margin-top: 8px; font-weight: 600; color: #fbbf24; }
+  /* 2026-10-20 (pedido do dono): fontes das mensagens do totem bem maiores — antes
+     52px/19px/13px, difícil de ler a alguns passos de distância. clamp() acompanha o
+     tamanho da tela (vmin) pra caber tanto no tablet quanto no celular. */
+  .overlay-resultado .resultado-icone { font-size: clamp(72px, 16vmin, 130px); margin-bottom: 10px; line-height: 1.1; }
+  .overlay-resultado .resultado-titulo { font-size: clamp(30px, 7.5vmin, 60px); margin-bottom: 10px; line-height: 1.15; overflow-wrap: anywhere; }
+  .overlay-resultado .resultado-msg { font-size: clamp(22px, 5vmin, 40px); max-width: 94%; line-height: 1.25; color: #e2e8f0; }
+  .overlay-resultado .resultado-vencimento { font-size: clamp(20px, 4.4vmin, 34px); max-width: 94%; margin-top: 12px; font-weight: 600; color: #fbbf24; }
   .overlay-resultado .resultado-vencimento.vencido { color: #f87171; }
   .overlay-resultado.liberado .resultado-icone { color: #10b981; }
   .overlay-resultado.negado .resultado-icone { color: #f87171; }

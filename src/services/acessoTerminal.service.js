@@ -969,6 +969,38 @@ async function liberarNaCatraca(mensagem) {
 const CATEGORIAS_SEM_COOLDOWN_FACIAL = new Set([...CATEGORIA_ACESSO_LIVRE, 'professor']);
 const ultimaLiberacaoFacialPorAluno = new Map();
 
+// 2026-10-20 (pedido do dono): o aluno era liberado, não percebia, olhava de novo pra
+// câmera e recebia "negado" por causa do cooldown acima — sem ter passado na catraca.
+// Agora o servidor sabe se a catraca já GIROU depois da liberação (o agente local avisa
+// cada giro de entrada — evento 81 da catraca, ver registrarGiro e POST /catraca/giro):
+//   - ainda dentro do tempo em que a catraca fica destravada e sem giro: não manda novo
+//     comando nem nega — devolve "liberado" de novo (ja_liberado) pro totem manter a
+//     mensagem "pode passar";
+//   - passou o tempo destravada e ninguém girou: a catraca já travou de novo, então
+//     libera de novo na hora (o cooldown existe contra DUAS aberturas por uma pessoa só,
+//     e aqui nenhuma passagem aconteceu);
+//   - girou: vale o cooldown de sempre.
+// Tempo destravada = o que o agente manda no comando (RELEASE_TIME em
+// agente-local/henryCatraca.js, 40 décimos = 4s). Se mudar lá, ajuste aqui (env).
+const JANELA_LIBERACAO_MS = Number(process.env.CATRACA_JANELA_LIBERACAO_MS) || 4000;
+const ultimaLiberacaoPorAluno = new Map(); // alunoId -> { em, giro }
+let ultimaLiberacaoGlobal = null; // a liberação mais recente (de qualquer aluno) — é ela que o próximo giro "consome"
+const VALIDADE_GIRO_APOS_LIBERACAO_MS = 30 * 1000;
+
+/**
+ * O agente local avisa que a catraca girou (evento 81). `direcao` '1' = entrada; saída
+ * (qualquer outro valor conhecido) não conta como passagem de quem acabou de ser liberado.
+ * Devolve true se o giro "fechou" uma liberação pendente (o totem usa isso pra tirar a tela).
+ */
+function registrarGiro({ direcao } = {}) {
+  if (direcao != null && String(direcao) !== '1') return false;
+  const lib = ultimaLiberacaoGlobal;
+  if (!lib || lib.giro) return false;
+  if (Date.now() - lib.em > VALIDADE_GIRO_APOS_LIBERACAO_MS) return false;
+  lib.giro = true;
+  return true;
+}
+
 /**
  * Fluxo completo: checa status, tenta abrir a catraca se autorizado, registra
  * o log de acesso e retorna o resultado para a tela do totem.
@@ -1006,7 +1038,24 @@ async function tentarLiberar({ aluno, metodo, mensagemDiagnostico }) {
     const agoraMs = Date.now();
     const ultimaVezDesteAluno = ultimaLiberacaoFacialPorAluno.get(aluno.id) || 0;
     const faltam = (cooldownFacialSegundos * 1000) - (agoraMs - ultimaVezDesteAluno);
-    if (faltam > 0) {
+    // Cooldown só vale se a catraca de fato girou depois da última liberação (ver
+    // comentário de JANELA_LIBERACAO_MS acima).
+    const liberacaoAnterior = ultimaLiberacaoPorAluno.get(aluno.id);
+    const semGiroDesdeAUltima = faltam > 0 && liberacaoAnterior && !liberacaoAnterior.giro;
+    if (semGiroDesdeAUltima && (agoraMs - liberacaoAnterior.em) < JANELA_LIBERACAO_MS) {
+      return {
+        autorizado: true,
+        ja_liberado: true,
+        motivo: null,
+        aluno_nome: aluno.nome,
+        aluno_id: aluno.id,
+        cpf: aluno.cpf,
+        aviso_vencimento: avisoVencimento,
+        primeiro_acesso_hoje: false,
+        catraca_aberta_por_ms: Math.max(0, JANELA_LIBERACAO_MS - (agoraMs - liberacaoAnterior.em)),
+      };
+    }
+    if (faltam > 0 && !semGiroDesdeAUltima) {
       const motivoCooldown = 'Aguarde alguns segundos antes da próxima liberação por reconhecimento facial.';
       await registrarAcesso({
         alunoId: aluno.id, metodo, resultado: 'negado', mensagem: motivoCooldown, alunoNome: aluno.nome,
@@ -1030,6 +1079,9 @@ async function tentarLiberar({ aluno, metodo, mensagemDiagnostico }) {
   }
 
   if (metodo === 'facial') ultimaLiberacaoFacialPorAluno.set(aluno.id, Date.now());
+  const liberacaoAgora = { em: Date.now(), giro: false };
+  ultimaLiberacaoPorAluno.set(aluno.id, liberacaoAgora);
+  ultimaLiberacaoGlobal = liberacaoAgora;
 
   // Primeira liberação de um visitante (2026-07-19): grava quando começou a
   // contar o período de dias grátis (ver visitanteDentroDoPeriodo acima).
@@ -1051,10 +1103,11 @@ async function tentarLiberar({ aluno, metodo, mensagemDiagnostico }) {
   await registrarAcesso({
     alunoId: aluno.id, metodo, resultado: 'liberado', mensagem: metodo === 'facial' ? mensagemDiagnostico || null : null, alunoNome: aluno.nome,
   });
-  return { autorizado: true, motivo: null, aluno_nome: aluno.nome, aluno_id: aluno.id, cpf: aluno.cpf, aviso_vencimento: avisoVencimento, primeiro_acesso_hoje: primeiroAcessoHoje };
+  return { autorizado: true, motivo: null, aluno_nome: aluno.nome, aluno_id: aluno.id, cpf: aluno.cpf, aviso_vencimento: avisoVencimento, primeiro_acesso_hoje: primeiroAcessoHoje, catraca_aberta_por_ms: JANELA_LIBERACAO_MS };
 }
 
 module.exports = {
+  registrarGiro,
   gerarCodigoAcesso,
   garantirCodigoAcesso,
   calcularProximoCodigoAluno,

@@ -142,7 +142,25 @@ function emitirLiberado({ metodo, alunoNome, motivo } = {}) {
   }
 }
 
+/**
+ * Avisa o totem que a catraca acabou de girar (alguém passou) depois de uma liberação —
+ * a tela "pode passar" pode sair na hora em vez de esperar o tempo que a catraca fica
+ * destravada (ver registrarGiro em acessoTerminal.service.js).
+ */
+function emitirGiro() {
+  if (clientes.size === 0) return;
+  const payload = JSON.stringify({ em: Date.now() });
+  for (const res of clientes) {
+    try {
+      res.write(`event: giro\ndata: ${payload}\n\n`);
+    } catch {
+      // Conexão morta — removida quando o 'close' do response disparar.
+    }
+  }
+}
+
 module.exports = {
+  emitirGiro,
   registrarCliente,
   removerCliente,
   emitirLiberado,

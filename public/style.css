@@ -243,7 +243,12 @@ body {
 .catraca-historico-scroll .tabela { border-radius: 0; }
 .catraca-historico-scroll thead th { position: sticky; top: 0; }
 
-.conteudo { flex: 1; padding: 32px 40px; max-width: 1100px; margin-left: 220px; }
+.conteudo { flex: 1; padding: 32px 40px; max-width: 1440px; margin-left: 220px; }
+/* Notebook (ou Windows com escala 125%/150%): sobra pouca largura útil, então
+   tira um pouco do respiro lateral pra tabela caber sem esconder a coluna Ações. */
+@media (max-width: 1440px) and (min-width: 901px) {
+  .conteudo { padding: 24px 24px; }
+}
 
 .secao-topo { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
 .secao-topo h2 { margin: 0; font-size: 20px; }
@@ -404,9 +409,20 @@ body {
 .financeiro-resumo-acesso strong.liberado { color: #067647; }
 .financeiro-resumo-acesso strong.bloqueado { color: #d92d20; }
 .financeiro-resumo-motivo { margin: 2px 0 0; font-size: 12px; color: #667085; }
-@media (max-width: 900px) {
-  .financeiro-perfil-layout { flex-direction: column; }
-  .financeiro-resumo { width: 100%; box-sizing: border-box; order: -1; } /* no celular o resumo vem antes da tabela */
+/* Até ~notebook o resumo sobe pra cima da tabela (em grade compacta) e a
+   tabela fica com a largura inteira — com ele ao lado, a coluna Ações
+   (Alterar/Parcelar/Excluir) ficava escondida atrás da rolagem horizontal. */
+@media (max-width: 1400px) {
+  .financeiro-perfil-layout { flex-direction: column; align-items: stretch; }
+  .financeiro-resumo {
+    width: 100%; box-sizing: border-box; order: -1;
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); column-gap: 20px;
+  }
+  .financeiro-resumo h4, .financeiro-resumo-motivo { grid-column: 1 / -1; }
+  .financeiro-resumo h4 { margin-bottom: 4px; }
+  .financeiro-resumo-acesso { padding: 6px 0; gap: 10px; }
+  .financeiro-perfil-tabela th, .financeiro-perfil-tabela td { padding: 8px; font-size: 12.5px; }
+  .financeiro-perfil-tabela .btn-linha { padding: 4px 8px; }
 }
 
 /* Modal "Adicionar exercício": séries/reps/carga/intervalo valendo pra todos + ajuste por exercício */

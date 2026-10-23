@@ -2515,6 +2515,10 @@ document.getElementById('form-conta-perfil').addEventListener('submit', async (e
         valor_centavos: Math.round(parseFloat(document.getElementById('conta-perfil-valor').value) * 100),
         vencimento: document.getElementById('conta-perfil-vencimento').value || null,
         status: document.getElementById('conta-perfil-status').value,
+        // Plano escolhido → o servidor liga a conta na matrícula desse plano (traz o
+        // desconto no pagamento e evita o gerador criar a mesma mensalidade de novo).
+        plano_id: document.getElementById('conta-perfil-plano').selectedOptions[0]?.dataset.tipo === 'plano'
+          ? document.getElementById('conta-perfil-plano').value : null,
       };
       await api('/api/pagamentos/cobrancas', { method: 'POST', body: JSON.stringify(dados) });
     }
@@ -4939,6 +4943,10 @@ document.getElementById('form-conta-manual').addEventListener('submit', async (e
         valor_centavos: Math.round(parseFloat(document.getElementById('conta-valor').value) * 100),
         vencimento: document.getElementById('conta-vencimento').value || null,
         status: document.getElementById('conta-status').value,
+        // Plano escolhido → o servidor liga a conta na matrícula desse plano (traz o
+        // desconto no pagamento e evita o gerador criar a mesma mensalidade de novo).
+        plano_id: document.getElementById('conta-plano').selectedOptions[0]?.dataset.tipo === 'plano'
+          ? document.getElementById('conta-plano').value : null,
       };
       await api('/api/pagamentos/cobrancas', { method: 'POST', body: JSON.stringify(dados) });
     }

@@ -6,7 +6,7 @@ const db = require('../db/client');
 const dbOffline = require('../db/clientOffline');
 const { autenticar, apenasAdmin } = require('../middleware/auth');
 const mercadopago = require('../services/payment/mercadopago.service');
-const { gerarCobrancasRecorrentes, ultimoDiaDoMes } = require('../services/cobrancas.service');
+const { gerarCobrancasRecorrentes, ultimoDiaDoMes, resolverMatriculaDaConta } = require('../services/cobrancas.service');
 const { criarLimitador } = require('../middleware/rateLimit');
 const acessoTerminal = require('../services/acessoTerminal.service');
 const dbResiliente = require('../services/dbResiliente.service');
@@ -68,6 +68,7 @@ router.post('/cobrancas', autenticar, async (req, res, next) => {
     const schema = z.object({
       aluno_id: z.string(),
       matricula_id: z.string().optional().nullable(),
+      plano_id: z.string().optional().nullable(), // plano escolhido no formulário — ver resolverMatriculaDaConta
       valor_centavos: z.number().int().positive(),
       descricao: z.string().default('Mensalidade'),
       vencimento: z.string().optional().nullable(),
@@ -77,11 +78,14 @@ router.post('/cobrancas', autenticar, async (req, res, next) => {
     const dados = schema.parse(req.body);
     const id = uuid();
     const agora = new Date().toISOString();
+    const matriculaId = dados.matricula_id || await resolverMatriculaDaConta({
+      alunoId: dados.aluno_id, planoId: dados.plano_id, descricao: dados.descricao,
+    });
 
     await db.execute({
       sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento, metodo_pagamento, pago_em)
             VALUES (?, ?, ?, ?, ?, 'manual', ?, ?, ?, ?)`,
-      args: [id, dados.aluno_id, dados.matricula_id || null, dados.valor_centavos, dados.status,
+      args: [id, dados.aluno_id, matriculaId, dados.valor_centavos, dados.status,
         dados.descricao, dados.vencimento || null, dados.metodo_pagamento || null,
         dados.status === 'pago' ? agora : null],
     });

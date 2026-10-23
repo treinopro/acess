@@ -76,6 +76,53 @@ async function criarCobrancaDoCiclo({ matriculaId, alunoId, descricao, valorCent
   return id;
 }
 
+// Conta lançada à mão ("+ Incluir conta") nasce sem matricula_id, e é pela
+// matrícula que (1) a tela acha o desconto do plano no pagamento (ex.: "5% no
+// dinheiro") e (2) o gerador sabe que aquele mês já foi cobrado. Sem esse
+// vínculo, a mensalidade lançada antecipadamente era gerada de novo no mês
+// seguinte (2026-10-23). Regra: se escolheu um plano no formulário, liga na
+// matrícula ativa desse plano; se for "Personalizado" com descrição
+// "Mensalidade..." e o aluno tem UMA única matrícula ativa recorrente, liga
+// nela. Fora isso, fica sem vínculo (conta avulsa de verdade).
+async function resolverMatriculaDaConta({ alunoId, planoId, descricao }) {
+  if (planoId) {
+    const r = await db.execute({
+      sql: `SELECT id FROM matriculas WHERE aluno_id = ? AND plano_id = ? AND status = 'ativa'
+            ORDER BY data_inicio DESC LIMIT 1`,
+      args: [alunoId, planoId],
+    });
+    return r.rows[0]?.id || null;
+  }
+  if (!/^\s*mensalidade/i.test(descricao || '')) return null;
+  const r = await db.execute({
+    sql: `SELECT m.id FROM matriculas m JOIN planos p ON p.id = m.plano_id
+          WHERE m.aluno_id = ? AND m.status = 'ativa' AND p.tipo IN (${TIPOS_RECORRENTES.map(() => '?').join(', ')})`,
+    args: [alunoId, ...TIPOS_RECORRENTES],
+  });
+  return r.rows.length === 1 ? r.rows[0].id : null;
+}
+
+// Mensalidade do mesmo mês lançada à mão SEM vínculo com a matrícula (contas
+// criadas antes de resolverMatriculaDaConta existir, ou migradas). Só vale
+// quando o aluno tem uma única matrícula recorrente ativa — com duas, não dá
+// pra saber de qual plano é a conta avulsa.
+async function acharMensalidadeAvulsaDoMes({ alunoId, vencimento }) {
+  const ativas = await db.execute({
+    sql: `SELECT COUNT(*) as total FROM matriculas m JOIN planos p ON p.id = m.plano_id
+          WHERE m.aluno_id = ? AND m.status = 'ativa' AND p.tipo IN (${TIPOS_RECORRENTES.map(() => '?').join(', ')})`,
+    args: [alunoId, ...TIPOS_RECORRENTES],
+  });
+  if (Number(ativas.rows[0]?.total) !== 1) return null;
+  const r = await db.execute({
+    sql: `SELECT id FROM cobrancas
+          WHERE aluno_id = ? AND matricula_id IS NULL AND substr(vencimento, 1, 7) = ?
+            AND status NOT IN ('cancelado', 'estornado') AND lower(descricao) LIKE 'mensalidade%'
+          LIMIT 1`,
+    args: [alunoId, vencimento.slice(0, 7)],
+  });
+  return r.rows[0]?.id || null;
+}
+
 // Último dia do mês (YYYY-MM-DD) de uma competência "YYYY-MM" — usado como
 // limite padrão de "gerar contas até o mês corrente" quando o painel não
 // informa um período específico.
@@ -165,7 +212,18 @@ async function gerarCobrancasRecorrentes({ ateData } = {}) {
         sql: `SELECT id FROM cobrancas WHERE matricula_id = ? AND vencimento = ?`,
         args: [matricula.id, proximoVencimento],
       });
-      if (!jaExiste.rows[0]) {
+      // Mensalidade deste mês já lançada à mão (sem vínculo)? Liga ela na
+      // matrícula em vez de gerar outra — senão o aluno fica com duas contas.
+      const avulsaId = jaExiste.rows[0]
+        ? null
+        : await acharMensalidadeAvulsaDoMes({ alunoId: matricula.aluno_id, vencimento: proximoVencimento });
+      if (avulsaId) {
+        await db.execute({ sql: 'UPDATE cobrancas SET matricula_id = ? WHERE id = ?', args: [matricula.id, avulsaId] });
+        await db.execute({
+          sql: 'UPDATE matriculas SET data_fim = ? WHERE id = ?',
+          args: [proximoVencimento, matricula.id],
+        });
+      } else if (!jaExiste.rows[0]) {
         await criarCobrancaDoCiclo({
           matriculaId: matricula.id,
           alunoId: matricula.aluno_id,
@@ -225,4 +283,5 @@ module.exports = {
   ultimoDiaDoMes,
   atualizarCobrancasVencidas,
   primeiroVencimento,
+  resolverMatriculaDaConta,
 };

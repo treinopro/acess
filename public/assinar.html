@@ -292,6 +292,7 @@
     if (o.preview) return renderOferta(o);
     if (o.status === 'authorized') return ativo(o);
     if (o.status === 'cancelled') return estado('ℹ️', 'Esta oferta não está mais disponível', 'Fale com a recepção para gerar um novo link.', o.whatsapp_contato);
+    if (o.status === 'completed') return estado('✅', 'Contrato concluído!', 'As 12 cobranças foram concluídas. Para continuar treinando, fale com a recepção sobre a renovação.', o.whatsapp_contato);
     if (o.status === 'paused') return estado('⏸️', 'Assinatura pausada', 'Fale com a recepção para retomar.', o.whatsapp_contato);
     if (voltouDoCartao) return confirmarAtivacao(o, 0);
     if (!o.init_point) return estado('ℹ️', 'Link indisponível', 'Fale com a recepção para gerar um novo link.', o.whatsapp_contato);

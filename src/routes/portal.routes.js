@@ -848,6 +848,7 @@ router.post('/cadastro', async (req, res, next) => {
       valor_centavos: p.valor_centavos,
       aluno_nome: dados.nome,
       senha_acesso: senhaAcesso,
+      cronograma_recorrencia: assinaturas.cronogramaCobrancaAutomatica(vencimentoCobranca),
     });
     } finally {
       acessoTerminal.liberarCpfDoCadastro(dados.cpf);

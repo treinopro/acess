@@ -1998,6 +1998,7 @@ let cadastroPortalSenhaAtual = null; // senha do portal já gerada no cadastro (
 let cadastroPortalPollTimer = null;
 let cadastroPortalCobrancaId = null;
 let cadastroPortalMatriculaId = null;
+let cadastroPortalCronograma = null;
 
 function resetCadastroPortal() {
   pararPollCadastroPortal();
@@ -2006,6 +2007,7 @@ function resetCadastroPortal() {
   cadastroPortalSenhaAtual = null;
   cadastroPortalCobrancaId = null;
   cadastroPortalMatriculaId = null;
+  cadastroPortalCronograma = null;
   document.getElementById('portal-cadastro-nome').value = '';
   document.getElementById('portal-cadastro-cpf').value = '';
   document.getElementById('portal-cadastro-telefone').value = '';
@@ -2059,7 +2061,7 @@ document.getElementById('btn-portal-cadastro-continuar').addEventListener('click
     const resp=await api('/api/portal/cadastro',{method:'POST',body:JSON.stringify({nome,cpf,telefone,email,data_nascimento:dataNascimento,plano_id:planoId,indicado_por_cpf:indicadoPorCpf||null})});
     cadastroPortalCpfAtual=cpf;
     if(resp.visitante){document.getElementById('painel-cadastro-portal-form').classList.add('oculto');document.getElementById('painel-cadastro-portal-sucesso').classList.remove('oculto');document.getElementById('portal-cadastro-sucesso-msg').textContent='Cadastro de visitante concluído! Bem-vindo(a), '+(resp.aluno_nome||'')+'. Use "Já sou aluno" com seu CPF para acessar o portal e ver sua senha.';document.getElementById('portal-cadastro-senha-caixa').textContent='';return;}
-    cadastroPortalSenhaAtual=resp.senha_acesso;cadastroPortalCobrancaId=resp.cobranca_id;cadastroPortalMatriculaId=resp.matricula_id;
+    cadastroPortalSenhaAtual=resp.senha_acesso;cadastroPortalCobrancaId=resp.cobranca_id;cadastroPortalMatriculaId=resp.matricula_id;cadastroPortalCronograma=resp.cronograma_recorrencia||null;
     document.getElementById('painel-cadastro-portal-form').classList.add('oculto');document.getElementById('painel-cadastro-portal-pagamento').classList.remove('oculto');
     document.getElementById('portal-cadastro-valor').textContent='Plano escolhido: '+formatarMoeda(resp.valor_centavos);
     document.getElementById('portal-cadastro-senha-pendente').textContent=cadastroPortalSenhaAtual||'';
@@ -2069,21 +2071,37 @@ document.getElementById('btn-portal-cadastro-continuar').addEventListener('click
   }catch(err){erroEl.textContent=err.message;}finally{btn.disabled=false;btn.textContent='Continuar';}
 });
 
+function formatarDataBR(iso){const m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso||''));return m?m[3]+'/'+m[2]+'/'+m[1]:'';}
+function blocoExplicativoRecorrencia(){
+ const c=cadastroPortalCronograma;
+ const prox=c&&c.proxima_cobranca?formatarDataBR(c.proxima_cobranca):'';
+ const primeira=c&&c.primeira_ao_cadastrar===false&&c.primeira_cobranca?'A primeira cobrança será no dia <strong>'+formatarDataBR(c.primeira_cobranca)+'</strong> (vencimento da sua matrícula).':'A primeira cobrança acontece assim que você cadastrar o cartão, na próxima página.';
+ const proxima=prox?'<div style="margin-top:6px">📅 <strong>Próxima cobrança automática: dia '+prox+'</strong>, e depois todo mês no mesmo dia.</div>':'<div style="margin-top:6px">📅 <strong>As próximas cobranças são automáticas, todo mês, no vencimento da sua matrícula.</strong></div>';
+ return '<div style="background:#0f172a;border:1px solid #10b981;border-radius:10px;padding:12px;margin:10px 0;font-size:14px;line-height:1.45">'
+  +'<div style="font-weight:800;color:#10b981">🔁 Como funciona o pagamento recorrente</div>'
+  +'<div style="margin-top:6px">Na próxima página você cadastra o cartão uma única vez. A mensalidade passa a ser <strong>cobrada automaticamente no cartão</strong> a cada vencimento — você não precisa se preocupar nem lembrar de pagar.</div>'
+  +'<div style="margin-top:6px">'+primeira+'</div>'
+  +proxima
+  +'<div style="margin-top:6px">💳 <strong>Não ocupa o limite do cartão:</strong> é cobrado somente o valor de cada mês, não o total do contrato.</div>'
+  +'<div style="margin-top:6px">🙋 Quer cancelar? É só falar com a <strong>recepção</strong>.</div>'
+  +'</div>';
+}
 async function carregarOfertaRecorrenciaNovoAluno(){
  const container=document.getElementById('oferta-recorrencia-novo-aluno');if(!container)return;
  let opcoes=[];
  try{const dados=await api('/api/portal/cadastro/recorrencia/planos');opcoes=Array.isArray(dados.opcoes)?dados.opcoes:[];}catch(e){/* Pix continua disponível mesmo se a lista não carregar. */}
  const cards=opcoes.map((p,i)=>{
   const mensal=formatarMoeda(p.valor_final_centavos);
-  const detalhe=p.limite_cobrancas?String(p.limite_cobrancas)+' parcelas de '+mensal+' no cartão':'Cobrança mensal contínua • Sem permanência mínima';
+  const detalhe=p.limite_cobrancas?String(p.limite_cobrancas)+' cobranças mensais de '+mensal+' (uma por mês, durante '+p.limite_cobrancas+' meses)':'Cobrança automática todo mês, por tempo indeterminado • Sem permanência mínima';
   const desconto=p.desconto_centavos>0?'<small style="display:block;color:#64748b">De '+formatarMoeda(p.valor_centavos)+' por mês</small>':'';
   const classe=i===0?'primario':'secundario';
   return '<div style="background:#0f172a;border-radius:10px;padding:12px;margin:10px 0"><strong>'+escapeHtml(p.nome)+'</strong><div style="font-size:23px;font-weight:800;color:#10b981">'+mensal+'/mês</div>'+desconto+'<small>'+escapeHtml(detalhe)+'</small><button type="button" data-modalidade="'+escapeHtml(p.id)+'" data-rotulo="'+escapeHtml(p.nome)+'" class="botao-grande '+classe+'" style="margin-top:8px">Escolher '+escapeHtml(p.nome)+'</button></div>';
  }).join('');
  container.innerHTML=`
   <div style="text-align:left"><div style="font-weight:800;color:#10b981">⚡ ESCOLHA COMO DESEJA PAGAR</div>
-  <h3 style="margin:8px 0">Condição especial no cartão</h3>
+  <h3 style="margin:8px 0">Pagamento automático no cartão</h3>
   <p>Seu cadastro e sua matrícula foram registrados, mas ainda não ativados. Escolha uma opção:</p>
+  ${cards?blocoExplicativoRecorrencia():''}
   ${cards||'<p>No momento não há modalidades de recorrência disponíveis.</p>'}
   <button type="button" data-escolher-pix class="botao-grande primario" style="width:100%;margin-top:12px">Continuar com Pix do plano escolhido</button>
   <small>Se sair agora, seu cadastro ficará salvo como pendente, sem cobrança nem ativação.</small><div class="erro-msg" data-erro-recorrencia></div></div>`;

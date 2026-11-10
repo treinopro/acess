@@ -790,6 +790,15 @@ function somarMesesISO(dataISO, meses) {
   return `${alvo.getUTCFullYear()}-${String(alvo.getUTCMonth() + 1).padStart(2, '0')}-${String(Math.min(dia, ultimoDia)).padStart(2, '0')}`;
 }
 
+// Quando o aluno será cobrado no cartão, a partir do vencimento da matrícula (dia 10/20):
+//  • vencimento no futuro  → a 1ª cobrança é nessa data e a próxima, 1 mês depois;
+//  • vencimento hoje/passado → a 1ª cobrança é ao cadastrar o cartão e a próxima, 1 mês depois dela.
+function cronogramaCobrancaAutomatica(vencimento, hoje = new Date().toISOString().slice(0, 10)) {
+  const v = String(vencimento || '').slice(0, 10);
+  if (v && v > hoje) return { primeira_cobranca: v, primeira_ao_cadastrar: false, proxima_cobranca: somarMesesISO(v, 1) };
+  return { primeira_cobranca: hoje, primeira_ao_cadastrar: true, proxima_cobranca: somarMesesISO(hoje, 1) };
+}
+
 // Na migração: reaproveita a primeira mensalidade em aberto. Se a competência
 // atual já foi quitada, inicia no próximo vencimento mensal; não cria segunda
 // cobrança para a mesma competência.
@@ -935,5 +944,5 @@ module.exports = {
   habilitado, criarAssinatura, listar, cancelar, processarEvento, processarPagamentoAprovado,
   ofertaPublica, disponibilidadeParaAluno, obterOuCriarParaAluno, obterOuCriarParaNovoCadastro, baseUrlDaRequisicao, urlOferta,
   obterOferta, salvarOferta, calcularDescontoCentavos, OFERTA_PADRAO,
-  obterPlanosCadastro, salvarPlanosCadastro, listarPlanosCadastroPublicos, expirarCheckoutsAbandonados, reconciliarAssinaturas,
+  obterPlanosCadastro, salvarPlanosCadastro, listarPlanosCadastroPublicos, expirarCheckoutsAbandonados, reconciliarAssinaturas, cronogramaCobrancaAutomatica,
 };

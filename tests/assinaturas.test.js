@@ -605,3 +605,14 @@ test('recurso desligado: não oferece modalidades no cadastro', async () => {
   }
   assert.ok((await assinaturas.listarPlanosCadastroPublicos()).length >= 1);
 });
+
+test('cronograma da cobrança automática segue o vencimento da matrícula', () => {
+  // Vencimento no futuro (aluno entrou dia 5, vence dia 10): 1ª cobrança nessa data, próxima 1 mês depois.
+  assert.deepStrictEqual(assinaturas.cronogramaCobrancaAutomatica('2026-11-10', '2026-11-05'),
+    { primeira_cobranca: '2026-11-10', primeira_ao_cadastrar: false, proxima_cobranca: '2026-12-10' });
+  // Vencimento já passado (entrou dia 12, venceu dia 10): cobra ao cadastrar o cartão; próxima em 1 mês.
+  assert.deepStrictEqual(assinaturas.cronogramaCobrancaAutomatica('2026-11-10', '2026-11-12'),
+    { primeira_cobranca: '2026-11-12', primeira_ao_cadastrar: true, proxima_cobranca: '2026-12-12' });
+  // Fim de mês: 31/01 → 28/02.
+  assert.strictEqual(assinaturas.cronogramaCobrancaAutomatica('2027-01-20', '2027-01-31').proxima_cobranca, '2027-02-28');
+});

@@ -209,7 +209,7 @@ test('portal: card disponível, reaproveita a assinatura pendente e some depois 
   assert.strictEqual(d.oferta_url, null);
 
   const r1 = await assinaturas.obterOuCriarParaAluno({ alunoId: 'p1x', baseUrl: base, modalidade: 'mensal_livre' });
-  const r2 = await assinaturas.obterOuCriarParaAluno({ alunoId: 'p1x', baseUrl: base });
+  const r2 = await assinaturas.obterOuCriarParaAluno({ alunoId: 'p1x', baseUrl: base, modalidade: 'mensal_livre' });
   assert.strictEqual(r1.oferta_url, r2.oferta_url);   // não cria assinatura duplicada
   const qtd = (await db.execute({ sql: `SELECT COUNT(*) n FROM assinaturas_mp WHERE aluno_id='p1x'` })).rows[0].n;
   assert.strictEqual(Number(qtd), 1);
@@ -217,7 +217,7 @@ test('portal: card disponível, reaproveita a assinatura pendente e some depois 
   await db.execute({ sql: `UPDATE assinaturas_mp SET status='authorized' WHERE aluno_id='p1x'` });
   d = await assinaturas.disponibilidadeParaAluno({ alunoId: 'p1x', baseUrl: base });
   assert.strictEqual(d.disponivel, false);
-  await assert.rejects(assinaturas.obterOuCriarParaAluno({ alunoId: 'p1x', baseUrl: base }), /não está disponível/);
+  await assert.rejects(assinaturas.obterOuCriarParaAluno({ alunoId: 'p1x', baseUrl: base, modalidade: 'mensal_livre' }), /não está disponível/);
 });
 
 test('portal: plano avulso e recurso desligado não mostram o card', async () => {
@@ -366,23 +366,20 @@ test('baixa com valor inesperado NÃO fecha a conta (fica para conferência)', a
   assert.strictEqual(reg.baixa, 'valor_divergente');
 });
 
-test('portal: mostra o preço ATUAL e recria a pendente quando o desconto mudou', async () => {
+test('portal: permite trocar modalidade pendente sem manter duas assinaturas', async () => {
   const base = 'https://academia.test';
   await novoAlunoComMatricula('d2');
-  const r1 = await assinaturas.obterOuCriarParaAluno({ alunoId: 'd2', baseUrl: base });   // criada com 10% off (8910)
-  let d = await assinaturas.disponibilidadeParaAluno({ alunoId: 'd2', baseUrl: base });
-  assert.strictEqual(d.valor_centavos, 8910);
-  assert.strictEqual(d.oferta_url, r1.oferta_url);                                          // preço igual: reaproveita
+  const r1 = await assinaturas.obterOuCriarParaAluno({ alunoId: 'd2', baseUrl: base, modalidade: '12_meses' });
+  const primeira = (await db.execute({ sql: `SELECT id, modalidade, valor_centavos FROM assinaturas_mp WHERE aluno_id='d2' AND status='pending'` })).rows[0];
+  assert.strictEqual(primeira.modalidade, '12_meses');
+  assert.strictEqual(Number(primeira.valor_centavos), 6500);
 
-  await assinaturas.salvarOferta({ ...(await assinaturas.obterOferta()), desconto: { ativo: true, tipo: 'valor', percentual: 0, valor_centavos: 2000 } });
-  d = await assinaturas.disponibilidadeParaAluno({ alunoId: 'd2', baseUrl: base });
-  assert.strictEqual(d.valor_centavos, 7900);
-  assert.strictEqual(d.oferta_url, null);                                                   // preço mudou: link antigo não vale
-
-  const r2 = await assinaturas.obterOuCriarParaAluno({ alunoId: 'd2', baseUrl: base });
+  const r2 = await assinaturas.obterOuCriarParaAluno({ alunoId: 'd2', baseUrl: base, modalidade: 'mensal_livre' });
   assert.notStrictEqual(r2.oferta_url, r1.oferta_url);
-  const abertas = (await db.execute({ sql: `SELECT COUNT(*) n FROM assinaturas_mp WHERE aluno_id='d2' AND status='pending'` })).rows[0].n;
-  assert.strictEqual(Number(abertas), 1);                                                   // a antiga foi cancelada
+  const abertas = (await db.execute({ sql: `SELECT modalidade, valor_centavos FROM assinaturas_mp WHERE aluno_id='d2' AND status='pending'` })).rows;
+  assert.strictEqual(abertas.length, 1);
+  assert.strictEqual(abertas[0].modalidade, 'mensal_livre');
+  assert.strictEqual(Number(abertas[0].valor_centavos), 7000);
   const antiga = await assinaturas.ofertaPublica(r1.oferta_url.split('/').pop());
   assert.strictEqual(antiga.status, 'cancelled');
 });

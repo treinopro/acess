@@ -86,6 +86,9 @@ const ALTERACOES_INCREMENTAIS = [
   "ALTER TABLE assinaturas_mp ADD COLUMN limite_cobrancas INTEGER",
   "ALTER TABLE assinaturas_mp ADD COLUMN cobrancas_processadas INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE assinaturas_mp ADD COLUMN data_primeira_cobranca TEXT",
+  "ALTER TABLE assinaturas_mp ADD COLUMN cobranca_inicial_id TEXT",
+  "ALTER TABLE assinaturas_mp ADD COLUMN valor_anterior_centavos INTEGER",
+  "ALTER TABLE assinaturas_mp ADD COLUMN cobranca_inicial_criada INTEGER NOT NULL DEFAULT 0",
 ];
 
 // Divide um arquivo .sql em statements individuais (o driver libsql nao aceita

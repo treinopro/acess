@@ -197,8 +197,14 @@
     if (temDesconto) filhos.push(el('div', { className: 'antes', text: 'De ' + brl(o.valor_cheio_centavos) }));
     filhos.push(el('div', { className: 'valor' }, [el('strong', { text: brl(o.valor_centavos) }), el('span', { text: rotulo })]));
     if (temDesconto) filhos.push(el('span', { className: 'eco', text: '🎉 Você economiza ' + brl(o.desconto_centavos) + (meses === 1 ? ' todo mês' : ' a cada cobrança') }));
-    filhos.push(el('span', { className: 'dia', text: 'Só ' + brl(Math.round(porDia)) + ' por dia para treinar' }));
-    if (meses > 1) filhos.push(el('p', { className: 'nota', text: 'Equivale a ' + brl(Math.round(porMes)) + ' por mês.' }));
+    if (o.modalidade === '12_meses') {
+      filhos.push(el('p', { className: 'nota', text: 'Compromisso de 12 cobranças mensais. Total contratado: ' + brl(o.total_contratado_centavos || 78000) + '.' }));
+    } else if (o.modalidade === 'mensal_livre') {
+      filhos.push(el('p', { className: 'nota', text: 'Sem fidelidade ou permanência mínima. Cobrança mensal automática.' }));
+    } else if (meses > 1) {
+      filhos.push(el('p', { className: 'nota', text: 'Equivale a ' + brl(Math.round(porMes)) + ' por mês.' }));
+    }
+    filhos.push(el('span', { className: 'dia', text: 'Pagamento automático no cartão, sem comprometer o limite total de vários meses.' }));
     return el('section', { className: 'preco' }, filhos);
   }
 

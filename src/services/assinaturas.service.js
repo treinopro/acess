@@ -213,7 +213,10 @@ async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPr
   const frequenciaMeses = modalidade ? 1 : MESES_POR_TIPO[m.tipo];
   const limiteCobrancas = modalidade === '12_meses' ? 12 : null;
   const dataFimCobranca = modalidade === '12_meses' && dataPrimeiraCobranca
-    ? new Date(Date.UTC(Number(dataPrimeiraCobranca.slice(0,4)), Number(dataPrimeiraCobranca.slice(5,7))-1+11, Number(dataPrimeiraCobranca.slice(8,10)), 23, 59, 59)).toISOString()
+    ? `${somarMesesISO(dataPrimeiraCobranca, 11)}T23:59:59.000-03:00`
+    : null;
+  const dataInicioMP = dataPrimeiraCobranca && dataPrimeiraCobranca > new Date().toISOString().slice(0, 10)
+    ? `${dataPrimeiraCobranca}T00:00:00.000-03:00`
     : null;
   const mp = await mercadopago.criarAssinaturaPendente({
     razao: `${m.plano_nome} — ${m.aluno_nome}`,
@@ -222,7 +225,7 @@ async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPr
     emailPagador: m.email,
     referenciaExterna: id,
     urlRetorno: urlRetorno(baseUrl, id),
-    dataInicio: dataPrimeiraCobranca ? `${dataPrimeiraCobranca}T00:00:00.000-03:00` : null,
+    dataInicio: dataInicioMP,
     dataFim: dataFimCobranca,
   });
   if (!mp?.id) throw erro('Mercado Pago não devolveu o id da assinatura.', 502);
@@ -336,6 +339,9 @@ async function baixarParcela({ assinatura, paymentId, valorCentavos, metodo }) {
             VALUES (?, ?, date('now', 'localtime'), ?, 'cartao_credito', NULL)`,
       args: [uuid(), conta.id, pago],
     });
+    if (assinatura.modalidade && assinatura.modalidade !== 'legado') {
+      await registrarProximaCobranca(assinatura, conta);
+    }
   } else if (baixa === 'sem_cobranca') {
     console.warn(`[assinaturas] parcela ${paymentId} aprovada mas a matrícula ${assinatura.matricula_id} não tem conta em aberto — registrada como "sem_cobranca" para conferência.`);
   } else {
@@ -343,6 +349,39 @@ async function baixarParcela({ assinatura, paymentId, valorCentavos, metodo }) {
   }
   await atualizarStatus(assinatura.preapproval_id, 'authorized');
   return { baixada: baixa === 'baixada', cobrancaId: conta?.id || null, alunoId: assinatura.aluno_id };
+}
+
+async function registrarProximaCobranca(assinatura, cobrancaAtual) {
+  const atualizada = await db.execute({
+    sql: `UPDATE assinaturas_mp SET cobrancas_processadas = cobrancas_processadas + 1, atualizado_em = datetime('now') WHERE id = ?`,
+    args: [assinatura.id],
+  });
+  const lida = await db.execute({ sql: 'SELECT * FROM assinaturas_mp WHERE id = ?', args: [assinatura.id] });
+  const a = lida.rows[0];
+  if (!a) return;
+  const quantidade = Number(a.cobrancas_processadas || 0);
+  const limite = a.limite_cobrancas == null ? null : Number(a.limite_cobrancas);
+  if (limite && quantidade >= limite) {
+    // Fecha a assinatura limitada após a 12ª cobrança aprovada.
+    try { await mercadopago.cancelarAssinatura(a.preapproval_id); }
+    catch (err) { console.error('[assinaturas] não foi possível encerrar no Mercado Pago após o último ciclo:', err.message); }
+    await db.execute({
+      sql: `UPDATE assinaturas_mp SET status = 'completed', atualizado_em = datetime('now') WHERE id = ?`,
+      args: [a.id],
+    });
+    await db.execute({
+      sql: `UPDATE matriculas SET data_fim = ?, renovacao_automatica = 0 WHERE id = ?`,
+      args: [cobrancaAtual.vencimento, a.matricula_id],
+    });
+    return;
+  }
+  const proximoVencimento = somarMesesISO(String(cobrancaAtual.vencimento), 1);
+  const descricao = a.modalidade === '12_meses' ? 'Recorrência 12 meses - R$ 65,00' : 'Recorrência mensal - R$ 70,00';
+  await db.execute({
+    sql: `INSERT OR IGNORE INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento)
+          VALUES (?, ?, ?, ?, 'pendente', 'recorrencia', ?, ?)`,
+    args: [uuid(), a.aluno_id, a.matricula_id, a.valor_centavos, descricao, proximoVencimento],
+  });
 }
 
 async function buscarPorPreapproval(preapprovalId) {
@@ -366,7 +405,15 @@ async function processarEvento({ type, dataId }) {
 
   if (type === 'subscription_preapproval') {
     const mp = await mercadopago.consultarAssinatura(dataId);
-    if (mp?.id) await atualizarStatus(mp.id, mp.status);
+    if (mp?.id) {
+      await atualizarStatus(mp.id, mp.status);
+      if (mp.status === 'authorized') {
+        const assinatura = await buscarPorPreapproval(mp.id);
+        if (assinatura?.modalidade && assinatura.modalidade !== 'legado') {
+          await db.execute({ sql: 'UPDATE matriculas SET renovacao_automatica = 0 WHERE id = ?', args: [assinatura.matricula_id] });
+        }
+      }
+    }
     return null;
   }
 

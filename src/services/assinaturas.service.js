@@ -265,6 +265,8 @@ async function cancelar({ assinaturaId }) {
   if (a.status === 'cancelled' || a.status === 'completed') return { id: a.id, status: a.status };
   await mercadopago.cancelarAssinatura(a.preapproval_id);
   await atualizarStatus(a.preapproval_id, 'cancelled');
+  // Checkout pendente ainda não migrou a matrícula nem encerrou a modalidade atual.
+  if (a.status === 'pending') return { id: a.id, status: 'cancelled' };
   const ultimaPaga = await db.execute({
     sql: `SELECT vencimento FROM cobrancas WHERE matricula_id = ? AND status = 'pago' ORDER BY vencimento DESC, pago_em DESC LIMIT 1`,
     args: [a.matricula_id],

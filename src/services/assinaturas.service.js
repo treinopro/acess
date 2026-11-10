@@ -800,7 +800,7 @@ async function disponibilidadeParaAluno({ alunoId, baseUrl }) {
 // Reaproveita assinatura pendente da mesma modalidade. Uma assinatura ativa impede
 // criar outra, para não manter duas cobranças automáticas simultâneas.
 async function obterOuCriarParaAluno({ alunoId, baseUrl, modalidade }) {
-  if (!['12_meses', 'mensal_livre'].includes(modalidade)) throw erro('Escolha uma das modalidades disponíveis.', 400);
+  if (typeof modalidade !== 'string' || !modalidade.trim()) throw erro('Escolha uma das modalidades disponíveis.', 400);
   const disp = await disponibilidadeParaAluno({ alunoId, baseUrl });
   if (!disp.disponivel) throw erro('Pagamento automático não está disponível para este aluno.', 409);
   const m = await matriculaElegivel(alunoId);

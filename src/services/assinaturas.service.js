@@ -497,7 +497,7 @@ async function registrarProximaCobranca(assinatura, cobrancaAtual) {
       args: [a.matricula_id, proximoVencimento],
     });
   }
-  const descricao = a.modalidade === '12_meses' ? 'Recorrência 12 meses - R$ 65,00' : 'Recorrência mensal - R$ 70,00';
+  const descricao = 'Recorrência - ' + String(a.modalidade || 'mensal');
   // Cancela somente competências futuras além da próxima. Reutiliza a linha
   // já pré-gerada para a próxima competência, respeitando o índice único.
   await db.execute({

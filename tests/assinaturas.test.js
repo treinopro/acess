@@ -208,7 +208,7 @@ test('portal: card disponível, reaproveita a assinatura pendente e some depois 
   assert.strictEqual(d.disponivel, true);
   assert.strictEqual(d.oferta_url, null);
 
-  const r1 = await assinaturas.obterOuCriarParaAluno({ alunoId: 'p1x', baseUrl: base });
+  const r1 = await assinaturas.obterOuCriarParaAluno({ alunoId: 'p1x', baseUrl: base, modalidade: 'mensal_livre' });
   const r2 = await assinaturas.obterOuCriarParaAluno({ alunoId: 'p1x', baseUrl: base });
   assert.strictEqual(r1.oferta_url, r2.oferta_url);   // não cria assinatura duplicada
   const qtd = (await db.execute({ sql: `SELECT COUNT(*) n FROM assinaturas_mp WHERE aluno_id='p1x'` })).rows[0].n;
@@ -235,6 +235,65 @@ test('baseUrlDaRequisicao: usa PUBLIC_BASE_URL, senão o host do proxy', () => {
   process.env.PUBLIC_BASE_URL = 'https://fixo.academia.com/';
   assert.strictEqual(assinaturas.baseUrlDaRequisicao(req), 'https://fixo.academia.com');
   delete process.env.PUBLIC_BASE_URL;
+});
+
+test('portal: apresenta as duas modalidades e preço fixo correto', async () => {
+  await novoAlunoComMatricula('opcoes1');
+  const d = await assinaturas.disponibilidadeParaAluno({ alunoId: 'opcoes1', baseUrl: 'https://academia.test' });
+  assert.strictEqual(d.disponivel, true);
+  assert.deepStrictEqual(d.opcoes.map((x) => [x.modalidade, x.valor_centavos, x.limite_cobrancas]), [
+    ['12_meses', 6500, 12],
+    ['mensal_livre', 7000, null],
+  ]);
+});
+
+test('migração: reaproveita mensalidade em aberto sem criar competência duplicada', async () => {
+  await novoAlunoComMatricula('migra-aberta');
+  const hoje = new Date().toISOString().slice(0, 10);
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, vencimento) VALUES ('c-migra-aberta', 'migra-aberta', 'm-migra-aberta', 9900, 'pendente', 'recorrencia', ?)`, args: [hoje] });
+  await assinaturas.obterOuCriarParaAluno({ alunoId: 'migra-aberta', baseUrl: 'https://academia.test', modalidade: '12_meses' });
+  const conta = (await db.execute({ sql: `SELECT valor_centavos, status FROM cobrancas WHERE id='c-migra-aberta'` })).rows[0];
+  assert.strictEqual(Number(conta.valor_centavos), 6500);
+  assert.strictEqual(conta.status, 'pendente');
+  const qtd = (await db.execute({ sql: `SELECT COUNT(*) n FROM cobrancas WHERE matricula_id='m-migra-aberta' AND vencimento=? AND status IN ('pendente','atrasado','pago')`, args: [hoje] })).rows[0].n;
+  assert.strictEqual(Number(qtd), 1);
+});
+
+test('migração: se a competência atual já está quitada, começa no próximo mês', async () => {
+  await novoAlunoComMatricula('migra-paga');
+  const hoje = new Date().toISOString().slice(0, 10);
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, vencimento) VALUES ('c-migra-paga', 'migra-paga', 'm-migra-paga', 9900, 'pago', 'recorrencia', ?)`, args: [hoje] });
+  await assinaturas.obterOuCriarParaAluno({ alunoId: 'migra-paga', baseUrl: 'https://academia.test', modalidade: 'mensal_livre' });
+  const proximo = (await db.execute({ sql: `SELECT valor_centavos, vencimento FROM cobrancas WHERE matricula_id='m-migra-paga' AND status='pendente'` })).rows[0];
+  const [ano, mes, dia] = hoje.split('-').map(Number);
+  const alvo = new Date(Date.UTC(ano, mes, 1));
+  const ultimo = new Date(Date.UTC(alvo.getUTCFullYear(), alvo.getUTCMonth() + 1, 0)).getUTCDate();
+  const esperado = `${alvo.getUTCFullYear()}-${String(alvo.getUTCMonth()+1).padStart(2,'0')}-${String(Math.min(dia,ultimo)).padStart(2,'0')}`;
+  assert.strictEqual(proximo.vencimento, esperado);
+  assert.strictEqual(Number(proximo.valor_centavos), 7000);
+});
+
+test('recorrência de 12 meses encerra após 12 pagamentos aprovados', async () => {
+  await novoAlunoComMatricula('doze-ciclos');
+  await assinaturas.obterOuCriarParaAluno({ alunoId: 'doze-ciclos', baseUrl: 'https://academia.test', modalidade: '12_meses' });
+  const sub = (await db.execute({ sql: `SELECT * FROM assinaturas_mp WHERE aluno_id='doze-ciclos'` })).rows[0];
+  for (let i = 1; i <= 12; i += 1) {
+    const idEvento = `AP-12-${i}`;
+    estadoMp.parcelas[idEvento] = {
+      preapproval_id: sub.preapproval_id,
+      transaction_amount: 65,
+      payment: { id: `PAY-12-${i}`, status: 'approved' },
+    };
+    const resultado = await assinaturas.processarEvento({ type: 'subscription_authorized_payment', dataId: idEvento });
+    assert.deepStrictEqual(resultado, { alunoId: 'doze-ciclos' });
+  }
+  const final = (await db.execute({ sql: `SELECT status, limite_cobrancas, cobrancas_processadas FROM assinaturas_mp WHERE id=?`, args: [sub.id] })).rows[0];
+  assert.strictEqual(final.status, 'completed');
+  assert.strictEqual(Number(final.limite_cobrancas), 12);
+  assert.strictEqual(Number(final.cobrancas_processadas), 12);
+  const abertas = (await db.execute({ sql: `SELECT COUNT(*) n FROM cobrancas WHERE matricula_id=? AND status IN ('pendente','atrasado')`, args: [sub.matricula_id] })).rows[0].n;
+  assert.strictEqual(Number(abertas), 0);
+  assert.ok(chamadas.some((x) => x[0] === 'cancelar' && x[1] === sub.preapproval_id));
 });
 
 // ── Desconto para quem assina + edição da oferta ────────────────────────────

@@ -2060,6 +2060,7 @@ document.getElementById('btn-portal-cadastro-continuar').addEventListener('click
     cadastroPortalSenhaAtual=resp.senha_acesso;cadastroPortalCobrancaId=resp.cobranca_id;cadastroPortalMatriculaId=resp.matricula_id;
     document.getElementById('painel-cadastro-portal-form').classList.add('oculto');document.getElementById('painel-cadastro-portal-pagamento').classList.remove('oculto');
     document.getElementById('portal-cadastro-valor').textContent='Plano escolhido: '+formatarMoeda(resp.valor_centavos);
+    document.getElementById('portal-cadastro-senha-pendente').textContent=cadastroPortalSenhaAtual||'';
     document.getElementById('portal-cadastro-senha-caixa').textContent=cadastroPortalSenhaAtual||'';
     document.getElementById('cadastro-pix-conteudo').classList.add('oculto');
     carregarOfertaRecorrenciaNovoAluno();

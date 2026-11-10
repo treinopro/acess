@@ -268,7 +268,7 @@ async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPr
   const oferta = await obterOferta();
   // Só o fluxo de NOVO cadastro usa a tabela configurável. A oferta de migração
   // para alunos existentes mantém as condições antigas e independentes.
-  const planoCadastro = permitirMatriculaPendente && modalidade ? await buscarPlanoCadastro(modalidade) : null;
+  const planoCadastro = modalidade ? await buscarPlanoCadastro(modalidade) : null;
   if (modalidade && !planoCadastro && !['12_meses', 'mensal_livre'].includes(modalidade)) {
     throw erro('Modalidade de recorrência inválida.', 400);
   }
@@ -749,7 +749,7 @@ async function prepararCobrancaInicial({ matricula, valorCentavos, modalidade })
       sql: `SELECT id, valor_centavos, status FROM cobrancas WHERE matricula_id = ? AND vencimento = ? AND provedor = 'recorrencia' LIMIT 1`,
       args: [matricula.id, vencimento],
     });
-    const descricao = modalidade === '12_meses' ? 'Recorrência 12 meses - R$ 65,00' : 'Recorrência mensal - R$ 70,00';
+    const descricao = 'Recorrência - ' + String(modalidade || 'mensal');
     if (existenteNaCompetencia.rows[0]) {
       cobrancaId = existenteNaCompetencia.rows[0].id;
       valorAnteriorCentavos = Number(existenteNaCompetencia.rows[0].valor_centavos);
@@ -814,8 +814,9 @@ async function obterOuCriarParaAluno({ alunoId, baseUrl, modalidade }) {
     return { oferta_url: urlOferta(baseUrl, pendente.id) };
   }
   if (pendente) await cancelar({ assinaturaId: pendente.id });
-  const valor = modalidade === '12_meses' ? 6500 : 7000;
-  const ciclo = await prepararCobrancaInicial({ matricula: { ...m, aluno_id: alunoId }, valorCentavos: valor, modalidade });
+  const planoCadastro = await buscarPlanoCadastro(modalidade);
+  const precoCadastro = precoDaOferta(Number(planoCadastro.valor_centavos), planoCadastro.desconto);
+  const ciclo = await prepararCobrancaInicial({ matricula: { ...m, aluno_id: alunoId }, valorCentavos: precoCadastro.valor_centavos, modalidade });
   try {
     const criada = await criarAssinatura({
       matriculaId: m.id, baseUrl, modalidade, dataPrimeiraCobranca: ciclo.vencimento,

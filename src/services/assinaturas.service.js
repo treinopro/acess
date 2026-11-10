@@ -292,7 +292,7 @@ async function cancelar({ assinaturaId }) {
     args: [fimAcesso, a.matricula_id],
   });
   await db.execute({
-    sql: `UPDATE cobrancas SET status = 'cancelado' WHERE matricula_id = ? AND status IN ('pendente', 'atrasado')`,
+    sql: `UPDATE cobrancas SET status = 'cancelado' WHERE matricula_id = ? AND status IN ('pendente', 'atrasado') AND vencimento >= date('now')`,
     args: [a.matricula_id],
   });
   return { id: a.id, status: 'cancelled', acesso_ate: fimAcesso };

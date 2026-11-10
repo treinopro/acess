@@ -452,7 +452,7 @@ function carregarSecao(nome) {
   if (nome === 'usuarios') carregarUsuarios();
   if (nome === 'config') {
     carregarConfiguracoesForm(); carregarConfigCooldown(); carregarConfigChamarProfessor();
-    carregarConfigBiometriaCatraca(); carregarConfigBackup(); carregarConfigOfertaAssinatura(); carregarPendenciasSincronizacao();
+    carregarConfigBiometriaCatraca(); carregarConfigBackup(); carregarConfigOfertaAssinatura(); carregarPlanosCadastroRecorrencia(); carregarPendenciasSincronizacao();
   }
   if (nome === 'recuperacao') carregarSecaoRecuperacao();
   if (nome === 'relatorios') carregarSecaoRelatorios();
@@ -1098,6 +1098,80 @@ document.getElementById('cfg-backup-frequencia').addEventListener('change', atua
 // Guardado em `configuracoes.assinatura_oferta` (ver src/services/assinaturas.service.js).
 let planosRecorrentesOferta = [];
 let ofertaPadrao = null;
+
+// Modalidades, preços e descontos para novos cadastros.
+function linhaPlanoRecorrenciaCadastro(p = {}) {
+  const d = p.desconto || {};
+  const valor = (Number(p.valor_centavos || 0) / 100).toFixed(2);
+  const descontoValor = d.tipo === 'valor' ? (Number(d.valor_centavos || 0) / 100).toFixed(2) : (d.percentual || '');
+  const linha = el(`
+    <div class="form-painel plano-recorrencia-cadastro-linha" style="border:1px solid #d0d5dd;margin:10px 0;padding:14px">
+      <input type="hidden" class="prc-id" value="${escapeHtml(p.id || '')}" />
+      <div class="grid-2">
+        <div><label>Nome da modalidade</label><input class="prc-nome" maxlength="80" value="${escapeHtml(p.nome || '')}" placeholder="Ex.: Compromisso anual" required /></div>
+        <div><label>Valor mensal (R$)</label><input class="prc-valor" type="number" min="1" step="0.01" value="${valor}" required /></div>
+        <div><label>Número de cobranças (vazio = sem limite)</label><input class="prc-limite" type="number" min="1" max="120" step="1" value="${p.limite_cobrancas == null ? '' : p.limite_cobrancas}" placeholder="Sem limite" /></div>
+        <div><label>Desconto</label><div style="display:flex;gap:8px"><select class="prc-desc-tipo"><option value="percentual" ${d.tipo !== 'valor' ? 'selected' : ''}>%</option><option value="valor" ${d.tipo === 'valor' ? 'selected' : ''}>R$</option></select><input class="prc-desc-valor" type="number" min="0" step="0.01" value="${descontoValor}" placeholder="0" /></div></div>
+      </div>
+      <div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin-top:10px">
+        <label style="display:flex;gap:6px;align-items:center"><input class="prc-ativo" type="checkbox" ${p.ativo === false ? '' : 'checked'} style="width:auto" /> Disponível para novos alunos</label>
+        <label style="display:flex;gap:6px;align-items:center"><input class="prc-desc-ativo" type="checkbox" ${d.ativo ? 'checked' : ''} style="width:auto" /> Aplicar desconto</label>
+        <button type="button" class="btn-secundario perigo prc-remover">Remover modalidade</button>
+      </div>
+    </div>`);
+  linha.querySelector('.prc-remover').addEventListener('click', () => linha.remove());
+  return linha;
+}
+
+async function carregarPlanosCadastroRecorrencia() {
+  const container = document.getElementById('lista-planos-recorrencia-cadastro');
+  if (!container) return;
+  try {
+    const r = await api('/api/pagamentos/assinaturas/planos-cadastro');
+    container.innerHTML = '';
+    (r.planos || []).forEach(p => container.appendChild(linhaPlanoRecorrenciaCadastro(p)));
+    if (!container.children.length) container.appendChild(linhaPlanoRecorrenciaCadastro());
+  } catch (err) { mostrarToast(err.message, true); }
+}
+
+document.getElementById('btn-adicionar-plano-recorrencia').addEventListener('click', () => {
+  const container = document.getElementById('lista-planos-recorrencia-cadastro');
+  if (container.children.length >= 12) return mostrarToast('Limite de 12 modalidades atingido.', true);
+  container.appendChild(linhaPlanoRecorrenciaCadastro());
+});
+
+document.getElementById('form-planos-recorrencia-cadastro').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const linhas = [...document.querySelectorAll('#lista-planos-recorrencia-cadastro .plano-recorrencia-cadastro-linha')];
+  if (!linhas.length) return mostrarToast('Cadastre ao menos uma modalidade.', true);
+  const usados = new Set();
+  const planos = linhas.map((linha, i) => {
+    const nome = linha.querySelector('.prc-nome').value.trim();
+    const slug = nome.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 30) || ('modalidade_' + (i + 1));
+    let id = linha.querySelector('.prc-id').value || slug;
+    if (usados.has(id)) id = slug + '_' + (i + 1);
+    usados.add(id);
+    const valor = Number(linha.querySelector('.prc-valor').value);
+    const limiteTexto = linha.querySelector('.prc-limite').value.trim();
+    const tipo = linha.querySelector('.prc-desc-tipo').value;
+    const descValor = Number(linha.querySelector('.prc-desc-valor').value) || 0;
+    return { id, nome, valor_centavos: Math.round(valor * 100), limite_cobrancas: limiteTexto ? Number(limiteTexto) : null,
+      ativo: linha.querySelector('.prc-ativo').checked,
+      desconto: { ativo: linha.querySelector('.prc-desc-ativo').checked && descValor > 0, tipo,
+        percentual: tipo === 'percentual' ? descValor : 0, valor_centavos: tipo === 'valor' ? Math.round(descValor * 100) : 0 } };
+  });
+  if (planos.some(p => !p.nome || !Number.isFinite(p.valor_centavos) || p.valor_centavos < 100))
+    return mostrarToast('Informe nome e valor mensal válido (mínimo R$ 1,00) em todas as modalidades.', true);
+  if (planos.some(p => p.limite_cobrancas !== null && (!Number.isInteger(p.limite_cobrancas) || p.limite_cobrancas < 1 || p.limite_cobrancas > 120)))
+    return mostrarToast('O número de cobranças deve ser de 1 a 120 ou ficar vazio para sem limite.', true);
+  try {
+    const r = await api('/api/pagamentos/assinaturas/planos-cadastro', { method: 'PUT', body: JSON.stringify({ planos }) });
+    const container = document.getElementById('lista-planos-recorrencia-cadastro');
+    container.innerHTML = '';
+    (r.planos || []).forEach(p => container.appendChild(linhaPlanoRecorrenciaCadastro(p)));
+    mostrarToast('Modalidades salvas. Novos contratos usarão estes valores; assinaturas existentes não serão alteradas.');
+  } catch (err) { mostrarToast(err.message, true); }
+});
 
 function preencherFormOferta(o) {
   document.getElementById('oferta-selo').value = o.selo || '';

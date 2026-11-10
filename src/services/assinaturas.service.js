@@ -776,9 +776,9 @@ async function obterOuCriarParaNovoCadastro({alunoId,matriculaId,baseUrl,modalid
  const pend=await db.execute({sql:"SELECT id,modalidade,status FROM assinaturas_mp WHERE matricula_id=? AND status IN ('pending','authorized','paused') ORDER BY criado_em DESC LIMIT 1",args:[matriculaId]});
  if(pend.rows[0]){if(pend.rows[0].modalidade===modalidade&&pend.rows[0].status==='pending')return{oferta_url:urlOferta(baseUrl,pend.rows[0].id)};throw erro('Já existe uma assinatura aguardando confirmação para esta matrícula.',409);}
  const valor=modalidade==='12_meses'?6500:7000,hoje=new Date().toISOString().slice(0,10);
- await db.execute({sql:"UPDATE cobrancas SET valor_centavos=?,provedor='recorrencia',descricao=?,vencimento=? WHERE id=? AND status='pendente'",args:[valor,modalidade==='12_meses'?'Recorrência 12 meses - R$ 65,00':'Recorrência mensal - R$ 70,00',hoje,c.id]});
- try{const criada=await criarAssinatura({matriculaId,baseUrl,modalidade,dataPrimeiraCobranca:hoje,cobrancaInicialId:c.id,permitirMatriculaPendente:true});return{oferta_url:criada.oferta_url};}
- catch(e){await db.execute({sql:'UPDATE cobrancas SET valor_centavos=?,provedor=?,descricao=?,vencimento=? WHERE id=? AND status=\'pendente\'',args:[c.valor_centavos,c.provedor,c.descricao,c.vencimento,c.id]}).catch(()=>{});throw e;}
+ await db.execute({sql:"UPDATE cobrancas SET valor_centavos=? WHERE id=? AND status='pendente'",args:[valor,c.id]});
+ try{const criada=await criarAssinatura({matriculaId,baseUrl,modalidade,dataPrimeiraCobranca:c.vencimento||hoje,cobrancaInicialId:c.id,valorAnteriorCentavos:Number(c.valor_centavos),statusAnteriorCobranca:'pendente',permitirMatriculaPendente:true});return{oferta_url:criada.oferta_url};}
+ catch(e){await db.execute({sql:'UPDATE cobrancas SET valor_centavos=? WHERE id=? AND status=\'pendente\'',args:[c.valor_centavos,c.id]}).catch(()=>{});throw e;}
 }
 
 module.exports = {

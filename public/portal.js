@@ -95,32 +95,35 @@ async function carregarCardAssinaturaHub() {
   try {
     const d = await api(`/api/portal/assinatura?cpf=${encodeURIComponent(cpfHubAtual)}&senha=${encodeURIComponent(senhaHubAtual)}`);
     if (!d.disponivel) return;
-    const opcoes = Array.isArray(d.opcoes) ? d.opcoes : [];
+    const resposta = await api('/api/portal/cadastro/recorrencia/planos');
+    const opcoes = Array.isArray(resposta.opcoes) ? resposta.opcoes : [];
     if (!opcoes.length) return;
+    const cards = opcoes.map((p, i) => {
+      const mensal = formatarMoeda(p.valor_final_centavos);
+      const detalhe = p.limite_cobrancas
+        ? String(p.limite_cobrancas) + ' cobranças mensais de ' + mensal
+        : 'Cobrança mensal contínua • Sem permanência mínima';
+      const desconto = p.desconto_centavos > 0
+        ? '<small style="display:block;color:#64748b">De ' + formatarMoeda(p.valor_centavos) + ' por mês</small>' : '';
+      const cor = i === 0 ? '#166534' : '#1d4ed8';
+      return '<div style="background:#fff;color:#0f172a;border-radius:12px;padding:14px"><strong style="font-size:16px">' +
+        escapeHtml(p.nome) + '</strong><div style="font-size:27px;font-weight:900;margin:4px 0;color:' + cor + '">' +
+        mensal + '/mês</div>' + desconto + '<div style="font-size:13px;color:#475569">' + escapeHtml(detalhe) +
+        '</div><button type="button" data-modalidade="' + escapeHtml(p.id) + '" data-rotulo="' + escapeHtml(p.nome) +
+        '" style="width:100%;margin-top:12px;border:0;border-radius:9px;padding:12px;font-size:15px;font-weight:800;color:#fff;background:' +
+        (i === 0 ? '#15803d' : '#1d4ed8') + ';cursor:pointer">Escolher ' + escapeHtml(p.nome) + '</button></div>';
+    }).join('');
     container.innerHTML = `
       <div class="cartao" style="text-align:left;background:linear-gradient(135deg,#0f172a,#1d4ed8);color:#fff;border:0;box-shadow:0 10px 30px rgba(29,78,216,.35)">
         <div style="display:inline-block;background:rgba(250,204,21,.18);color:#facc15;border:1px solid rgba(250,204,21,.5);border-radius:999px;padding:4px 10px;font-size:11px;font-weight:800;letter-spacing:.06em">⚡ PAGAMENTO AUTOMÁTICO</div>
         <h3 style="margin:10px 0 4px;color:#fff;font-size:20px">Escolha como prefere pagar</h3>
-        <p style="margin:0 0 14px;color:#dbeafe">A cobrança acontece automaticamente no cartão, sem comprometer o limite total com o valor de vários meses.</p>
-        <div style="display:grid;gap:12px">
-          <div style="background:#fff;color:#0f172a;border-radius:12px;padding:14px">
-            <strong style="font-size:16px">12 meses de compromisso</strong>
-            <div style="font-size:27px;font-weight:900;margin:4px 0;color:#166534">R$ 65,00/mês</div>
-            <div style="font-size:13px;color:#475569">12 parcelas de R$ 65,00 no cartão</div>
-            <button type="button" data-modalidade="12_meses" style="width:100%;margin-top:12px;border:0;border-radius:9px;padding:12px;font-size:15px;font-weight:800;color:#fff;background:#15803d;cursor:pointer">Escolher plano de 12 meses</button>
-          </div>
-          <div style="background:#fff;color:#0f172a;border-radius:12px;padding:14px">
-            <strong style="font-size:16px">Mensal sem fidelidade</strong>
-            <div style="font-size:27px;font-weight:900;margin:4px 0;color:#1d4ed8">R$ 70,00/mês</div>
-            <div style="font-size:13px;color:#475569">Cobrança mensal contínua • Sem permanência mínima</div>
-            <button type="button" data-modalidade="mensal_livre" style="width:100%;margin-top:12px;border:0;border-radius:9px;padding:12px;font-size:15px;font-weight:800;color:#fff;background:#1d4ed8;cursor:pointer">Escolher mensal sem fidelidade</button>
-          </div>
-        </div>
-        <p style="font-size:11px;color:#dbeafe;margin:12px 0 0">O cartão é cadastrado diretamente no Mercado Pago. Consulte as condições contratuais antes de confirmar.</p>
+        <p style="margin:0 0 14px;color:#dbeafe">A cobrança acontece automaticamente no cartão. Consulte as condições de cada modalidade antes de confirmar.</p>
+        <div style="display:grid;gap:12px">${cards}</div>
+        <p style="font-size:11px;color:#dbeafe;margin:12px 0 0">O cartão é cadastrado diretamente no Mercado Pago.</p>
       </div>`;
     container.querySelectorAll('[data-modalidade]').forEach((btn) => {
       btn.addEventListener('click', async () => {
-        const modalidade = btn.getAttribute('data-modalidade');
+        const modalidade = btn.dataset.modalidade;
         const botoes = Array.from(container.querySelectorAll('[data-modalidade]'));
         botoes.forEach((b) => { b.disabled = true; b.textContent = 'Abrindo…'; });
         try {
@@ -130,9 +133,7 @@ async function carregarCardAssinaturaHub() {
           });
           window.location.href = r.oferta_url;
         } catch (err) {
-          botoes.forEach((b) => { b.disabled = false; });
-          const escolhido = botoes.find((b) => b.getAttribute('data-modalidade') === modalidade);
-          if (escolhido) escolhido.textContent = modalidade === '12_meses' ? 'Escolher plano de 12 meses' : 'Escolher mensal sem fidelidade';
+          botoes.forEach((b) => { b.disabled = false; b.textContent = 'Escolher ' + b.dataset.rotulo; });
           alert(err.message || 'Não foi possível abrir agora. Tente novamente em instantes.');
         }
       });

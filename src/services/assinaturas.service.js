@@ -177,6 +177,68 @@ function precoDaOferta(valorCheioCentavos, oferta) {
   return { valor_cheio_centavos: valorCheioCentavos, desconto_centavos: desconto, valor_centavos: valorCheioCentavos - desconto };
 }
 
+
+// Modalidades oferecidas somente no cadastro de novos alunos. Os valores ficam
+// no banco; ao contratar, valor, desconto e limite são copiados para a assinatura.
+const PLANOS_CADASTRO_PADRAO = [
+  { id: '12_meses', nome: 'Compromisso de 12 meses', valor_centavos: 6500, limite_cobrancas: 12, ativo: true, desconto: { ativo: false, tipo: 'percentual', percentual: 0, valor_centavos: 0 } },
+  { id: 'mensal_livre', nome: 'Mensal sem fidelidade', valor_centavos: 7000, limite_cobrancas: null, ativo: true, desconto: { ativo: false, tipo: 'percentual', percentual: 0, valor_centavos: 0 } },
+];
+
+function normalizarPlanosCadastro(bruto) {
+  const lista = Array.isArray(bruto) ? bruto : PLANOS_CADASTRO_PADRAO;
+  const ids = new Set();
+  return lista.map((p) => {
+    const id = String(p?.id || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 40);
+    const nome = String(p?.nome || '').trim().slice(0, 80);
+    const valor = Math.round(Number(p?.valor_centavos) || 0);
+    const limiteRaw = p?.limite_cobrancas;
+    const limite = limiteRaw == null || limiteRaw === '' || Number(limiteRaw) === 0 ? null : Math.max(1, Math.min(120, Math.round(Number(limiteRaw))));
+    const d = p?.desconto && typeof p.desconto === 'object' ? p.desconto : {};
+    const tipo = d.tipo === 'valor' ? 'valor' : 'percentual';
+    const percentual = Math.max(0, Math.min(90, Number(d.percentual) || 0));
+    const valorDesconto = Math.max(0, Math.round(Number(d.valor_centavos) || 0));
+    if (!id || !nome || valor < VALOR_MINIMO_CENTAVOS || ids.has(id)) return null;
+    ids.add(id);
+    return { id, nome, valor_centavos: valor, limite_cobrancas: limite, ativo: p?.ativo !== false,
+      desconto: { ativo: d.ativo === true && (tipo === 'percentual' ? percentual > 0 : valorDesconto > 0), tipo, percentual, valor_centavos: valorDesconto } };
+  }).filter(Boolean).slice(0, 12);
+}
+
+async function obterPlanosCadastro() {
+  const cfg = await lerConfig(['assinatura_planos_cadastro']);
+  try { return normalizarPlanosCadastro(cfg.assinatura_planos_cadastro ? JSON.parse(cfg.assinatura_planos_cadastro) : null); }
+  catch { return normalizarPlanosCadastro(null); }
+}
+
+async function salvarPlanosCadastro(planos) {
+  const normalizados = normalizarPlanosCadastro(planos);
+  if (!normalizados.length) throw erro('Cadastre ao menos uma modalidade válida.', 400);
+  await db.execute({
+    sql: "INSERT INTO configuracoes (chave, valor) VALUES ('assinatura_planos_cadastro', ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor",
+    args: [JSON.stringify(normalizados)],
+  });
+  return normalizados;
+}
+
+async function listarPlanosCadastroPublicos() {
+  return (await obterPlanosCadastro()).filter(p => p.ativo).map(p => {
+    const preco = precoDaOferta(p.valor_centavos, p.desconto);
+    return { id: p.id, nome: p.nome, valor_centavos: p.valor_centavos, valor_final_centavos: preco.valor_centavos,
+      desconto_centavos: preco.desconto_centavos, limite_cobrancas: p.limite_cobrancas };
+  });
+}
+
+async function buscarPlanoCadastro(id) {
+  const p = (await obterPlanosCadastro()).find(x => x.id === id && x.ativo);
+  if (!p) throw erro('Esta modalidade de recorrência não está disponível. Atualize a página e escolha outra opção.', 404);
+  return p;
+}
+
+function formatarValorParaDescricao(centavos) {
+  return 'R$ ' + (Number(centavos || 0) / 100).toFixed(2).replace('.', ',');
+}
+
 // ── Criar / listar / cancelar ───────────────────────────────────────────────
 
 async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPrimeiraCobranca = null, cobrancaInicialId = null, valorAnteriorCentavos = null, statusAnteriorCobranca = null, cobrancaInicialCriada = false, permitirMatriculaPendente = false }) {
@@ -204,24 +266,22 @@ async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPr
   if (existente.rows.length) throw erro('Esta matrícula já tem uma assinatura ativa ou aguardando o cartão.', 409);
 
   const oferta = await obterOferta();
-  const planoRecorrencia = modalidade === '12_meses' || modalidade === 'mensal_livre';
-  if (modalidade && !planoRecorrencia) throw erro('Modalidade de recorrência inválida.', 400);
-  const valorCiclo = modalidade === '12_meses' ? 6500 : modalidade === 'mensal_livre' ? 7000 : Number(m.valor_centavos);
-  const preco = modalidade ? { valor_cheio_centavos: valorCiclo, desconto_centavos: 0, valor_centavos: valorCiclo } : precoDaOferta(Number(m.valor_centavos), oferta);
+  const planoCadastro = modalidade ? await buscarPlanoCadastro(modalidade) : null;
+  const preco = modalidade
+    ? precoDaOferta(Number(planoCadastro.valor_centavos), planoCadastro.desconto)
+    : precoDaOferta(Number(m.valor_centavos), oferta);
 
   const id = uuid();
   const frequenciaMeses = modalidade ? 1 : MESES_POR_TIPO[m.tipo];
-  const limiteCobrancas = modalidade === '12_meses' ? 12 : null;
+  const limiteCobrancas = modalidade ? planoCadastro.limite_cobrancas : null;
   const hojeCobranca = new Date().toISOString().slice(0, 10);
   const dataInicioMP = dataPrimeiraCobranca && dataPrimeiraCobranca > hojeCobranca
     ? `${dataPrimeiraCobranca}T00:00:00.000-03:00`
     : null;
   const mp = await mercadopago.criarAssinaturaPendente({
-    razao: modalidade === '12_meses'
-      ? `${m.plano_nome} — R$ 65,00 por mês durante 12 meses`
-      : modalidade === 'mensal_livre'
-        ? `${m.plano_nome} — R$ 70,00 por mês`
-        : `${m.plano_nome} — ${m.aluno_nome}`,
+    razao: modalidade
+      ? (m.plano_nome + ' — ' + planoCadastro.nome + ' — ' + formatarValorParaDescricao(preco.valor_centavos) + ' por mês')
+      : (m.plano_nome + ' — ' + m.aluno_nome),
     valorCentavos: preco.valor_centavos,
     frequenciaMeses,
     emailPagador: m.email,
@@ -778,14 +838,14 @@ async function obterOuCriarParaAluno({ alunoId, baseUrl, modalidade }) {
 
 async function obterOuCriarParaNovoCadastro({alunoId,matriculaId,baseUrl,modalidade}){
  if(!habilitado())throw erro('Pagamento recorrente indisponível no momento.',503);
- if(!['12_meses','mensal_livre'].includes(modalidade))throw erro('Modalidade inválida.',400);
+ const planoCadastro = await buscarPlanoCadastro(modalidade);
  const m=await db.execute({sql:"SELECT id FROM matriculas WHERE id=? AND aluno_id=? AND status='pendente'",args:[matriculaId,alunoId]});
  if(!m.rows[0])throw erro('Matrícula pendente não encontrada.',404);
  const q=await db.execute({sql:"SELECT id,provedor_referencia,valor_centavos,vencimento,descricao,provedor FROM cobrancas WHERE matricula_id=? AND status='pendente' ORDER BY criado_em LIMIT 1",args:[matriculaId]});
  const c=q.rows[0];if(!c||c.provedor_referencia)throw erro('O Pix já foi iniciado ou a cobrança não está disponível.',409);
  const pend=await db.execute({sql:"SELECT id,modalidade,status FROM assinaturas_mp WHERE matricula_id=? AND status IN ('pending','authorized','paused') ORDER BY criado_em DESC LIMIT 1",args:[matriculaId]});
  if(pend.rows[0]){if(pend.rows[0].modalidade===modalidade&&pend.rows[0].status==='pending')return{oferta_url:urlOferta(baseUrl,pend.rows[0].id)};throw erro('Já existe uma assinatura aguardando confirmação para esta matrícula.',409);}
- const valor=modalidade==='12_meses'?6500:7000,hoje=new Date().toISOString().slice(0,10);
+ const preco = precoDaOferta(Number(planoCadastro.valor_centavos), planoCadastro.desconto); const valor=preco.valor_centavos,hoje=new Date().toISOString().slice(0,10);
  await db.execute({sql:"UPDATE cobrancas SET valor_centavos=? WHERE id=? AND status='pendente'",args:[valor,c.id]});
  try{const criada=await criarAssinatura({matriculaId,baseUrl,modalidade,dataPrimeiraCobranca:c.vencimento||hoje,cobrancaInicialId:c.id,valorAnteriorCentavos:Number(c.valor_centavos),statusAnteriorCobranca:'pendente',permitirMatriculaPendente:true});return{oferta_url:criada.oferta_url};}
  catch(e){await db.execute({sql:'UPDATE cobrancas SET valor_centavos=? WHERE id=? AND status=\'pendente\'',args:[c.valor_centavos,c.id]}).catch(()=>{});throw e;}
@@ -795,4 +855,5 @@ module.exports = {
   habilitado, criarAssinatura, listar, cancelar, processarEvento, processarPagamentoAprovado,
   ofertaPublica, disponibilidadeParaAluno, obterOuCriarParaAluno, obterOuCriarParaNovoCadastro, baseUrlDaRequisicao, urlOferta,
   obterOferta, salvarOferta, calcularDescontoCentavos, OFERTA_PADRAO,
+  obterPlanosCadastro, salvarPlanosCadastro, listarPlanosCadastroPublicos,
 };

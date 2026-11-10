@@ -452,7 +452,7 @@ function carregarSecao(nome) {
   if (nome === 'usuarios') carregarUsuarios();
   if (nome === 'config') {
     carregarConfiguracoesForm(); carregarConfigCooldown(); carregarConfigChamarProfessor();
-    carregarConfigBiometriaCatraca(); carregarConfigBackup(); carregarPendenciasSincronizacao();
+    carregarConfigBiometriaCatraca(); carregarConfigBackup(); carregarConfigOfertaAssinatura(); carregarPendenciasSincronizacao();
   }
   if (nome === 'recuperacao') carregarSecaoRecuperacao();
   if (nome === 'relatorios') carregarSecaoRelatorios();
@@ -1092,6 +1092,128 @@ function atualizarVisibilidadeDiaSemanaBackup() {
   document.getElementById('campo-backup-dia-semana').classList.toggle('oculto', !ehSemanal);
 }
 document.getElementById('cfg-backup-frequencia').addEventListener('change', atualizarVisibilidadeDiaSemanaBackup);
+
+// ── Configurações > Pagamento automático: oferta e desconto ─────────────────
+// Edita os textos da página /assinar/:id e o desconto para quem assina no cartão.
+// Guardado em `configuracoes.assinatura_oferta` (ver src/services/assinaturas.service.js).
+let planosRecorrentesOferta = [];
+let ofertaPadrao = null;
+
+function preencherFormOferta(o) {
+  document.getElementById('oferta-selo').value = o.selo || '';
+  document.getElementById('oferta-titulo').value = o.titulo || '';
+  document.getElementById('oferta-subtitulo').value = o.subtitulo || '';
+  document.getElementById('oferta-beneficios').value = (o.beneficios || []).join('\n');
+  document.getElementById('oferta-botao').value = o.botao || '';
+  document.getElementById('oferta-microtexto').value = o.microtexto || '';
+  document.getElementById('oferta-faq').value = (o.faq || []).map((x) => `${x.p} | ${x.r}`).join('\n');
+  const d = o.desconto || {};
+  document.getElementById('oferta-desc-ativo').checked = !!d.ativo;
+  document.getElementById('oferta-desc-tipo').value = d.tipo === 'valor' ? 'valor' : 'percentual';
+  document.getElementById('oferta-desc-valor').value = d.tipo === 'valor'
+    ? ((d.valor_centavos || 0) / 100).toFixed(2)
+    : (d.percentual || '');
+  atualizarBlocoDescontoOferta();
+}
+
+function lerDescontoOfertaDoForm() {
+  const ativo = document.getElementById('oferta-desc-ativo').checked;
+  const tipo = document.getElementById('oferta-desc-tipo').value;
+  const numero = parseFloat(document.getElementById('oferta-desc-valor').value);
+  const valido = Number.isFinite(numero) && numero > 0;
+  return {
+    ativo: ativo && valido,
+    tipo,
+    percentual: tipo === 'percentual' && valido ? numero : 0,
+    valor_centavos: tipo === 'valor' && valido ? Math.round(numero * 100) : 0,
+  };
+}
+
+// Mostra o efeito do desconto em cada plano recorrente (o aluno vê "de X por Y").
+function atualizarBlocoDescontoOferta() {
+  const ativo = document.getElementById('oferta-desc-ativo').checked;
+  const bloco = document.getElementById('oferta-desc-bloco');
+  bloco.style.display = ativo ? 'flex' : 'none';
+  const tipo = document.getElementById('oferta-desc-tipo').value;
+  document.getElementById('oferta-desc-label').textContent = tipo === 'percentual' ? 'Desconto (%)' : 'Desconto (R$)';
+  const exemplos = document.getElementById('oferta-desc-exemplos');
+  const d = lerDescontoOfertaDoForm();
+  if (!ativo) { exemplos.textContent = 'Sem desconto: quem assina paga o valor cheio do plano.'; return; }
+  if (!d.ativo) { exemplos.textContent = 'Informe o valor do desconto.'; return; }
+  exemplos.innerHTML = planosRecorrentesOferta.map((pl) => {
+    const bruto = d.tipo === 'valor' ? d.valor_centavos : Math.round(pl.valor_centavos * (d.percentual / 100));
+    const desc = Math.max(0, Math.min(bruto, pl.valor_centavos - 100));
+    return `${escapeHtml(pl.nome)}: ${formatarMoeda(pl.valor_centavos)} → <strong>${formatarMoeda(pl.valor_centavos - desc)}</strong> (economia de ${formatarMoeda(desc)})`;
+  }).join('<br>') || 'Cadastre um plano recorrente (mensal, trimestral...) para ver o efeito.';
+}
+
+async function carregarConfigOfertaAssinatura() {
+  if (!document.getElementById('form-oferta-assinatura')) return;
+  try {
+    const [cfg, planos] = await Promise.all([
+      api('/api/pagamentos/assinaturas/oferta-config'),
+      api('/api/planos').catch(() => []),
+    ]);
+    ofertaPadrao = cfg.padrao;
+    planosRecorrentesOferta = (Array.isArray(planos) ? planos : [])
+      .filter((p) => p.ativo !== 0 && ['mensal', 'trimestral', 'semestral', 'anual'].includes(p.tipo));
+    document.getElementById('oferta-aviso-desligado').classList.toggle('oculto', !!cfg.habilitado);
+    preencherFormOferta(cfg.oferta);
+  } catch (err) {
+    // Sem permissão (não-admin) ou rota indisponível: esconde o painel em vez de quebrar a tela.
+    document.getElementById('form-oferta-assinatura').classList.add('oculto');
+  }
+}
+
+document.getElementById('oferta-desc-ativo').addEventListener('change', atualizarBlocoDescontoOferta);
+document.getElementById('oferta-desc-tipo').addEventListener('change', atualizarBlocoDescontoOferta);
+document.getElementById('oferta-desc-valor').addEventListener('input', atualizarBlocoDescontoOferta);
+
+document.getElementById('btn-oferta-padrao').addEventListener('click', () => {
+  if (!ofertaPadrao) return;
+  if (!confirmar('Restaurar os textos padrão? O desconto não muda. Nada é salvo até você clicar em "Salvar oferta".')) return;
+  const atual = lerDescontoOfertaDoForm();
+  preencherFormOferta({ ...ofertaPadrao, desconto: { ...atual, ativo: document.getElementById('oferta-desc-ativo').checked } });
+});
+
+document.getElementById('btn-oferta-previa').addEventListener('click', () => {
+  window.open('/assinar/preview', '_blank', 'noopener');
+});
+
+document.getElementById('form-oferta-assinatura').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const linhas = (id) => document.getElementById(id).value.split('\n').map((l) => l.trim()).filter(Boolean);
+  const faq = linhas('oferta-faq').map((l) => {
+    const i = l.indexOf('|');
+    return i > 0 ? { p: l.slice(0, i).trim(), r: l.slice(i + 1).trim() } : null;
+  });
+  if (faq.some((x) => x === null || !x.p || !x.r)) {
+    mostrarToast('Cada dúvida precisa estar no formato: Pergunta | Resposta', true);
+    return;
+  }
+  const desconto = lerDescontoOfertaDoForm();
+  if (document.getElementById('oferta-desc-ativo').checked && !desconto.ativo) {
+    mostrarToast('Informe um valor de desconto maior que zero (ou desmarque o desconto).', true);
+    return;
+  }
+  try {
+    const r = await api('/api/pagamentos/assinaturas/oferta-config', {
+      method: 'PUT',
+      body: JSON.stringify({
+        selo: document.getElementById('oferta-selo').value.trim(),
+        titulo: document.getElementById('oferta-titulo').value.trim(),
+        subtitulo: document.getElementById('oferta-subtitulo').value.trim(),
+        beneficios: linhas('oferta-beneficios'),
+        botao: document.getElementById('oferta-botao').value.trim(),
+        microtexto: document.getElementById('oferta-microtexto').value.trim(),
+        faq,
+        desconto,
+      }),
+    });
+    preencherFormOferta(r.oferta);
+    mostrarToast('Oferta salva. Use "Ver prévia" para conferir como o aluno vê.');
+  } catch (err) { mostrarToast(err.message, true); }
+});
 
 async function carregarConfigBackup() {
   try {
@@ -1826,6 +1948,7 @@ async function carregarPerfilAluno() {
       tbodyAval.appendChild(tr);
     });
 
+    const assinaturaHabilitada = await api('/api/pagamentos/assinaturas/config').then((r) => r.habilitado).catch(() => false);
     const tbodyMatriculas = document.getElementById('perfil-lista-matriculas');
     tbodyMatriculas.innerHTML = matriculas.length ? '' : '<tr><td colspan="5">Nenhuma matrícula.</td></tr>';
     matriculas.forEach((m) => {
@@ -1850,6 +1973,11 @@ async function carregarPerfilAluno() {
             carregarPerfilAluno();
           } catch (err) { mostrarToast(err.message, true); }
         });
+      }
+      if (assinaturaHabilitada && m.status === 'ativa' && ['mensal', 'trimestral', 'semestral', 'anual'].includes(m.plano_tipo)) {
+        const botaoAssinar = el('<button class="btn-assinar-cartao" type="button">💳 Assinar no cartão</button>');
+        botaoAssinar.addEventListener('click', () => abrirDialogoAssinatura(m, aluno));
+        tr.lastElementChild.appendChild(botaoAssinar);
       }
       tbodyMatriculas.appendChild(tr);
     });
@@ -3355,6 +3483,79 @@ async function popularSelectPlanosDoPerfil() {
     const planos = await api('/api/planos');
     popularSelectPlanos(document.getElementById('perfil-matricula-plano'), planos);
   } catch (err) { mostrarToast(err.message, true); }
+}
+
+// ── Assinatura no cartão (Mercado Pago) ──────────────────────────────────────
+// Gera o link da página de oferta (/assinar/:id) para o aluno ativar o pagamento
+// automático. Se já existe assinatura (aguardando cartão ou ativa), mostra o estado
+// em vez de criar outra. Recurso opcional: o botão só aparece com
+// MERCADOPAGO_ASSINATURAS=1 no servidor.
+const ROTULO_STATUS_ASSINATURA = {
+  pending: 'Aguardando o aluno cadastrar o cartão',
+  authorized: 'Ativa — cobrança automática funcionando',
+  paused: 'Pausada',
+  cancelled: 'Cancelada',
+};
+
+async function abrirDialogoAssinatura(matricula, aluno) {
+  const dlg = document.createElement('dialog');
+  dlg.className = 'dialogo-assinatura';
+  document.body.appendChild(dlg);
+  const fechar = () => { dlg.close(); dlg.remove(); };
+  dlg.addEventListener('cancel', () => dlg.remove());
+
+  const desenhar = (assinatura, ofertaUrl, whatsappLink) => {
+    const ativa = assinatura && assinatura.status !== 'cancelled';
+    dlg.innerHTML = `
+      <h3 style="margin-top:0">💳 Pagamento automático</h3>
+      <p><strong>${escapeHtml(aluno.nome)}</strong> — ${escapeHtml(matricula.plano_nome)}</p>
+      ${assinatura && Number(assinatura.desconto_centavos) > 0 ? `<p style="margin:4px 0">Valor da assinatura: <strong>${formatarMoeda(assinatura.valor_centavos)}</strong> <span style="color:#667085">(de ${formatarMoeda(assinatura.valor_cheio_centavos)}, desconto de ${formatarMoeda(assinatura.desconto_centavos)})</span></p>` : (assinatura ? `<p style="margin:4px 0">Valor da assinatura: <strong>${formatarMoeda(assinatura.valor_centavos)}</strong></p>` : '')}
+      ${ativa ? `<p class="badge ${assinatura.status === 'authorized' ? 'ativa' : 'pendente'}">${escapeHtml(ROTULO_STATUS_ASSINATURA[assinatura.status] || assinatura.status)}</p>` : '<p>Gere o link e envie ao aluno. Ele abre uma página com a oferta e cadastra o cartão no Mercado Pago.</p>'}
+      ${ofertaUrl ? `<input type="text" readonly value="${escapeHtml(ofertaUrl)}" style="width:100%;margin:8px 0" />
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn-assinar-cartao" data-acao="copiar">Copiar link</button>
+          ${whatsappLink ? `<a class="btn-assinar-cartao" style="text-decoration:none" target="_blank" rel="noopener" href="${escapeHtml(whatsappLink)}">Enviar por WhatsApp</a>` : ''}
+          <a class="btn-linha" style="text-decoration:none" target="_blank" rel="noopener" href="${escapeHtml(ofertaUrl)}">Ver como o aluno vê</a>
+        </div>` : ''}
+      <div style="display:flex;gap:8px;justify-content:space-between;margin-top:16px">
+        ${ativa ? '<button type="button" class="btn-linha perigo" data-acao="cancelar">Cancelar assinatura</button>' : '<button type="button" class="btn-assinar-cartao" data-acao="gerar">Gerar link de assinatura</button>'}
+        <button type="button" class="btn-linha" data-acao="fechar">Fechar</button>
+      </div>`;
+    dlg.querySelector('[data-acao="fechar"]').addEventListener('click', fechar);
+    const copiar = dlg.querySelector('[data-acao="copiar"]');
+    if (copiar) copiar.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(ofertaUrl); mostrarToast('Link copiado.'); } catch { dlg.querySelector('input').select(); }
+    });
+    const gerar = dlg.querySelector('[data-acao="gerar"]');
+    if (gerar) gerar.addEventListener('click', async () => {
+      gerar.disabled = true;
+      try {
+        const r = await api('/api/pagamentos/assinaturas', { method: 'POST', body: JSON.stringify({ matricula_id: matricula.id }) });
+        desenhar({ id: r.id, status: r.status, valor_centavos: r.valor_centavos, valor_cheio_centavos: r.valor_cheio_centavos, desconto_centavos: r.desconto_centavos }, r.oferta_url, r.whatsapp_link);
+      } catch (err) { mostrarToast(err.message, true); gerar.disabled = false; }
+    });
+    const cancelar = dlg.querySelector('[data-acao="cancelar"]');
+    if (cancelar) cancelar.addEventListener('click', async () => {
+      if (!confirmar(`Cancelar a assinatura automática de "${aluno.nome}"? O Mercado Pago deixa de cobrar o cartão; as contas voltam a depender do pagamento manual.`)) return;
+      try {
+        await api(`/api/pagamentos/assinaturas/${assinatura.id}`, { method: 'DELETE' });
+        mostrarToast('Assinatura cancelada.');
+        desenhar(null, null, null);
+      } catch (err) { mostrarToast(err.message, true); }
+    });
+  };
+
+  dlg.innerHTML = '<p>Carregando…</p>';
+  dlg.showModal();
+  try {
+    const lista = await api(`/api/pagamentos/assinaturas?matricula_id=${encodeURIComponent(matricula.id)}`);
+    const atual = lista.find((a) => a.status !== 'cancelled') || null;
+    // Link da oferta do aluno: reconstruído a partir do id (mesma origem do painel).
+    desenhar(atual, atual ? `${location.origin}/assinar/${atual.id}` : null, null);
+  } catch (err) {
+    dlg.remove();
+    mostrarToast(err.message, true);
+  }
 }
 
 document.getElementById('btn-toggle-matricula-perfil').addEventListener('click', () => {

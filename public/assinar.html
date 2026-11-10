@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0f172a">
+<title>Pagamento automático</title>
+<style>
+  :root {
+    --fundo: #0f172a;
+    --fundo2: #1e293b;
+    --texto: #f8fafc;
+    --suave: #cbd5e1;
+    --verde: #22c55e;
+    --verde-escuro: #16a34a;
+    --amarelo: #facc15;
+    --cartao: #ffffff;
+    --tinta: #0f172a;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    color: var(--texto);
+    background: radial-gradient(1200px 600px at 50% -10%, #1d4ed8 0%, transparent 55%), linear-gradient(180deg, var(--fundo) 0%, var(--fundo2) 100%);
+    min-height: 100vh;
+    padding: 20px 16px calc(110px + env(safe-area-inset-bottom));
+  }
+  main { max-width: 480px; margin: 0 auto; }
+  .selo {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(250, 204, 21, .15); color: var(--amarelo);
+    border: 1px solid rgba(250, 204, 21, .45);
+    padding: 6px 12px; border-radius: 999px;
+    font-size: 12px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+  }
+  .academia { margin: 14px 0 0; color: var(--suave); font-size: 14px; font-weight: 600; }
+  h1 { font-size: 28px; line-height: 1.15; margin: 8px 0 10px; font-weight: 900; letter-spacing: -.02em; }
+  h1 em { font-style: normal; color: var(--verde); }
+  .sub { color: var(--suave); font-size: 16px; line-height: 1.45; margin: 0 0 18px; }
+
+  .preco {
+    background: var(--cartao); color: var(--tinta);
+    border-radius: 20px; padding: 20px; margin: 0 0 18px;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, .35);
+    position: relative; overflow: hidden;
+  }
+  .preco::before {
+    content: ""; position: absolute; inset: 0 0 auto 0; height: 6px;
+    background: linear-gradient(90deg, var(--verde), var(--amarelo), var(--verde));
+  }
+  .preco .plano { font-size: 13px; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: .06em; margin-top: 4px; }
+  .preco .valor { display: flex; align-items: baseline; gap: 6px; margin: 4px 0 2px; }
+  .preco .valor strong { font-size: 46px; font-weight: 900; letter-spacing: -.03em; line-height: 1; }
+  .preco .valor span { font-size: 16px; color: #64748b; font-weight: 700; }
+  .preco .dia {
+    display: inline-block; margin-top: 8px;
+    background: #dcfce7; color: #166534; font-weight: 800; font-size: 14px;
+    padding: 6px 10px; border-radius: 10px;
+  }
+  .preco .nota { margin: 10px 0 0; font-size: 13px; color: #64748b; }
+  .preco .antes { font-size: 16px; color: #94a3b8; text-decoration: line-through; font-weight: 700; margin-top: 6px; }
+  .preco .eco {
+    display: inline-block; margin: 4px 8px 0 0;
+    background: #fef9c3; color: #854d0e; border: 1px solid #fde047;
+    font-weight: 900; font-size: 13px; padding: 5px 10px; border-radius: 10px;
+  }
+  .previa {
+    background: #fde047; color: #422006; font-weight: 800; font-size: 13px; text-align: center;
+    padding: 8px 12px; border-radius: 10px; margin: 0 0 14px;
+  }
+
+  h2 { font-size: 18px; margin: 26px 0 10px; font-weight: 800; }
+  .beneficios { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  .beneficios li {
+    display: flex; gap: 12px; align-items: flex-start;
+    background: rgba(255, 255, 255, .06); border: 1px solid rgba(255, 255, 255, .1);
+    padding: 12px 14px; border-radius: 14px; font-size: 15px; line-height: 1.4;
+    opacity: 0; transform: translateY(8px); animation: entrar .5s ease forwards;
+  }
+  .beneficios li::before {
+    content: "✓"; flex: none; width: 24px; height: 24px; border-radius: 50%;
+    background: var(--verde); color: #052e16; font-weight: 900;
+    display: grid; place-items: center; font-size: 14px; margin-top: 1px;
+  }
+  @keyframes entrar { to { opacity: 1; transform: none; } }
+
+  .passos { counter-reset: passo; list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  .passos li { display: flex; gap: 12px; align-items: center; font-size: 15px; color: var(--suave); }
+  .passos li::before {
+    counter-increment: passo; content: counter(passo);
+    flex: none; width: 28px; height: 28px; border-radius: 50%;
+    background: rgba(255, 255, 255, .12); color: var(--texto); font-weight: 800;
+    display: grid; place-items: center; font-size: 14px;
+  }
+  .passos b { color: var(--texto); }
+
+  details { background: rgba(255, 255, 255, .05); border-radius: 12px; padding: 12px 14px; margin: 0 0 8px; }
+  summary { cursor: pointer; font-weight: 700; font-size: 15px; }
+  details p { margin: 8px 0 0; color: var(--suave); font-size: 14px; line-height: 1.5; }
+
+  .cta-barra {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+    background: linear-gradient(180deg, transparent, rgba(15, 23, 42, .96) 35%);
+  }
+  .cta-barra .interno { max-width: 480px; margin: 0 auto; }
+  .cta {
+    display: block; width: 100%; text-align: center; text-decoration: none; border: 0; cursor: pointer;
+    background: linear-gradient(180deg, var(--verde), var(--verde-escuro)); color: #052e16;
+    font-size: 18px; font-weight: 900; letter-spacing: .01em;
+    padding: 18px 16px; border-radius: 16px;
+    box-shadow: 0 10px 30px rgba(34, 197, 94, .45);
+    animation: pulso 2s ease-in-out infinite;
+  }
+  .cta:active { transform: scale(.98); }
+  @keyframes pulso {
+    0%, 100% { box-shadow: 0 10px 30px rgba(34, 197, 94, .45), 0 0 0 0 rgba(34, 197, 94, .5); }
+    50% { box-shadow: 0 10px 30px rgba(34, 197, 94, .45), 0 0 0 12px rgba(34, 197, 94, 0); }
+  }
+  .micro { text-align: center; margin: 8px 0 0; color: var(--suave); font-size: 12.5px; }
+
+  .estado { text-align: center; padding: 40px 8px; }
+  .estado .icone { font-size: 56px; }
+  .estado h1 { font-size: 26px; }
+  .link-zap {
+    display: inline-block; margin-top: 14px; color: var(--texto); font-weight: 700;
+    border: 1px solid rgba(255, 255, 255, .35); padding: 12px 18px; border-radius: 12px; text-decoration: none;
+  }
+  .oculto { display: none !important; }
+  @media (prefers-reduced-motion: reduce) {
+    .cta { animation: none; }
+    .beneficios li { animation: none; opacity: 1; transform: none; }
+  }
+</style>
+</head>
+<body>
+<main id="raiz" aria-live="polite">
+  <div class="estado"><div class="icone">⏳</div><p class="sub">Carregando sua oferta…</p></div>
+</main>
+
+<div class="cta-barra oculto" id="barra">
+  <div class="interno">
+    <a class="cta" id="cta" href="#" rel="noopener">Ativar pagamento automático →</a>
+    <p class="micro" id="micro"></p>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var raiz = document.getElementById('raiz');
+  var barra = document.getElementById('barra');
+  var cta = document.getElementById('cta');
+  var microEl = document.getElementById('micro');
+  var id = location.pathname.split('/').filter(Boolean).pop();
+  var voltouDoCartao = /[?&]retorno=1(&|$)/.test(location.search);
+
+  function brl(centavos) {
+    return (centavos / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  }
+
+  function el(tag, props, filhos) {
+    var n = document.createElement(tag);
+    Object.keys(props || {}).forEach(function (k) {
+      if (k === 'text') n.textContent = props[k];
+      else if (k === 'className') n.className = props[k];
+      else n.setAttribute(k, props[k]);
+    });
+    (filhos || []).forEach(function (f) { n.appendChild(typeof f === 'string' ? document.createTextNode(f) : f); });
+    return n;
+  }
+
+  function limpar() { while (raiz.firstChild) raiz.removeChild(raiz.firstChild); }
+
+  function estado(icone, titulo, texto, zap) {
+    limpar();
+    barra.classList.add('oculto');
+    var caixa = el('div', { className: 'estado' }, [
+      el('div', { className: 'icone', text: icone }),
+      el('h1', { text: titulo }),
+      el('p', { className: 'sub', text: texto }),
+    ]);
+    if (zap) caixa.appendChild(el('a', { className: 'link-zap', href: 'https://wa.me/' + zap, text: 'Falar com a recepção' }));
+    raiz.appendChild(caixa);
+  }
+
+  function precoCard(o) {
+    var meses = o.frequencia_meses || 1;
+    var porMes = o.valor_centavos / meses;
+    var porDia = o.valor_centavos / (meses * 30);
+    var rotulo = meses === 1 ? '/mês' : ' a cada ' + meses + ' meses';
+    var temDesconto = o.desconto_centavos > 0;
+    var filhos = [el('div', { className: 'plano', text: o.plano })];
+    if (temDesconto) filhos.push(el('div', { className: 'antes', text: 'De ' + brl(o.valor_cheio_centavos) }));
+    filhos.push(el('div', { className: 'valor' }, [el('strong', { text: brl(o.valor_centavos) }), el('span', { text: rotulo })]));
+    if (temDesconto) filhos.push(el('span', { className: 'eco', text: '🎉 Você economiza ' + brl(o.desconto_centavos) + (meses === 1 ? ' todo mês' : ' a cada cobrança') }));
+    filhos.push(el('span', { className: 'dia', text: 'Só ' + brl(Math.round(porDia)) + ' por dia para treinar' }));
+    if (meses > 1) filhos.push(el('p', { className: 'nota', text: 'Equivale a ' + brl(Math.round(porMes)) + ' por mês.' }));
+    return el('section', { className: 'preco' }, filhos);
+  }
+
+  // Título editável: {nome} vira o primeiro nome; *palavra* ganha destaque verde.
+  function tituloHtml(modelo, nome) {
+    var h1 = el('h1');
+    var texto = String(modelo || '').replace(/\{nome\}/g, nome || '').replace(/,\s*([!?.])/g, '$1').replace(/\s+([!?.,])/g, '$1');
+    texto.split(/(\*[^*]+\*)/).forEach(function (parte) {
+      if (!parte) return;
+      if (/^\*[^*]+\*$/.test(parte)) h1.appendChild(el('em', { text: parte.slice(1, -1) }));
+      else h1.appendChild(document.createTextNode(parte));
+    });
+    return h1;
+  }
+
+  function renderOferta(o) {
+    limpar();
+    var lista = el('ul', { className: 'beneficios' });
+    o.beneficios.forEach(function (b, i) {
+      var li = el('li', { text: b });
+      li.style.animationDelay = (0.08 * i + 0.1) + 's';
+      lista.appendChild(li);
+    });
+
+    if (o.preview) raiz.appendChild(el('div', { className: 'previa', text: 'PRÉVIA — é assim que o aluno vê (o botão não leva a lugar nenhum)' }));
+    raiz.appendChild(el('span', { className: 'selo', text: o.selo }));
+    raiz.appendChild(el('p', { className: 'academia', text: o.academia }));
+    raiz.appendChild(tituloHtml(o.titulo, o.aluno));
+    if (o.subtitulo) raiz.appendChild(el('p', { className: 'sub', text: o.subtitulo }));
+    raiz.appendChild(precoCard(o));
+    raiz.appendChild(el('h2', { text: 'O que você ganha' }));
+    raiz.appendChild(lista);
+
+    raiz.appendChild(el('h2', { text: 'Como funciona' }));
+    var passos = el('ol', { className: 'passos' });
+    [['Toque em ', 'o botão verde'], ['Cadastre o cartão ', 'no ambiente do Mercado Pago'], ['Pronto: ', 'a cobrança acontece sozinha']].forEach(function (p) {
+      var li = el('li');
+      li.appendChild(document.createTextNode(p[0]));
+      li.appendChild(el('b', { text: p[1] }));
+      passos.appendChild(li);
+    });
+    raiz.appendChild(passos);
+
+    if (o.faq && o.faq.length) {
+      raiz.appendChild(el('h2', { text: 'Dúvidas comuns' }));
+      o.faq.forEach(function (d) {
+        raiz.appendChild(el('details', {}, [el('summary', { text: d.p }), el('p', { text: d.r })]));
+      });
+    }
+
+    cta.textContent = o.botao;
+    cta.setAttribute('href', o.init_point);
+    if (o.preview) cta.addEventListener('click', function (ev) { ev.preventDefault(); });
+    microEl.textContent = o.microtexto || '';
+    barra.classList.remove('oculto');
+  }
+
+  function buscar() {
+    return fetch('/api/pagamentos/assinaturas/oferta/' + encodeURIComponent(id), { cache: 'no-store' })
+      .then(function (r) {
+        if (r.status === 404) return null;
+        if (!r.ok) throw new Error('falha');
+        return r.json();
+      });
+  }
+
+  function confirmarAtivacao(o, tentativa) {
+    // Voltou do Mercado Pago: o aviso (webhook) pode levar alguns segundos.
+    estado('⏳', 'Confirmando seu cadastro…', 'Só um instante, estamos finalizando.');
+    var timer = setInterval(function () {
+      tentativa += 1;
+      buscar().then(function (n) {
+        if (n && n.status === 'authorized') { clearInterval(timer); ativo(n); }
+        else if (tentativa >= 20) { clearInterval(timer); estado('✅', 'Recebemos seu cadastro!', 'A confirmação pode levar alguns minutos. Se tiver dúvida, fale com a recepção.', o.whatsapp_contato); }
+      }).catch(function () { /* tenta de novo */ });
+    }, 4500);
+  }
+
+  function ativo(o) {
+    estado('✅', 'Tudo certo, ' + (o.aluno || 'bom treino') + '!', 'Seu pagamento automático está ativo. Agora é só treinar — a mensalidade se resolve sozinha.', o.whatsapp_contato);
+  }
+
+  buscar().then(function (o) {
+    if (!o) return estado('🔎', 'Oferta não encontrada', 'Confira o link ou fale com a recepção.');
+    if (o.preview) return renderOferta(o);
+    if (o.status === 'authorized') return ativo(o);
+    if (o.status === 'cancelled') return estado('ℹ️', 'Esta oferta não está mais disponível', 'Fale com a recepção para gerar um novo link.', o.whatsapp_contato);
+    if (o.status === 'paused') return estado('⏸️', 'Assinatura pausada', 'Fale com a recepção para retomar.', o.whatsapp_contato);
+    if (voltouDoCartao) return confirmarAtivacao(o, 0);
+    if (!o.init_point) return estado('ℹ️', 'Link indisponível', 'Fale com a recepção para gerar um novo link.', o.whatsapp_contato);
+    renderOferta(o);
+  }).catch(function () {
+    estado('⚠️', 'Não foi possível carregar', 'Verifique sua conexão e tente de novo em instantes.');
+  });
+})();
+</script>
+</body>
+</html>

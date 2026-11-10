@@ -212,6 +212,10 @@ app.use(express.static(path.join(__dirname, '..', 'public'), {
 }));
 
 app.get('/health', (req, res) => res.json({ status: 'ok', servico: 'academia-gestao' }));
+app.get('/assinar/:id', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.sendFile(path.join(__dirname, '..', 'public', 'assinar.html'));
+});
 
 // "Chamar instrutor" via tag NFC (2026-08) — fica fora do prefixo /api de
 // propósito, ver comentário completo em src/routes/chamar.routes.js.

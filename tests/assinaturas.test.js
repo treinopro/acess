@@ -1,0 +1,338 @@
+// Teste de ponta a ponta das assinaturas do Mercado Pago, SEM rede e SEM tocar
+// em produção: banco local descartável + mercadopago.service simulado.
+// Rodar: node --test tests/assinaturas.test.js
+// O banco é SEMPRE um arquivo local descartável: a DATABASE_URL do ambiente/.env
+// (que neste projeto pode apontar pro Turso de produção) é ignorada de propósito.
+process.env.DATABASE_URL = 'file:./teste-assinaturas.db';
+delete process.env.DATABASE_AUTH_TOKEN;
+process.env.MERCADOPAGO_ASSINATURAS = '1';
+process.env.MERCADOPAGO_ACCESS_TOKEN = 'TESTE';
+delete process.env.MERCADOPAGO_WEBHOOK_SECRET;
+
+const { test, before, after } = require('node:test');
+const assert = require('node:assert');
+const fs = require('fs');
+const path = require('path');
+
+// --- Mercado Pago simulado (antes de carregar qualquer serviço que o importe) ---
+const mpPath = require.resolve('../src/services/payment/mercadopago.service');
+const chamadas = [];
+const estadoMp = { parcelas: {}, assinaturas: {} };
+let contadorMp = 0;
+require.cache[mpPath] = {
+  id: mpPath, filename: mpPath, loaded: true,
+  exports: {
+    criarAssinaturaPendente: async (p) => {
+      chamadas.push(['criar', p]);
+      const id = `PRE-${++contadorMp}`;
+      estadoMp.assinaturas[id] = { id, status: 'pending' };
+      return { id, init_point: `https://mp.test/subscriptions/checkout?preapproval_id=${id}` };
+    },
+    consultarAssinatura: async (id) => estadoMp.assinaturas[id],
+    cancelarAssinatura: async (id) => { chamadas.push(['cancelar', id]); estadoMp.assinaturas[id].status = 'cancelled'; return estadoMp.assinaturas[id]; },
+    consultarPagamentoAutorizado: async (id) => estadoMp.parcelas[id],
+    consultarPagamento: async (id) => estadoMp.pagamentos?.[id],
+    criarPreferencia: async () => ({}), criarPagamentoPix: async () => ({}), criarOrderPix: async () => ({}), consultarOrder: async () => ({}),
+  },
+};
+
+// Banco novo + migração ANTES de abrir a conexão deste processo. migrate.js roda ao
+// ser executado (e dá process.exit), então vai em processo à parte.
+const arquivoBanco = path.resolve(process.env.DATABASE_URL.replace('file:', ''));
+function limparBanco() {
+  for (const f of [arquivoBanco, `${arquivoBanco}-journal`, `${arquivoBanco}-wal`, `${arquivoBanco}-shm`]) { try { fs.unlinkSync(f); } catch (e) { /* ok */ } }
+}
+limparBanco();
+require('child_process').execFileSync(process.execPath, [path.join(__dirname, '..', 'src', 'db', 'migrate.js')], {
+  env: { ...process.env, DATABASE_URL: process.env.DATABASE_URL, DATABASE_AUTH_TOKEN: '' },
+  stdio: 'pipe',
+});
+
+const db = require('../src/db/client');
+const assinaturas = require('../src/services/assinaturas.service');
+
+async function seed() {
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('a1', 'Aluno Teste', 'aluno@teste.com', '11122233344')` });
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, cpf) VALUES ('a2', 'Sem Email', '55566677788')` });
+  await db.execute({ sql: `INSERT INTO planos (id, nome, tipo, valor_centavos) VALUES ('p1', 'Mensal', 'mensal', 9900), ('p2', 'Avulso', 'avulso', 1000)` });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio) VALUES ('m1', 'a1', 'p1', '2026-11-01'), ('m2', 'a2', 'p1', '2026-11-01'), ('m3', 'a1', 'p2', '2026-11-01')` });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, vencimento) VALUES
+    ('c-nov', 'a1', 'm1', 9900, 'pendente', 'recorrencia', '2026-11-10'),
+    ('c-dez', 'a1', 'm1', 9900, 'pendente', 'recorrencia', '2026-12-10')` });
+}
+
+before(async () => {
+  await seed();
+});
+
+after(() => limparBanco());
+
+test('criarAssinatura: manda valor/ciclo certos ao MP e devolve o link do cartão', async () => {
+  const r = await assinaturas.criarAssinatura({ matriculaId: 'm1', baseUrl: 'https://academia.test' });
+  assert.match(r.init_point, /preapproval_id=PRE-1/);
+  const [, payload] = chamadas.find((c) => c[0] === 'criar');
+  assert.strictEqual(payload.valorCentavos, 9900);
+  assert.strictEqual(payload.frequenciaMeses, 1);
+  assert.strictEqual(payload.emailPagador, 'aluno@teste.com');
+  assert.strictEqual(payload.referenciaExterna, r.id); // id local = external_reference
+});
+
+test('criarAssinatura: recusa duplicada, plano avulso e aluno sem e-mail', async () => {
+  await assert.rejects(assinaturas.criarAssinatura({ matriculaId: 'm1' }), /já tem uma assinatura/);
+  await assert.rejects(assinaturas.criarAssinatura({ matriculaId: 'm3' }), /não é recorrente/);
+  await assert.rejects(assinaturas.criarAssinatura({ matriculaId: 'm2' }), /e-mail/);
+});
+
+test('webhook de parcela aprovada baixa a conta MAIS ANTIGA e é idempotente', async () => {
+  estadoMp.parcelas['AP-1'] = { preapproval_id: 'PRE-1', transaction_amount: 99, payment: { id: 777, status: 'approved' } };
+  const r1 = await assinaturas.processarEvento({ type: 'subscription_authorized_payment', dataId: 'AP-1' });
+  assert.deepStrictEqual(r1, { alunoId: 'a1' });
+  let nov = (await db.execute({ sql: `SELECT status, metodo_pagamento, pago_em FROM cobrancas WHERE id='c-nov'` })).rows[0];
+  let dez = (await db.execute({ sql: `SELECT status FROM cobrancas WHERE id='c-dez'` })).rows[0];
+  assert.strictEqual(nov.status, 'pago');
+  assert.strictEqual(nov.metodo_pagamento, 'credit_card');
+  assert.ok(nov.pago_em);
+  assert.strictEqual(dez.status, 'pendente');
+
+  // MP reenvia o mesmo webhook: não pode baixar a de dezembro.
+  const r2 = await assinaturas.processarEvento({ type: 'subscription_authorized_payment', dataId: 'AP-1' });
+  assert.strictEqual(r2, null);
+  dez = (await db.execute({ sql: `SELECT status FROM cobrancas WHERE id='c-dez'` })).rows[0];
+  assert.strictEqual(dez.status, 'pendente');
+
+  const sub = (await db.execute({ sql: `SELECT status FROM assinaturas_mp WHERE preapproval_id='PRE-1'` })).rows[0];
+  assert.strictEqual(sub.status, 'authorized');
+});
+
+test('parcela recusada não baixa nada', async () => {
+  estadoMp.parcelas['AP-2'] = { preapproval_id: 'PRE-1', payment: { id: 778, status: 'rejected' } };
+  assert.strictEqual(await assinaturas.processarEvento({ type: 'subscription_authorized_payment', dataId: 'AP-2' }), null);
+  const dez = (await db.execute({ sql: `SELECT status FROM cobrancas WHERE id='c-dez'` })).rows[0];
+  assert.strictEqual(dez.status, 'pendente');
+});
+
+test('parcela aprovada sem conta em aberto fica registrada como sem_cobranca', async () => {
+  await db.execute({ sql: `UPDATE cobrancas SET status='pago' WHERE id='c-dez'` });
+  estadoMp.parcelas['AP-3'] = { preapproval_id: 'PRE-1', transaction_amount: 99, payment: { id: 779, status: 'approved' } };
+  assert.strictEqual(await assinaturas.processarEvento({ type: 'subscription_authorized_payment', dataId: 'AP-3' }), null);
+  const reg = (await db.execute({ sql: `SELECT baixa, cobranca_id FROM assinaturas_mp_pagamentos WHERE payment_id='779'` })).rows[0];
+  assert.strictEqual(reg.baixa, 'sem_cobranca');
+  assert.strictEqual(reg.cobranca_id, null);
+});
+
+test('tópico payment com external_reference da assinatura também baixa (e só uma vez)', async () => {
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, vencimento) VALUES ('c-jan', 'a1', 'm1', 9900, 'pendente', 'recorrencia', '2027-01-10')` });
+  const idLocal = (await db.execute({ sql: `SELECT id FROM assinaturas_mp WHERE preapproval_id='PRE-1'` })).rows[0].id;
+  const pagamento = { id: 900, status: 'approved', external_reference: idLocal, transaction_amount: 99, payment_type_id: 'credit_card' };
+  assert.deepStrictEqual(await assinaturas.processarPagamentoAprovado(pagamento), { alunoId: 'a1' });
+  assert.strictEqual(await assinaturas.processarPagamentoAprovado(pagamento), null);
+  const jan = (await db.execute({ sql: `SELECT status FROM cobrancas WHERE id='c-jan'` })).rows[0];
+  assert.strictEqual(jan.status, 'pago');
+});
+
+test('subscription_preapproval atualiza o status; cancelar chama o MP', async () => {
+  estadoMp.assinaturas['PRE-1'].status = 'paused';
+  await assinaturas.processarEvento({ type: 'subscription_preapproval', dataId: 'PRE-1' });
+  let sub = (await db.execute({ sql: `SELECT id, status FROM assinaturas_mp WHERE preapproval_id='PRE-1'` })).rows[0];
+  assert.strictEqual(sub.status, 'paused');
+  await assinaturas.cancelar({ assinaturaId: sub.id });
+  sub = (await db.execute({ sql: `SELECT status FROM assinaturas_mp WHERE preapproval_id='PRE-1'` })).rows[0];
+  assert.strictEqual(sub.status, 'cancelled');
+  assert.ok(chamadas.some((c) => c[0] === 'cancelar' && c[1] === 'PRE-1'));
+});
+
+test('com a flag desligada nada é processado', async () => {
+  process.env.MERCADOPAGO_ASSINATURAS = '0';
+  assert.strictEqual(await assinaturas.processarEvento({ type: 'subscription_authorized_payment', dataId: 'AP-1' }), null);
+  await assert.rejects(assinaturas.criarAssinatura({ matriculaId: 'm1' }), /desligadas/);
+  process.env.MERCADOPAGO_ASSINATURAS = '1';
+});
+
+// ── Página de oferta, WhatsApp e portal do aluno ────────────────────────────
+async function novoAlunoComMatricula(id, { telefone = null, plano = 'p1' } = {}) {
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf, telefone) VALUES (?, ?, ?, ?, ?)`, args: [id, `JOÃO ${id}`, `${id}@teste.com`, `cpf-${id}`, telefone] });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio) VALUES (?, ?, ?, '2026-11-01')`, args: [`m-${id}`, id, plano] });
+}
+
+test('criarAssinatura: monta link da oferta, back_url https e link de WhatsApp', async () => {
+  await novoAlunoComMatricula('w1', { telefone: '(11) 98888-7777' });
+  const r = await assinaturas.criarAssinatura({ matriculaId: 'm-w1', baseUrl: 'https://academia.test' });
+  assert.strictEqual(r.oferta_url, `https://academia.test/assinar/${r.id}`);
+  assert.match(r.whatsapp_link, /^https:\/\/wa\.me\/5511988887777\?text=/);
+  assert.ok(decodeURIComponent(r.whatsapp_link).includes(r.oferta_url));
+  const [, payload] = chamadas.filter((c) => c[0] === 'criar').pop();
+  assert.strictEqual(payload.urlRetorno, `https://academia.test/assinar/${r.id}?retorno=1`);
+});
+
+test('criarAssinatura: em http (localhost) não manda back_url inválido ao MP', async () => {
+  await novoAlunoComMatricula('w2');
+  await assinaturas.criarAssinatura({ matriculaId: 'm-w2', baseUrl: 'http://localhost:3000' });
+  const [, payload] = chamadas.filter((c) => c[0] === 'criar').pop();
+  assert.strictEqual(payload.urlRetorno, 'https://www.mercadopago.com.br');
+});
+
+test('ofertaPublica: dados da página, sem vazar e-mail/CPF/telefone', async () => {
+  const sub = (await db.execute({ sql: `SELECT id FROM assinaturas_mp WHERE matricula_id='m-w1'` })).rows[0];
+  const o = await assinaturas.ofertaPublica(sub.id);
+  assert.strictEqual(o.aluno, 'João');
+  assert.strictEqual(o.plano, 'Mensal');
+  assert.strictEqual(o.valor_centavos, 9900);
+  assert.strictEqual(o.status, 'pending');
+  assert.match(o.init_point, /mp\.test/);
+  assert.ok(o.beneficios.length >= 3);
+  const txt = JSON.stringify(o);
+  assert.ok(!txt.includes('@teste.com') && !txt.includes('cpf-w1') && !txt.includes('98888'));
+  assert.strictEqual(await assinaturas.ofertaPublica('id-inexistente'), null);
+});
+
+test('ofertaPublica: benefícios personalizados vêm da configuração', async () => {
+  await db.execute({ sql: `INSERT INTO configuracoes (chave, valor) VALUES ('assinatura_beneficios', 'Primeira avaliação grátis\n\n  Camiseta de brinde  ')` });
+  const sub = (await db.execute({ sql: `SELECT id FROM assinaturas_mp WHERE matricula_id='m-w1'` })).rows[0];
+  const o = await assinaturas.ofertaPublica(sub.id);
+  assert.deepStrictEqual(o.beneficios, ['Primeira avaliação grátis', 'Camiseta de brinde']);
+  await db.execute({ sql: `DELETE FROM configuracoes WHERE chave='assinatura_beneficios'` });
+});
+
+test('oferta de assinatura cancelada não expõe o link de pagamento', async () => {
+  const sub = (await db.execute({ sql: `SELECT id FROM assinaturas_mp WHERE matricula_id='m-w2'` })).rows[0];
+  await assinaturas.cancelar({ assinaturaId: sub.id });
+  const o = await assinaturas.ofertaPublica(sub.id);
+  assert.strictEqual(o.status, 'cancelled');
+  assert.strictEqual(o.init_point, null);
+});
+
+test('portal: card disponível, reaproveita a assinatura pendente e some depois de ativa', async () => {
+  await novoAlunoComMatricula('p1x');
+  const base = 'https://academia.test';
+  let d = await assinaturas.disponibilidadeParaAluno({ alunoId: 'p1x', baseUrl: base });
+  assert.strictEqual(d.disponivel, true);
+  assert.strictEqual(d.oferta_url, null);
+
+  const r1 = await assinaturas.obterOuCriarParaAluno({ alunoId: 'p1x', baseUrl: base });
+  const r2 = await assinaturas.obterOuCriarParaAluno({ alunoId: 'p1x', baseUrl: base });
+  assert.strictEqual(r1.oferta_url, r2.oferta_url);   // não cria assinatura duplicada
+  const qtd = (await db.execute({ sql: `SELECT COUNT(*) n FROM assinaturas_mp WHERE aluno_id='p1x'` })).rows[0].n;
+  assert.strictEqual(Number(qtd), 1);
+
+  await db.execute({ sql: `UPDATE assinaturas_mp SET status='authorized' WHERE aluno_id='p1x'` });
+  d = await assinaturas.disponibilidadeParaAluno({ alunoId: 'p1x', baseUrl: base });
+  assert.strictEqual(d.disponivel, false);
+  await assert.rejects(assinaturas.obterOuCriarParaAluno({ alunoId: 'p1x', baseUrl: base }), /não está disponível/);
+});
+
+test('portal: plano avulso e recurso desligado não mostram o card', async () => {
+  await novoAlunoComMatricula('p2x', { plano: 'p2' });
+  assert.strictEqual((await assinaturas.disponibilidadeParaAluno({ alunoId: 'p2x', baseUrl: 'https://academia.test' })).disponivel, false);
+  await novoAlunoComMatricula('p3x');
+  process.env.MERCADOPAGO_ASSINATURAS = '0';
+  assert.strictEqual((await assinaturas.disponibilidadeParaAluno({ alunoId: 'p3x', baseUrl: 'https://academia.test' })).disponivel, false);
+  process.env.MERCADOPAGO_ASSINATURAS = '1';
+});
+
+test('baseUrlDaRequisicao: usa PUBLIC_BASE_URL, senão o host do proxy', () => {
+  const req = { headers: { 'x-forwarded-proto': 'https', 'x-forwarded-host': 'app.academia.com' }, protocol: 'http', get: () => 'localhost:3000' };
+  assert.strictEqual(assinaturas.baseUrlDaRequisicao(req), 'https://app.academia.com');
+  process.env.PUBLIC_BASE_URL = 'https://fixo.academia.com/';
+  assert.strictEqual(assinaturas.baseUrlDaRequisicao(req), 'https://fixo.academia.com');
+  delete process.env.PUBLIC_BASE_URL;
+});
+
+// ── Desconto para quem assina + edição da oferta ────────────────────────────
+const dinheiro = (r) => Number(r.valor_centavos);
+
+test('oferta: salvar normaliza, trava desconto inválido e lê de volta', async () => {
+  const salva = await assinaturas.salvarOferta({
+    selo: '  Só hoje  ', titulo: 'Oi {nome}, assine *já*', subtitulo: '', beneficios: ['A', '', '  B  '],
+    botao: 'Quero!', microtexto: 'seguro', faq: [{ p: 'Pergunta?', r: 'Resposta.' }, { p: '', r: 'sem pergunta' }],
+    desconto: { ativo: true, tipo: 'percentual', percentual: 10, valor_centavos: 0 },
+  });
+  assert.strictEqual(salva.selo, 'Só hoje');
+  assert.deepStrictEqual(salva.beneficios, ['A', 'B']);
+  assert.deepStrictEqual(salva.faq, [{ p: 'Pergunta?', r: 'Resposta.' }]);   // item sem pergunta é descartado
+  assert.strictEqual(salva.subtitulo, assinaturas.OFERTA_PADRAO.subtitulo);   // vazio cai no padrão
+  const lida = await assinaturas.obterOferta();
+  assert.deepStrictEqual(lida, salva);
+  // desconto "ativo" com valor zero não vale
+  const zero = await assinaturas.salvarOferta({ ...salva, desconto: { ativo: true, tipo: 'valor', percentual: 0, valor_centavos: 0 } });
+  assert.strictEqual(zero.desconto.ativo, false);
+});
+
+test('calcularDescontoCentavos: percentual, valor fixo e piso de R$ 1,00', () => {
+  const f = assinaturas.calcularDescontoCentavos;
+  assert.strictEqual(f(9900, { ativo: true, tipo: 'percentual', percentual: 10 }), 990);
+  assert.strictEqual(f(9900, { ativo: true, tipo: 'valor', valor_centavos: 1500 }), 1500);
+  assert.strictEqual(f(9900, { ativo: true, tipo: 'valor', valor_centavos: 999999 }), 9800);   // sobra R$ 1,00
+  assert.strictEqual(f(9900, { ativo: true, tipo: 'percentual', percentual: 90 }), 8910);
+  assert.strictEqual(f(9900, { ativo: false, tipo: 'percentual', percentual: 10 }), 0);
+});
+
+test('assinatura com desconto: MP cobra o valor com desconto e a página mostra de/por', async () => {
+  await assinaturas.salvarOferta({ ...(await assinaturas.obterOferta()), desconto: { ativo: true, tipo: 'percentual', percentual: 10, valor_centavos: 0 } });
+  await novoAlunoComMatricula('d1', { telefone: '11999990000' });
+  const r = await assinaturas.criarAssinatura({ matriculaId: 'm-d1', baseUrl: 'https://academia.test' });
+  const [, payload] = chamadas.filter((c) => c[0] === 'criar').pop();
+  assert.strictEqual(payload.valorCentavos, 8910);                   // o que o MP vai cobrar
+  assert.strictEqual(r.desconto_centavos, 990);
+  assert.ok(decodeURIComponent(r.whatsapp_link).includes('desconto'));
+  const o = await assinaturas.ofertaPublica(r.id);
+  assert.strictEqual(o.valor_centavos, 8910);
+  assert.strictEqual(o.valor_cheio_centavos, 9900);
+  assert.strictEqual(o.desconto_centavos, 990);
+  assert.strictEqual(o.titulo, 'Oi {nome}, assine *já*');             // textos editados chegam à página
+});
+
+test('baixa com desconto: reduz o valor da conta, registra o pagamento real e fecha a conta', async () => {
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, vencimento) VALUES ('c-d1', 'd1', 'm-d1', 9900, 'pendente', 'recorrencia', '2026-12-10')` });
+  const sub = (await db.execute({ sql: `SELECT preapproval_id FROM assinaturas_mp WHERE matricula_id='m-d1'` })).rows[0];
+  estadoMp.parcelas['AP-D1'] = { preapproval_id: sub.preapproval_id, transaction_amount: 89.1, payment: { id: 5001, status: 'approved' } };
+  assert.deepStrictEqual(await assinaturas.processarEvento({ type: 'subscription_authorized_payment', dataId: 'AP-D1' }), { alunoId: 'd1' });
+  const conta = (await db.execute({ sql: `SELECT status, valor_centavos FROM cobrancas WHERE id='c-d1'` })).rows[0];
+  assert.strictEqual(conta.status, 'pago');
+  assert.strictEqual(dinheiro(conta), 8910);                          // conta fecha pelo valor com desconto
+  const pag = (await db.execute({ sql: `SELECT valor_centavos, tipo FROM pagamentos_cobranca WHERE cobranca_id='c-d1'` })).rows;
+  assert.strictEqual(pag.length, 1);
+  assert.strictEqual(dinheiro(pag[0]), 8910);
+  assert.strictEqual(pag[0].tipo, 'cartao_credito');
+});
+
+test('baixa com valor inesperado NÃO fecha a conta (fica para conferência)', async () => {
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, vencimento) VALUES ('c-d2', 'd1', 'm-d1', 9900, 'pendente', 'recorrencia', '2027-01-10')` });
+  const sub = (await db.execute({ sql: `SELECT preapproval_id FROM assinaturas_mp WHERE matricula_id='m-d1'` })).rows[0];
+  estadoMp.parcelas['AP-D2'] = { preapproval_id: sub.preapproval_id, transaction_amount: 50, payment: { id: 5002, status: 'approved' } };
+  assert.strictEqual(await assinaturas.processarEvento({ type: 'subscription_authorized_payment', dataId: 'AP-D2' }), null);
+  const conta = (await db.execute({ sql: `SELECT status, valor_centavos FROM cobrancas WHERE id='c-d2'` })).rows[0];
+  assert.strictEqual(conta.status, 'pendente');
+  assert.strictEqual(dinheiro(conta), 9900);
+  const reg = (await db.execute({ sql: `SELECT baixa FROM assinaturas_mp_pagamentos WHERE payment_id='5002'` })).rows[0];
+  assert.strictEqual(reg.baixa, 'valor_divergente');
+});
+
+test('portal: mostra o preço ATUAL e recria a pendente quando o desconto mudou', async () => {
+  const base = 'https://academia.test';
+  await novoAlunoComMatricula('d2');
+  const r1 = await assinaturas.obterOuCriarParaAluno({ alunoId: 'd2', baseUrl: base });   // criada com 10% off (8910)
+  let d = await assinaturas.disponibilidadeParaAluno({ alunoId: 'd2', baseUrl: base });
+  assert.strictEqual(d.valor_centavos, 8910);
+  assert.strictEqual(d.oferta_url, r1.oferta_url);                                          // preço igual: reaproveita
+
+  await assinaturas.salvarOferta({ ...(await assinaturas.obterOferta()), desconto: { ativo: true, tipo: 'valor', percentual: 0, valor_centavos: 2000 } });
+  d = await assinaturas.disponibilidadeParaAluno({ alunoId: 'd2', baseUrl: base });
+  assert.strictEqual(d.valor_centavos, 7900);
+  assert.strictEqual(d.oferta_url, null);                                                   // preço mudou: link antigo não vale
+
+  const r2 = await assinaturas.obterOuCriarParaAluno({ alunoId: 'd2', baseUrl: base });
+  assert.notStrictEqual(r2.oferta_url, r1.oferta_url);
+  const abertas = (await db.execute({ sql: `SELECT COUNT(*) n FROM assinaturas_mp WHERE aluno_id='d2' AND status='pending'` })).rows[0].n;
+  assert.strictEqual(Number(abertas), 1);                                                   // a antiga foi cancelada
+  const antiga = await assinaturas.ofertaPublica(r1.oferta_url.split('/').pop());
+  assert.strictEqual(antiga.status, 'cancelled');
+});
+
+test('prévia: monta a página com as configurações atuais sem criar nada', async () => {
+  const antes = Number((await db.execute({ sql: 'SELECT COUNT(*) n FROM assinaturas_mp' })).rows[0].n);
+  const o = await assinaturas.ofertaPublica('preview');
+  assert.strictEqual(o.preview, true);
+  assert.strictEqual(o.init_point, '#');
+  assert.ok(o.valor_centavos < o.valor_cheio_centavos);               // desconto ativo aparece na prévia
+  assert.strictEqual(Number((await db.execute({ sql: 'SELECT COUNT(*) n FROM assinaturas_mp' })).rows[0].n), antes);
+});

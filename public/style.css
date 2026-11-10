@@ -546,3 +546,14 @@ body {
 }
 .btn-limpar-busca:hover { background: #eaecf0; color: #475467; }
 .campo-busca-wrap input:not(:placeholder-shown) ~ .btn-limpar-busca { display: flex; }
+
+/* Assinatura no cartão (Mercado Pago) — botão de destaque e diálogo */
+.btn-assinar-cartao {
+  display: inline-block; cursor: pointer; border: 0; margin-left: 6px;
+  padding: 6px 12px; border-radius: 8px; font-size: 13px; font-weight: 800;
+  color: #052e16; background: linear-gradient(180deg, #4ade80, #22c55e);
+  box-shadow: 0 2px 8px rgba(34, 197, 94, .35);
+}
+.btn-assinar-cartao:hover { filter: brightness(1.05); }
+.dialogo-assinatura { max-width: 440px; width: calc(100% - 32px); border: 0; border-radius: 14px; padding: 20px; box-shadow: 0 20px 60px rgba(0, 0, 0, .3); }
+.dialogo-assinatura::backdrop { background: rgba(15, 23, 42, .55); }

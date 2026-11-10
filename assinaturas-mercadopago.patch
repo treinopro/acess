@@ -1,0 +1,1964 @@
+diff --git a/.env.example b/.env.example
+index b4c2d70..afeb422 100644
+--- a/.env.example
++++ b/.env.example
+@@ -49,6 +49,13 @@ MERCADOPAGO_ACCESS_TOKEN=
+ # protegido — configure assim que tiver acesso ao painel.
+ MERCADOPAGO_WEBHOOK_SECRET=
+ 
++# Assinaturas (cobrança recorrente no cartão) — OPCIONAL, desligado por padrão.
++# Com 1: POST /api/pagamentos/assinaturas gera o link do cartão do aluno e o
++# webhook do Mercado Pago dá baixa automática em cada parcela aprovada.
++# No painel do MP (Webhooks) ative os tópicos: payments, subscription_preapproval
++# e subscription_authorized_payment. A recorrência é só no cartão de crédito.
++MERCADOPAGO_ASSINATURAS=0
++
+ # ============================
+ # Catraca Henry (integração direta via TCP/IP, porta padrão 3000)
+ # ============================
+diff --git a/public/app.js b/public/app.js
+index 6c7561c..41177aa 100644
+--- a/public/app.js
++++ b/public/app.js
+@@ -452,7 +452,7 @@ function carregarSecao(nome) {
+   if (nome === 'usuarios') carregarUsuarios();
+   if (nome === 'config') {
+     carregarConfiguracoesForm(); carregarConfigCooldown(); carregarConfigChamarProfessor();
+-    carregarConfigBiometriaCatraca(); carregarConfigBackup(); carregarPendenciasSincronizacao();
++    carregarConfigBiometriaCatraca(); carregarConfigBackup(); carregarConfigOfertaAssinatura(); carregarPendenciasSincronizacao();
+   }
+   if (nome === 'recuperacao') carregarSecaoRecuperacao();
+   if (nome === 'relatorios') carregarSecaoRelatorios();
+@@ -1093,6 +1093,128 @@ function atualizarVisibilidadeDiaSemanaBackup() {
+ }
+ document.getElementById('cfg-backup-frequencia').addEventListener('change', atualizarVisibilidadeDiaSemanaBackup);
+ 
++// ── Configurações > Pagamento automático: oferta e desconto ─────────────────
++// Edita os textos da página /assinar/:id e o desconto para quem assina no cartão.
++// Guardado em `configuracoes.assinatura_oferta` (ver src/services/assinaturas.service.js).
++let planosRecorrentesOferta = [];
++let ofertaPadrao = null;
++
++function preencherFormOferta(o) {
++  document.getElementById('oferta-selo').value = o.selo || '';
++  document.getElementById('oferta-titulo').value = o.titulo || '';
++  document.getElementById('oferta-subtitulo').value = o.subtitulo || '';
++  document.getElementById('oferta-beneficios').value = (o.beneficios || []).join('\n');
++  document.getElementById('oferta-botao').value = o.botao || '';
++  document.getElementById('oferta-microtexto').value = o.microtexto || '';
++  document.getElementById('oferta-faq').value = (o.faq || []).map((x) => `${x.p} | ${x.r}`).join('\n');
++  const d = o.desconto || {};
++  document.getElementById('oferta-desc-ativo').checked = !!d.ativo;
++  document.getElementById('oferta-desc-tipo').value = d.tipo === 'valor' ? 'valor' : 'percentual';
++  document.getElementById('oferta-desc-valor').value = d.tipo === 'valor'
++    ? ((d.valor_centavos || 0) / 100).toFixed(2)
++    : (d.percentual || '');
++  atualizarBlocoDescontoOferta();
++}
++
++function lerDescontoOfertaDoForm() {
++  const ativo = document.getElementById('oferta-desc-ativo').checked;
++  const tipo = document.getElementById('oferta-desc-tipo').value;
++  const numero = parseFloat(document.getElementById('oferta-desc-valor').value);
++  const valido = Number.isFinite(numero) && numero > 0;
++  return {
++    ativo: ativo && valido,
++    tipo,
++    percentual: tipo === 'percentual' && valido ? numero : 0,
++    valor_centavos: tipo === 'valor' && valido ? Math.round(numero * 100) : 0,
++  };
++}
++
++// Mostra o efeito do desconto em cada plano recorrente (o aluno vê "de X por Y").
++function atualizarBlocoDescontoOferta() {
++  const ativo = document.getElementById('oferta-desc-ativo').checked;
++  const bloco = document.getElementById('oferta-desc-bloco');
++  bloco.style.display = ativo ? 'flex' : 'none';
++  const tipo = document.getElementById('oferta-desc-tipo').value;
++  document.getElementById('oferta-desc-label').textContent = tipo === 'percentual' ? 'Desconto (%)' : 'Desconto (R$)';
++  const exemplos = document.getElementById('oferta-desc-exemplos');
++  const d = lerDescontoOfertaDoForm();
++  if (!ativo) { exemplos.textContent = 'Sem desconto: quem assina paga o valor cheio do plano.'; return; }
++  if (!d.ativo) { exemplos.textContent = 'Informe o valor do desconto.'; return; }
++  exemplos.innerHTML = planosRecorrentesOferta.map((pl) => {
++    const bruto = d.tipo === 'valor' ? d.valor_centavos : Math.round(pl.valor_centavos * (d.percentual / 100));
++    const desc = Math.max(0, Math.min(bruto, pl.valor_centavos - 100));
++    return `${escapeHtml(pl.nome)}: ${formatarMoeda(pl.valor_centavos)} → <strong>${formatarMoeda(pl.valor_centavos - desc)}</strong> (economia de ${formatarMoeda(desc)})`;
++  }).join('<br>') || 'Cadastre um plano recorrente (mensal, trimestral...) para ver o efeito.';
++}
++
++async function carregarConfigOfertaAssinatura() {
++  if (!document.getElementById('form-oferta-assinatura')) return;
++  try {
++    const [cfg, planos] = await Promise.all([
++      api('/api/pagamentos/assinaturas/oferta-config'),
++      api('/api/planos').catch(() => []),
++    ]);
++    ofertaPadrao = cfg.padrao;
++    planosRecorrentesOferta = (Array.isArray(planos) ? planos : [])
++      .filter((p) => p.ativo !== 0 && ['mensal', 'trimestral', 'semestral', 'anual'].includes(p.tipo));
++    document.getElementById('oferta-aviso-desligado').classList.toggle('oculto', !!cfg.habilitado);
++    preencherFormOferta(cfg.oferta);
++  } catch (err) {
++    // Sem permissão (não-admin) ou rota indisponível: esconde o painel em vez de quebrar a tela.
++    document.getElementById('form-oferta-assinatura').classList.add('oculto');
++  }
++}
++
++document.getElementById('oferta-desc-ativo').addEventListener('change', atualizarBlocoDescontoOferta);
++document.getElementById('oferta-desc-tipo').addEventListener('change', atualizarBlocoDescontoOferta);
++document.getElementById('oferta-desc-valor').addEventListener('input', atualizarBlocoDescontoOferta);
++
++document.getElementById('btn-oferta-padrao').addEventListener('click', () => {
++  if (!ofertaPadrao) return;
++  if (!confirmar('Restaurar os textos padrão? O desconto não muda. Nada é salvo até você clicar em "Salvar oferta".')) return;
++  const atual = lerDescontoOfertaDoForm();
++  preencherFormOferta({ ...ofertaPadrao, desconto: { ...atual, ativo: document.getElementById('oferta-desc-ativo').checked } });
++});
++
++document.getElementById('btn-oferta-previa').addEventListener('click', () => {
++  window.open('/assinar/preview', '_blank', 'noopener');
++});
++
++document.getElementById('form-oferta-assinatura').addEventListener('submit', async (ev) => {
++  ev.preventDefault();
++  const linhas = (id) => document.getElementById(id).value.split('\n').map((l) => l.trim()).filter(Boolean);
++  const faq = linhas('oferta-faq').map((l) => {
++    const i = l.indexOf('|');
++    return i > 0 ? { p: l.slice(0, i).trim(), r: l.slice(i + 1).trim() } : null;
++  });
++  if (faq.some((x) => x === null || !x.p || !x.r)) {
++    mostrarToast('Cada dúvida precisa estar no formato: Pergunta | Resposta', true);
++    return;
++  }
++  const desconto = lerDescontoOfertaDoForm();
++  if (document.getElementById('oferta-desc-ativo').checked && !desconto.ativo) {
++    mostrarToast('Informe um valor de desconto maior que zero (ou desmarque o desconto).', true);
++    return;
++  }
++  try {
++    const r = await api('/api/pagamentos/assinaturas/oferta-config', {
++      method: 'PUT',
++      body: JSON.stringify({
++        selo: document.getElementById('oferta-selo').value.trim(),
++        titulo: document.getElementById('oferta-titulo').value.trim(),
++        subtitulo: document.getElementById('oferta-subtitulo').value.trim(),
++        beneficios: linhas('oferta-beneficios'),
++        botao: document.getElementById('oferta-botao').value.trim(),
++        microtexto: document.getElementById('oferta-microtexto').value.trim(),
++        faq,
++        desconto,
++      }),
++    });
++    preencherFormOferta(r.oferta);
++    mostrarToast('Oferta salva. Use "Ver prévia" para conferir como o aluno vê.');
++  } catch (err) { mostrarToast(err.message, true); }
++});
++
+ async function carregarConfigBackup() {
+   try {
+     const config = await api('/api/config/backup-config');
+@@ -1826,6 +1948,7 @@ async function carregarPerfilAluno() {
+       tbodyAval.appendChild(tr);
+     });
+ 
++    const assinaturaHabilitada = await api('/api/pagamentos/assinaturas/config').then((r) => r.habilitado).catch(() => false);
+     const tbodyMatriculas = document.getElementById('perfil-lista-matriculas');
+     tbodyMatriculas.innerHTML = matriculas.length ? '' : '<tr><td colspan="5">Nenhuma matrícula.</td></tr>';
+     matriculas.forEach((m) => {
+@@ -1851,6 +1974,11 @@ async function carregarPerfilAluno() {
+           } catch (err) { mostrarToast(err.message, true); }
+         });
+       }
++      if (assinaturaHabilitada && m.status === 'ativa' && ['mensal', 'trimestral', 'semestral', 'anual'].includes(m.plano_tipo)) {
++        const botaoAssinar = el('<button class="btn-assinar-cartao" type="button">💳 Assinar no cartão</button>');
++        botaoAssinar.addEventListener('click', () => abrirDialogoAssinatura(m, aluno));
++        tr.lastElementChild.appendChild(botaoAssinar);
++      }
+       tbodyMatriculas.appendChild(tr);
+     });
+ 
+@@ -3357,6 +3485,79 @@ async function popularSelectPlanosDoPerfil() {
+   } catch (err) { mostrarToast(err.message, true); }
+ }
+ 
++// ── Assinatura no cartão (Mercado Pago) ──────────────────────────────────────
++// Gera o link da página de oferta (/assinar/:id) para o aluno ativar o pagamento
++// automático. Se já existe assinatura (aguardando cartão ou ativa), mostra o estado
++// em vez de criar outra. Recurso opcional: o botão só aparece com
++// MERCADOPAGO_ASSINATURAS=1 no servidor.
++const ROTULO_STATUS_ASSINATURA = {
++  pending: 'Aguardando o aluno cadastrar o cartão',
++  authorized: 'Ativa — cobrança automática funcionando',
++  paused: 'Pausada',
++  cancelled: 'Cancelada',
++};
++
++async function abrirDialogoAssinatura(matricula, aluno) {
++  const dlg = document.createElement('dialog');
++  dlg.className = 'dialogo-assinatura';
++  document.body.appendChild(dlg);
++  const fechar = () => { dlg.close(); dlg.remove(); };
++  dlg.addEventListener('cancel', () => dlg.remove());
++
++  const desenhar = (assinatura, ofertaUrl, whatsappLink) => {
++    const ativa = assinatura && assinatura.status !== 'cancelled';
++    dlg.innerHTML = `
++      <h3 style="margin-top:0">💳 Pagamento automático</h3>
++      <p><strong>${escapeHtml(aluno.nome)}</strong> — ${escapeHtml(matricula.plano_nome)}</p>
++      ${assinatura && Number(assinatura.desconto_centavos) > 0 ? `<p style="margin:4px 0">Valor da assinatura: <strong>${formatarMoeda(assinatura.valor_centavos)}</strong> <span style="color:#667085">(de ${formatarMoeda(assinatura.valor_cheio_centavos)}, desconto de ${formatarMoeda(assinatura.desconto_centavos)})</span></p>` : (assinatura ? `<p style="margin:4px 0">Valor da assinatura: <strong>${formatarMoeda(assinatura.valor_centavos)}</strong></p>` : '')}
++      ${ativa ? `<p class="badge ${assinatura.status === 'authorized' ? 'ativa' : 'pendente'}">${escapeHtml(ROTULO_STATUS_ASSINATURA[assinatura.status] || assinatura.status)}</p>` : '<p>Gere o link e envie ao aluno. Ele abre uma página com a oferta e cadastra o cartão no Mercado Pago.</p>'}
++      ${ofertaUrl ? `<input type="text" readonly value="${escapeHtml(ofertaUrl)}" style="width:100%;margin:8px 0" />
++        <div style="display:flex;gap:8px;flex-wrap:wrap">
++          <button type="button" class="btn-assinar-cartao" data-acao="copiar">Copiar link</button>
++          ${whatsappLink ? `<a class="btn-assinar-cartao" style="text-decoration:none" target="_blank" rel="noopener" href="${escapeHtml(whatsappLink)}">Enviar por WhatsApp</a>` : ''}
++          <a class="btn-linha" style="text-decoration:none" target="_blank" rel="noopener" href="${escapeHtml(ofertaUrl)}">Ver como o aluno vê</a>
++        </div>` : ''}
++      <div style="display:flex;gap:8px;justify-content:space-between;margin-top:16px">
++        ${ativa ? '<button type="button" class="btn-linha perigo" data-acao="cancelar">Cancelar assinatura</button>' : '<button type="button" class="btn-assinar-cartao" data-acao="gerar">Gerar link de assinatura</button>'}
++        <button type="button" class="btn-linha" data-acao="fechar">Fechar</button>
++      </div>`;
++    dlg.querySelector('[data-acao="fechar"]').addEventListener('click', fechar);
++    const copiar = dlg.querySelector('[data-acao="copiar"]');
++    if (copiar) copiar.addEventListener('click', async () => {
++      try { await navigator.clipboard.writeText(ofertaUrl); mostrarToast('Link copiado.'); } catch { dlg.querySelector('input').select(); }
++    });
++    const gerar = dlg.querySelector('[data-acao="gerar"]');
++    if (gerar) gerar.addEventListener('click', async () => {
++      gerar.disabled = true;
++      try {
++        const r = await api('/api/pagamentos/assinaturas', { method: 'POST', body: JSON.stringify({ matricula_id: matricula.id }) });
++        desenhar({ id: r.id, status: r.status, valor_centavos: r.valor_centavos, valor_cheio_centavos: r.valor_cheio_centavos, desconto_centavos: r.desconto_centavos }, r.oferta_url, r.whatsapp_link);
++      } catch (err) { mostrarToast(err.message, true); gerar.disabled = false; }
++    });
++    const cancelar = dlg.querySelector('[data-acao="cancelar"]');
++    if (cancelar) cancelar.addEventListener('click', async () => {
++      if (!confirmar(`Cancelar a assinatura automática de "${aluno.nome}"? O Mercado Pago deixa de cobrar o cartão; as contas voltam a depender do pagamento manual.`)) return;
++      try {
++        await api(`/api/pagamentos/assinaturas/${assinatura.id}`, { method: 'DELETE' });
++        mostrarToast('Assinatura cancelada.');
++        desenhar(null, null, null);
++      } catch (err) { mostrarToast(err.message, true); }
++    });
++  };
++
++  dlg.innerHTML = '<p>Carregando…</p>';
++  dlg.showModal();
++  try {
++    const lista = await api(`/api/pagamentos/assinaturas?matricula_id=${encodeURIComponent(matricula.id)}`);
++    const atual = lista.find((a) => a.status !== 'cancelled') || null;
++    // Link da oferta do aluno: reconstruído a partir do id (mesma origem do painel).
++    desenhar(atual, atual ? `${location.origin}/assinar/${atual.id}` : null, null);
++  } catch (err) {
++    dlg.remove();
++    mostrarToast(err.message, true);
++  }
++}
++
+ document.getElementById('btn-toggle-matricula-perfil').addEventListener('click', () => {
+   document.getElementById('form-matricula-perfil').classList.toggle('oculto');
+ });
+diff --git a/public/assinar.html b/public/assinar.html
+new file mode 100644
+index 0000000..6c15982
+--- /dev/null
++++ b/public/assinar.html
+@@ -0,0 +1,299 @@
++<!DOCTYPE html>
++<html lang="pt-BR">
++<head>
++<meta charset="UTF-8">
++<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
++<meta name="robots" content="noindex, nofollow">
++<meta name="theme-color" content="#0f172a">
++<title>Pagamento automático</title>
++<style>
++  :root {
++    --fundo: #0f172a;
++    --fundo2: #1e293b;
++    --texto: #f8fafc;
++    --suave: #cbd5e1;
++    --verde: #22c55e;
++    --verde-escuro: #16a34a;
++    --amarelo: #facc15;
++    --cartao: #ffffff;
++    --tinta: #0f172a;
++  }
++  * { box-sizing: border-box; }
++  html { -webkit-text-size-adjust: 100%; }
++  body {
++    margin: 0;
++    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
++    color: var(--texto);
++    background: radial-gradient(1200px 600px at 50% -10%, #1d4ed8 0%, transparent 55%), linear-gradient(180deg, var(--fundo) 0%, var(--fundo2) 100%);
++    min-height: 100vh;
++    padding: 20px 16px calc(110px + env(safe-area-inset-bottom));
++  }
++  main { max-width: 480px; margin: 0 auto; }
++  .selo {
++    display: inline-flex; align-items: center; gap: 6px;
++    background: rgba(250, 204, 21, .15); color: var(--amarelo);
++    border: 1px solid rgba(250, 204, 21, .45);
++    padding: 6px 12px; border-radius: 999px;
++    font-size: 12px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
++  }
++  .academia { margin: 14px 0 0; color: var(--suave); font-size: 14px; font-weight: 600; }
++  h1 { font-size: 28px; line-height: 1.15; margin: 8px 0 10px; font-weight: 900; letter-spacing: -.02em; }
++  h1 em { font-style: normal; color: var(--verde); }
++  .sub { color: var(--suave); font-size: 16px; line-height: 1.45; margin: 0 0 18px; }
++
++  .preco {
++    background: var(--cartao); color: var(--tinta);
++    border-radius: 20px; padding: 20px; margin: 0 0 18px;
++    box-shadow: 0 20px 50px rgba(0, 0, 0, .35);
++    position: relative; overflow: hidden;
++  }
++  .preco::before {
++    content: ""; position: absolute; inset: 0 0 auto 0; height: 6px;
++    background: linear-gradient(90deg, var(--verde), var(--amarelo), var(--verde));
++  }
++  .preco .plano { font-size: 13px; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: .06em; margin-top: 4px; }
++  .preco .valor { display: flex; align-items: baseline; gap: 6px; margin: 4px 0 2px; }
++  .preco .valor strong { font-size: 46px; font-weight: 900; letter-spacing: -.03em; line-height: 1; }
++  .preco .valor span { font-size: 16px; color: #64748b; font-weight: 700; }
++  .preco .dia {
++    display: inline-block; margin-top: 8px;
++    background: #dcfce7; color: #166534; font-weight: 800; font-size: 14px;
++    padding: 6px 10px; border-radius: 10px;
++  }
++  .preco .nota { margin: 10px 0 0; font-size: 13px; color: #64748b; }
++  .preco .antes { font-size: 16px; color: #94a3b8; text-decoration: line-through; font-weight: 700; margin-top: 6px; }
++  .preco .eco {
++    display: inline-block; margin: 4px 8px 0 0;
++    background: #fef9c3; color: #854d0e; border: 1px solid #fde047;
++    font-weight: 900; font-size: 13px; padding: 5px 10px; border-radius: 10px;
++  }
++  .previa {
++    background: #fde047; color: #422006; font-weight: 800; font-size: 13px; text-align: center;
++    padding: 8px 12px; border-radius: 10px; margin: 0 0 14px;
++  }
++
++  h2 { font-size: 18px; margin: 26px 0 10px; font-weight: 800; }
++  .beneficios { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
++  .beneficios li {
++    display: flex; gap: 12px; align-items: flex-start;
++    background: rgba(255, 255, 255, .06); border: 1px solid rgba(255, 255, 255, .1);
++    padding: 12px 14px; border-radius: 14px; font-size: 15px; line-height: 1.4;
++    opacity: 0; transform: translateY(8px); animation: entrar .5s ease forwards;
++  }
++  .beneficios li::before {
++    content: "✓"; flex: none; width: 24px; height: 24px; border-radius: 50%;
++    background: var(--verde); color: #052e16; font-weight: 900;
++    display: grid; place-items: center; font-size: 14px; margin-top: 1px;
++  }
++  @keyframes entrar { to { opacity: 1; transform: none; } }
++
++  .passos { counter-reset: passo; list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
++  .passos li { display: flex; gap: 12px; align-items: center; font-size: 15px; color: var(--suave); }
++  .passos li::before {
++    counter-increment: passo; content: counter(passo);
++    flex: none; width: 28px; height: 28px; border-radius: 50%;
++    background: rgba(255, 255, 255, .12); color: var(--texto); font-weight: 800;
++    display: grid; place-items: center; font-size: 14px;
++  }
++  .passos b { color: var(--texto); }
++
++  details { background: rgba(255, 255, 255, .05); border-radius: 12px; padding: 12px 14px; margin: 0 0 8px; }
++  summary { cursor: pointer; font-weight: 700; font-size: 15px; }
++  details p { margin: 8px 0 0; color: var(--suave); font-size: 14px; line-height: 1.5; }
++
++  .cta-barra {
++    position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
++    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
++    background: linear-gradient(180deg, transparent, rgba(15, 23, 42, .96) 35%);
++  }
++  .cta-barra .interno { max-width: 480px; margin: 0 auto; }
++  .cta {
++    display: block; width: 100%; text-align: center; text-decoration: none; border: 0; cursor: pointer;
++    background: linear-gradient(180deg, var(--verde), var(--verde-escuro)); color: #052e16;
++    font-size: 18px; font-weight: 900; letter-spacing: .01em;
++    padding: 18px 16px; border-radius: 16px;
++    box-shadow: 0 10px 30px rgba(34, 197, 94, .45);
++    animation: pulso 2s ease-in-out infinite;
++  }
++  .cta:active { transform: scale(.98); }
++  @keyframes pulso {
++    0%, 100% { box-shadow: 0 10px 30px rgba(34, 197, 94, .45), 0 0 0 0 rgba(34, 197, 94, .5); }
++    50% { box-shadow: 0 10px 30px rgba(34, 197, 94, .45), 0 0 0 12px rgba(34, 197, 94, 0); }
++  }
++  .micro { text-align: center; margin: 8px 0 0; color: var(--suave); font-size: 12.5px; }
++
++  .estado { text-align: center; padding: 40px 8px; }
++  .estado .icone { font-size: 56px; }
++  .estado h1 { font-size: 26px; }
++  .link-zap {
++    display: inline-block; margin-top: 14px; color: var(--texto); font-weight: 700;
++    border: 1px solid rgba(255, 255, 255, .35); padding: 12px 18px; border-radius: 12px; text-decoration: none;
++  }
++  .oculto { display: none !important; }
++  @media (prefers-reduced-motion: reduce) {
++    .cta { animation: none; }
++    .beneficios li { animation: none; opacity: 1; transform: none; }
++  }
++</style>
++</head>
++<body>
++<main id="raiz" aria-live="polite">
++  <div class="estado"><div class="icone">⏳</div><p class="sub">Carregando sua oferta…</p></div>
++</main>
++
++<div class="cta-barra oculto" id="barra">
++  <div class="interno">
++    <a class="cta" id="cta" href="#" rel="noopener">Ativar pagamento automático →</a>
++    <p class="micro" id="micro"></p>
++  </div>
++</div>
++
++<script>
++(function () {
++  'use strict';
++  var raiz = document.getElementById('raiz');
++  var barra = document.getElementById('barra');
++  var cta = document.getElementById('cta');
++  var microEl = document.getElementById('micro');
++  var id = location.pathname.split('/').filter(Boolean).pop();
++  var voltouDoCartao = /[?&]retorno=1(&|$)/.test(location.search);
++
++  function brl(centavos) {
++    return (centavos / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
++  }
++
++  function el(tag, props, filhos) {
++    var n = document.createElement(tag);
++    Object.keys(props || {}).forEach(function (k) {
++      if (k === 'text') n.textContent = props[k];
++      else if (k === 'className') n.className = props[k];
++      else n.setAttribute(k, props[k]);
++    });
++    (filhos || []).forEach(function (f) { n.appendChild(typeof f === 'string' ? document.createTextNode(f) : f); });
++    return n;
++  }
++
++  function limpar() { while (raiz.firstChild) raiz.removeChild(raiz.firstChild); }
++
++  function estado(icone, titulo, texto, zap) {
++    limpar();
++    barra.classList.add('oculto');
++    var caixa = el('div', { className: 'estado' }, [
++      el('div', { className: 'icone', text: icone }),
++      el('h1', { text: titulo }),
++      el('p', { className: 'sub', text: texto }),
++    ]);
++    if (zap) caixa.appendChild(el('a', { className: 'link-zap', href: 'https://wa.me/' + zap, text: 'Falar com a recepção' }));
++    raiz.appendChild(caixa);
++  }
++
++  function precoCard(o) {
++    var meses = o.frequencia_meses || 1;
++    var porMes = o.valor_centavos / meses;
++    var porDia = o.valor_centavos / (meses * 30);
++    var rotulo = meses === 1 ? '/mês' : ' a cada ' + meses + ' meses';
++    var temDesconto = o.desconto_centavos > 0;
++    var filhos = [el('div', { className: 'plano', text: o.plano })];
++    if (temDesconto) filhos.push(el('div', { className: 'antes', text: 'De ' + brl(o.valor_cheio_centavos) }));
++    filhos.push(el('div', { className: 'valor' }, [el('strong', { text: brl(o.valor_centavos) }), el('span', { text: rotulo })]));
++    if (temDesconto) filhos.push(el('span', { className: 'eco', text: '🎉 Você economiza ' + brl(o.desconto_centavos) + (meses === 1 ? ' todo mês' : ' a cada cobrança') }));
++    filhos.push(el('span', { className: 'dia', text: 'Só ' + brl(Math.round(porDia)) + ' por dia para treinar' }));
++    if (meses > 1) filhos.push(el('p', { className: 'nota', text: 'Equivale a ' + brl(Math.round(porMes)) + ' por mês.' }));
++    return el('section', { className: 'preco' }, filhos);
++  }
++
++  // Título editável: {nome} vira o primeiro nome; *palavra* ganha destaque verde.
++  function tituloHtml(modelo, nome) {
++    var h1 = el('h1');
++    var texto = String(modelo || '').replace(/\{nome\}/g, nome || '').replace(/,\s*([!?.])/g, '$1').replace(/\s+([!?.,])/g, '$1');
++    texto.split(/(\*[^*]+\*)/).forEach(function (parte) {
++      if (!parte) return;
++      if (/^\*[^*]+\*$/.test(parte)) h1.appendChild(el('em', { text: parte.slice(1, -1) }));
++      else h1.appendChild(document.createTextNode(parte));
++    });
++    return h1;
++  }
++
++  function renderOferta(o) {
++    limpar();
++    var lista = el('ul', { className: 'beneficios' });
++    o.beneficios.forEach(function (b, i) {
++      var li = el('li', { text: b });
++      li.style.animationDelay = (0.08 * i + 0.1) + 's';
++      lista.appendChild(li);
++    });
++
++    if (o.preview) raiz.appendChild(el('div', { className: 'previa', text: 'PRÉVIA — é assim que o aluno vê (o botão não leva a lugar nenhum)' }));
++    raiz.appendChild(el('span', { className: 'selo', text: o.selo }));
++    raiz.appendChild(el('p', { className: 'academia', text: o.academia }));
++    raiz.appendChild(tituloHtml(o.titulo, o.aluno));
++    if (o.subtitulo) raiz.appendChild(el('p', { className: 'sub', text: o.subtitulo }));
++    raiz.appendChild(precoCard(o));
++    raiz.appendChild(el('h2', { text: 'O que você ganha' }));
++    raiz.appendChild(lista);
++
++    raiz.appendChild(el('h2', { text: 'Como funciona' }));
++    var passos = el('ol', { className: 'passos' });
++    [['Toque em ', 'o botão verde'], ['Cadastre o cartão ', 'no ambiente do Mercado Pago'], ['Pronto: ', 'a cobrança acontece sozinha']].forEach(function (p) {
++      var li = el('li');
++      li.appendChild(document.createTextNode(p[0]));
++      li.appendChild(el('b', { text: p[1] }));
++      passos.appendChild(li);
++    });
++    raiz.appendChild(passos);
++
++    if (o.faq && o.faq.length) {
++      raiz.appendChild(el('h2', { text: 'Dúvidas comuns' }));
++      o.faq.forEach(function (d) {
++        raiz.appendChild(el('details', {}, [el('summary', { text: d.p }), el('p', { text: d.r })]));
++      });
++    }
++
++    cta.textContent = o.botao;
++    cta.setAttribute('href', o.init_point);
++    if (o.preview) cta.addEventListener('click', function (ev) { ev.preventDefault(); });
++    microEl.textContent = o.microtexto || '';
++    barra.classList.remove('oculto');
++  }
++
++  function buscar() {
++    return fetch('/api/pagamentos/assinaturas/oferta/' + encodeURIComponent(id), { cache: 'no-store' })
++      .then(function (r) {
++        if (r.status === 404) return null;
++        if (!r.ok) throw new Error('falha');
++        return r.json();
++      });
++  }
++
++  function confirmarAtivacao(o, tentativa) {
++    // Voltou do Mercado Pago: o aviso (webhook) pode levar alguns segundos.
++    estado('⏳', 'Confirmando seu cadastro…', 'Só um instante, estamos finalizando.');
++    var timer = setInterval(function () {
++      tentativa += 1;
++      buscar().then(function (n) {
++        if (n && n.status === 'authorized') { clearInterval(timer); ativo(n); }
++        else if (tentativa >= 20) { clearInterval(timer); estado('✅', 'Recebemos seu cadastro!', 'A confirmação pode levar alguns minutos. Se tiver dúvida, fale com a recepção.', o.whatsapp_contato); }
++      }).catch(function () { /* tenta de novo */ });
++    }, 4500);
++  }
++
++  function ativo(o) {
++    estado('✅', 'Tudo certo, ' + (o.aluno || 'bom treino') + '!', 'Seu pagamento automático está ativo. Agora é só treinar — a mensalidade se resolve sozinha.', o.whatsapp_contato);
++  }
++
++  buscar().then(function (o) {
++    if (!o) return estado('🔎', 'Oferta não encontrada', 'Confira o link ou fale com a recepção.');
++    if (o.preview) return renderOferta(o);
++    if (o.status === 'authorized') return ativo(o);
++    if (o.status === 'cancelled') return estado('ℹ️', 'Esta oferta não está mais disponível', 'Fale com a recepção para gerar um novo link.', o.whatsapp_contato);
++    if (o.status === 'paused') return estado('⏸️', 'Assinatura pausada', 'Fale com a recepção para retomar.', o.whatsapp_contato);
++    if (voltouDoCartao) return confirmarAtivacao(o, 0);
++    if (!o.init_point) return estado('ℹ️', 'Link indisponível', 'Fale com a recepção para gerar um novo link.', o.whatsapp_contato);
++    renderOferta(o);
++  }).catch(function () {
++    estado('⚠️', 'Não foi possível carregar', 'Verifique sua conexão e tente de novo em instantes.');
++  });
++})();
++</script>
++</body>
++</html>
+diff --git a/public/index.html b/public/index.html
+index 0cd8e5e..227fbd6 100644
+--- a/public/index.html
++++ b/public/index.html
+@@ -2191,6 +2191,66 @@
+           </form>
+         </div>
+ 
++        <form class="form-painel" id="form-oferta-assinatura">
++          <h3 style="margin-top:0">💳 Pagamento automático — oferta e desconto</h3>
++          <p style="margin-top:0;color:#667085;font-size:13px">
++            Edite o que o aluno vê na página de oferta (link do botão "Assinar no cartão" e card do portal) e defina um
++            desconto para quem optar pela cobrança automática no cartão.
++          </p>
++          <p id="oferta-aviso-desligado" class="oculto" style="margin:0 0 10px;padding:8px 10px;border-radius:8px;background:#fef9c3;color:#854d0e;font-size:13px">
++            O recurso ainda está desligado no servidor (variável <code>MERCADOPAGO_ASSINATURAS=1</code>). Você já pode editar a oferta; o botão só aparece para os alunos depois que ele for ligado.
++          </p>
++
++          <h3>Desconto para quem assinar</h3>
++          <label style="display:flex;gap:8px;align-items:center;font-weight:600">
++            <input type="checkbox" id="oferta-desc-ativo" style="width:auto" /> Dar desconto a quem optar pelo pagamento automático
++          </label>
++          <div id="oferta-desc-bloco" class="oculto" style="display:none;gap:10px;flex-wrap:wrap;margin-top:8px">
++            <div>
++              <label>Tipo</label>
++              <select id="oferta-desc-tipo">
++                <option value="percentual">Percentual (%)</option>
++                <option value="valor">Valor fixo (R$)</option>
++              </select>
++            </div>
++            <div>
++              <label id="oferta-desc-label">Desconto (%)</label>
++              <input id="oferta-desc-valor" type="number" min="0" step="0.01" style="width:120px" />
++            </div>
++          </div>
++          <div id="oferta-desc-exemplos" style="margin:8px 0 0;color:#667085;font-size:13px"></div>
++          <p style="margin:8px 0 0;color:#667085;font-size:13px">
++            O desconto vale em cada cobrança enquanto a assinatura estiver ativa e fica travado no valor que o aluno viu ao assinar.
++            Quem já assinou antes de você mudar o desconto continua com o valor antigo. O sistema nunca cobra menos que R$ 1,00.
++          </p>
++
++          <h3>Textos da página</h3>
++          <label>Selo (etiqueta no topo)</label>
++          <input id="oferta-selo" maxlength="60" />
++          <label>Título</label>
++          <input id="oferta-titulo" maxlength="160" />
++          <p style="margin:4px 0 0;color:#667085;font-size:12px">Use <code>{nome}</code> para o primeiro nome do aluno e <code>*palavra*</code> para destacar em verde.</p>
++          <label>Subtítulo</label>
++          <textarea id="oferta-subtitulo" rows="2" maxlength="300"></textarea>
++          <label>Argumentos (um por linha, até 8)</label>
++          <textarea id="oferta-beneficios" rows="6"></textarea>
++          <label>Texto do botão</label>
++          <input id="oferta-botao" maxlength="60" />
++          <label>Texto abaixo do botão</label>
++          <input id="oferta-microtexto" maxlength="120" />
++          <label>Dúvidas comuns (uma por linha no formato <code>Pergunta | Resposta</code>, até 6)</label>
++          <textarea id="oferta-faq" rows="6"></textarea>
++          <p style="margin:6px 0 0;color:#b42318;font-size:12px">
++            Só prometa o que a academia cumpre de fato (ex.: cancelamento, prazos). O texto é público.
++          </p>
++
++          <div class="form-acoes">
++            <button type="submit" class="btn-primario">Salvar oferta</button>
++            <button type="button" class="btn-secundario" id="btn-oferta-previa">Ver prévia da página</button>
++            <button type="button" class="btn-secundario" id="btn-oferta-padrao">Restaurar textos padrão</button>
++          </div>
++        </form>
++
+         <div class="form-painel oculto" id="painel-pendencias-sincronizacao">
+           <h3 style="margin-top:0">Pendências de sincronização (totem offline)</h3>
+           <p style="margin-top:0;color:#667085;font-size:13px">
+diff --git a/public/portal.html b/public/portal.html
+index b8df10b..8bf3c44 100644
+--- a/public/portal.html
++++ b/public/portal.html
+@@ -399,6 +399,8 @@ if ('serviceWorker' in navigator) {
+     <div id="painel-hub-dashboard" class="oculto" style="width:100%;max-width:440px">
+       <div class="subtitulo" id="hub-saudacao" style="margin-bottom:20px"></div>
+ 
++      <div id="feed-assinatura-hub"></div>
++
+       <div id="feed-banners-hub"></div>
+ 
+       <div class="aviso-vencimento oculto" id="aviso-vencimento-hub"></div>
+diff --git a/public/portal.js b/public/portal.js
+index d27cb7a..eb6ccf5 100644
+--- a/public/portal.js
++++ b/public/portal.js
+@@ -82,6 +82,49 @@ function suprimirBanner(bannerId) {
+   try { localStorage.setItem(CHAVE_BANNERS_VISTOS, JSON.stringify(vistos)); } catch { /* idem acima */ }
+ }
+ 
++/**
++ * Card "Pague no automático" (assinatura Mercado Pago). Só aparece quando o servidor
++ * diz que está disponível para este aluno (recurso ligado, matrícula recorrente
++ * ativa, ainda sem assinatura autorizada). O clique cria/reaproveita a assinatura
++ * e abre a página de oferta.
++ */
++async function carregarCardAssinaturaHub() {
++  const container = document.getElementById('feed-assinatura-hub');
++  if (!container || !cpfHubAtual || !senhaHubAtual) return;
++  container.innerHTML = '';
++  try {
++    const d = await api(`/api/portal/assinatura?cpf=${encodeURIComponent(cpfHubAtual)}&senha=${encodeURIComponent(senhaHubAtual)}`);
++    if (!d.disponivel) return;
++    container.innerHTML = `
++      <div class="cartao" style="text-align:left;background:linear-gradient(135deg,#0f172a,#1d4ed8);color:#fff;border:0;box-shadow:0 10px 30px rgba(29,78,216,.35)">
++        <div style="display:inline-block;background:rgba(250,204,21,.18);color:#facc15;border:1px solid rgba(250,204,21,.5);border-radius:999px;padding:4px 10px;font-size:11px;font-weight:800;letter-spacing:.06em">⚡ OFERTA PARA VOCÊ</div>
++        <h3 style="margin:10px 0 4px;color:#fff;font-size:20px">Deixe a mensalidade no automático</h3>
++        <p style="margin:0 0 12px;color:#dbeafe">Sem vencimento pra lembrar, sem fila no totem. ${escapeHtml(d.plano)}${d.desconto_centavos > 0
++          ? ` de <s>${formatarMoeda(d.valor_cheio_centavos)}</s> por <strong style="color:#facc15">${formatarMoeda(d.valor_centavos)}</strong> — você economiza ${formatarMoeda(d.desconto_centavos)} a cada cobrança`
++          : ` por ${formatarMoeda(d.valor_centavos)}`}, cobrado sozinho no cartão.</p>
++        <button type="button" id="btn-assinar-automatico" style="width:100%;border:0;border-radius:12px;padding:14px;font-size:16px;font-weight:900;color:#052e16;background:linear-gradient(180deg,#4ade80,#22c55e);box-shadow:0 6px 20px rgba(34,197,94,.45);cursor:pointer">Quero o pagamento automático →</button>
++      </div>`;
++    document.getElementById('btn-assinar-automatico').addEventListener('click', async (ev) => {
++      const btn = ev.currentTarget;
++      btn.disabled = true;
++      btn.textContent = 'Abrindo…';
++      try {
++        const r = await api('/api/portal/assinatura', {
++          method: 'POST',
++          body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual }),
++        });
++        window.location.href = r.oferta_url;
++      } catch (err) {
++        btn.disabled = false;
++        btn.textContent = 'Quero o pagamento automático →';
++        alert(err.message || 'Não foi possível abrir agora. Tente de novo em instantes.');
++      }
++    });
++  } catch {
++    // Não é crítico: sem card, o resto do hub segue normal.
++  }
++}
++
+ async function carregarBannersHub() {
+   const container = document.getElementById('feed-banners-hub');
+   if (!container || !cpfHubAtual || !senhaHubAtual) return;
+@@ -514,6 +557,7 @@ function preencherDashboardHub(info) {
+   }
+ 
+   atualizarCardNotificacoes(info);
++  carregarCardAssinaturaHub();
+   carregarBannersHub();
+   carregarResumoContasHub();
+   carregarAvaliacoesHub();
+diff --git a/public/style.css b/public/style.css
+index 438e2ab..5292551 100644
+--- a/public/style.css
++++ b/public/style.css
+@@ -546,3 +546,14 @@ body {
+ }
+ .btn-limpar-busca:hover { background: #eaecf0; color: #475467; }
+ .campo-busca-wrap input:not(:placeholder-shown) ~ .btn-limpar-busca { display: flex; }
++
++/* Assinatura no cartão (Mercado Pago) — botão de destaque e diálogo */
++.btn-assinar-cartao {
++  display: inline-block; cursor: pointer; border: 0; margin-left: 6px;
++  padding: 6px 12px; border-radius: 8px; font-size: 13px; font-weight: 800;
++  color: #052e16; background: linear-gradient(180deg, #4ade80, #22c55e);
++  box-shadow: 0 2px 8px rgba(34, 197, 94, .35);
++}
++.btn-assinar-cartao:hover { filter: brightness(1.05); }
++.dialogo-assinatura { max-width: 440px; width: calc(100% - 32px); border: 0; border-radius: 14px; padding: 20px; box-shadow: 0 20px 60px rgba(0, 0, 0, .3); }
++.dialogo-assinatura::backdrop { background: rgba(15, 23, 42, .55); }
+diff --git a/src/db/migrate.js b/src/db/migrate.js
+index d4316f4..b005b69 100644
+--- a/src/db/migrate.js
++++ b/src/db/migrate.js
+@@ -79,6 +79,9 @@ const ALTERACOES_INCREMENTAIS = [
+   "ALTER TABLE treino_execucoes ADD COLUMN repeticoes_max INTEGER",
+   // Horário da última modificação do cadastro do aluno (2026-09-21).
+   "ALTER TABLE alunos ADD COLUMN atualizado_em TEXT",
++  // Desconto da assinatura no cartão (2026-11): tabela criada antes desta coluna.
++  "ALTER TABLE assinaturas_mp ADD COLUMN valor_cheio_centavos INTEGER",
++  "ALTER TABLE assinaturas_mp ADD COLUMN desconto_centavos INTEGER NOT NULL DEFAULT 0",
+ ];
+ 
+ // Divide um arquivo .sql em statements individuais (o driver libsql nao aceita
+diff --git a/src/db/schema.sql b/src/db/schema.sql
+index 03c57ea..626f2ee 100644
+--- a/src/db/schema.sql
++++ b/src/db/schema.sql
+@@ -768,3 +768,33 @@ CREATE INDEX IF NOT EXISTS idx_concessoes_acesso_aluno ON concessoes_acesso(alun
+ CREATE INDEX IF NOT EXISTS idx_concessoes_acesso_validade ON concessoes_acesso(aluno_id, valido_ate);
+ CREATE INDEX IF NOT EXISTS idx_mensagens_enviadas_aluno ON mensagens_enviadas(aluno_id);
+ CREATE INDEX IF NOT EXISTS idx_mensagens_enviadas_criado_em ON mensagens_enviadas(criado_em);
++
++-- Assinaturas do Mercado Pago (cobrança recorrente no cartão) — 2026-11. Recurso
++-- OPCIONAL: só é usado com MERCADOPAGO_ASSINATURAS=1 (ver
++-- src/services/assinaturas.service.js). id é o external_reference enviado ao MP.
++CREATE TABLE IF NOT EXISTS assinaturas_mp (
++  id TEXT PRIMARY KEY,
++  matricula_id TEXT NOT NULL REFERENCES matriculas(id) ON DELETE CASCADE,
++  aluno_id TEXT NOT NULL REFERENCES alunos(id) ON DELETE CASCADE,
++  preapproval_id TEXT NOT NULL UNIQUE,
++  status TEXT NOT NULL DEFAULT 'pending', -- pending | authorized | paused | cancelled
++  valor_centavos INTEGER NOT NULL, -- valor COBRADO por ciclo (já com desconto, se houver)
++  valor_cheio_centavos INTEGER,    -- valor do plano sem desconto (NULL em assinaturas antigas)
++  desconto_centavos INTEGER NOT NULL DEFAULT 0, -- desconto por ciclo travado na criação
++  frequencia_meses INTEGER NOT NULL,
++  init_point TEXT,
++  criado_em TEXT NOT NULL DEFAULT (datetime('now')),
++  atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
++);
++-- Parcelas já processadas (idempotência: o MP reenvia webhook). cobranca_id fica
++-- NULL e baixa = 'sem_cobranca' quando o pagamento chegou antes de existir uma
++-- conta em aberto da matrícula — fica registrado para conferência manual.
++CREATE TABLE IF NOT EXISTS assinaturas_mp_pagamentos (
++  payment_id TEXT PRIMARY KEY,
++  assinatura_id TEXT NOT NULL REFERENCES assinaturas_mp(id) ON DELETE CASCADE,
++  cobranca_id TEXT REFERENCES cobrancas(id),
++  valor_centavos INTEGER,
++  baixa TEXT NOT NULL, -- baixada | sem_cobranca
++  criado_em TEXT NOT NULL DEFAULT (datetime('now'))
++);
++CREATE INDEX IF NOT EXISTS idx_assinaturas_mp_matricula ON assinaturas_mp(matricula_id, status);
+diff --git a/src/routes/alunos.routes.js b/src/routes/alunos.routes.js
+index a7ee8e6..49476be 100644
+--- a/src/routes/alunos.routes.js
++++ b/src/routes/alunos.routes.js
+@@ -924,7 +924,7 @@ router.get('/:id/perfil', async (req, res, next) => {
+           args: [alunoId],
+         }),
+         db.execute({
+-          sql: `SELECT m.*, p.nome as plano_nome FROM matriculas m JOIN planos p ON p.id = m.plano_id
++          sql: `SELECT m.*, p.nome as plano_nome, p.tipo as plano_tipo FROM matriculas m JOIN planos p ON p.id = m.plano_id
+                 WHERE m.aluno_id = ? ORDER BY m.data_inicio DESC`,
+           args: [alunoId],
+         }),
+diff --git a/src/routes/pagamentos.routes.js b/src/routes/pagamentos.routes.js
+index 1ba1747..ffd9716 100644
+--- a/src/routes/pagamentos.routes.js
++++ b/src/routes/pagamentos.routes.js
+@@ -7,6 +7,7 @@ const dbOffline = require('../db/clientOffline');
+ const { autenticar, apenasAdmin } = require('../middleware/auth');
+ const mercadopago = require('../services/payment/mercadopago.service');
+ const { gerarCobrancasRecorrentes, ultimoDiaDoMes, resolverMatriculaDaConta } = require('../services/cobrancas.service');
++const assinaturas = require('../services/assinaturas.service');
+ const { criarLimitador } = require('../middleware/rateLimit');
+ const acessoTerminal = require('../services/acessoTerminal.service');
+ const dbResiliente = require('../services/dbResiliente.service');
+@@ -634,10 +635,22 @@ router.post('/webhook/mercadopago', limitadorWebhook, express.json(), async (req
+     if (aviso) console.warn('[webhook/mercadopago]', aviso);
+ 
+     const { type, data } = req.body;
++
++    // Assinaturas (recurso opcional, MERCADOPAGO_ASSINATURAS=1): parcela cobrada
++    // ou mudança de status da assinatura. Sem a flag, retorna null e segue.
++    if ((type === 'subscription_authorized_payment' || type === 'subscription_preapproval') && data?.id) {
++      const baixa = await assinaturas.processarEvento({ type, dataId: data.id });
++      if (baixa?.alunoId) acessoTerminal.notificarAgenteAtualizacaoAluno(baixa.alunoId);
++    }
++
+     if (type === 'payment' && data?.id) {
+       const pagamento = await mercadopago.consultarPagamento(data.id);
+       const referenciaExterna = pagamento.external_reference;
+ 
++      // Pagamento gerado por uma assinatura (external_reference = id da assinatura).
++      const baixaAssinatura = await assinaturas.processarPagamentoAprovado(pagamento);
++      if (baixaAssinatura?.alunoId) acessoTerminal.notificarAgenteAtualizacaoAluno(baixaAssinatura.alunoId);
++
+       if (pagamento.status === 'approved' && referenciaExterna) {
+         await db.execute({
+           sql: `UPDATE cobrancas SET status = 'pago', metodo_pagamento = ?, pago_em = datetime('now')
+@@ -657,6 +670,109 @@ router.post('/webhook/mercadopago', limitadorWebhook, express.json(), async (req
+   }
+ });
+ 
++// ── Assinaturas do Mercado Pago (cobrança recorrente no cartão) ─────────────
++// Recurso opcional: precisa de MERCADOPAGO_ASSINATURAS=1 no ambiente. A baixa
++// das parcelas é automática pelo webhook acima; estas rotas só criam, listam e
++// cancelam. Ver src/services/assinaturas.service.js.
++
++// POST /api/pagamentos/assinaturas  { matricula_id } → { init_point }
++// O init_point é o link que o aluno abre para cadastrar o cartão no Mercado Pago.
++router.post('/assinaturas', autenticar, apenasAdmin, async (req, res, next) => {
++  try {
++    const { matricula_id } = z.object({ matricula_id: z.string().min(1) }).parse(req.body);
++    res.status(201).json(await assinaturas.criarAssinatura({
++      matriculaId: matricula_id,
++      baseUrl: assinaturas.baseUrlDaRequisicao(req),
++    }));
++  } catch (err) {
++    next(err);
++  }
++});
++
++// GET /api/pagamentos/assinaturas/config — o painel só mostra o botão se o recurso estiver ligado.
++router.get('/assinaturas/config', autenticar, (req, res) => {
++  res.json({ habilitado: assinaturas.habilitado() });
++});
++
++// GET/PUT /api/pagamentos/assinaturas/oferta-config — textos, argumentos, perguntas e
++// desconto da página de oferta (Configurações > Pagamento automático). Só admin.
++const ofertaSchema = z.object({
++  selo: z.string().max(60),
++  titulo: z.string().min(1).max(160),
++  subtitulo: z.string().max(300),
++  beneficios: z.array(z.string().max(160)).max(8),
++  botao: z.string().min(1).max(60),
++  microtexto: z.string().max(120),
++  faq: z.array(z.object({ p: z.string().min(1).max(160), r: z.string().min(1).max(400) })).max(6),
++  desconto: z.object({
++    ativo: z.boolean(),
++    tipo: z.enum(['percentual', 'valor']),
++    percentual: z.number().min(0).max(90),
++    valor_centavos: z.number().int().min(0),
++  }).refine((d) => !d.ativo || (d.tipo === 'percentual' ? d.percentual > 0 : d.valor_centavos > 0), {
++    message: 'Informe o valor do desconto (maior que zero).',
++  }),
++});
++
++router.get('/assinaturas/oferta-config', autenticar, apenasAdmin, async (req, res, next) => {
++  try {
++    res.json({
++      habilitado: assinaturas.habilitado(),
++      oferta: await assinaturas.obterOferta(),
++      padrao: assinaturas.OFERTA_PADRAO,
++    });
++  } catch (err) {
++    next(err);
++  }
++});
++
++router.put('/assinaturas/oferta-config', autenticar, apenasAdmin, async (req, res, next) => {
++  try {
++    const dados = ofertaSchema.parse(req.body);
++    res.json({ oferta: await assinaturas.salvarOferta(dados) });
++  } catch (err) {
++    next(err);
++  }
++});
++
++// GET /api/pagamentos/assinaturas/oferta/:id — PÚBLICO (é o que a página /assinar/:id
++// consulta). Limitado por IP; o id é um UUID e a resposta não traz dados pessoais.
++const limitadorOferta = criarLimitador({
++  janelaMs: 5 * 60 * 1000,
++  maximo: 120,
++  mensagem: 'Muitas requisições. Aguarde alguns minutos.',
++});
++router.get('/assinaturas/oferta/:id', limitadorOferta, async (req, res, next) => {
++  try {
++    const oferta = await assinaturas.ofertaPublica(req.params.id);
++    if (!oferta) return res.status(404).json({ erro: 'Oferta não encontrada.' });
++    res.set('Cache-Control', 'no-store');
++    res.json(oferta);
++  } catch (err) {
++    next(err);
++  }
++});
++
++// GET /api/pagamentos/assinaturas?matricula_id=...
++router.get('/assinaturas', autenticar, async (req, res, next) => {
++  try {
++    const matriculaId = String(req.query.matricula_id || '');
++    if (!matriculaId) return res.status(400).json({ erro: 'Informe matricula_id.' });
++    res.json(await assinaturas.listar({ matriculaId }));
++  } catch (err) {
++    next(err);
++  }
++});
++
++// DELETE /api/pagamentos/assinaturas/:id — cancela no Mercado Pago e localmente.
++router.delete('/assinaturas/:id', autenticar, apenasAdmin, async (req, res, next) => {
++  try {
++    res.json(await assinaturas.cancelar({ assinaturaId: req.params.id }));
++  } catch (err) {
++    next(err);
++  }
++});
++
+ // GET /api/pagamentos/inadimplentes
+ router.get('/inadimplentes', autenticar, async (req, res, next) => {
+   try {
+diff --git a/src/routes/portal.routes.js b/src/routes/portal.routes.js
+index 2d15ef1..8effd6f 100644
+--- a/src/routes/portal.routes.js
++++ b/src/routes/portal.routes.js
+@@ -1149,4 +1149,39 @@ router.get('/banners', limitadorSenhaPortal, async (req, res, next) => {
+   }
+ });
+ 
++// ── Pagamento automático no cartão (assinatura Mercado Pago) ────────────────
++// Recurso opcional (MERCADOPAGO_ASSINATURAS=1). O card "pague no automático" do
++// hub só aparece quando `disponivel` for true; o clique cria (ou reaproveita) a
++// assinatura e leva o aluno à página de oferta /assinar/:id.
++const assinaturas = require('../services/assinaturas.service');
++
++router.get('/assinatura', limitadorSenhaPortal, async (req, res, next) => {
++  try {
++    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(req.query);
++    const autenticado = await autenticarAlunoPortal(cpf, senha);
++    if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
++    res.set('Cache-Control', 'no-store');
++    res.json(await assinaturas.disponibilidadeParaAluno({
++      alunoId: autenticado.aluno.id,
++      baseUrl: assinaturas.baseUrlDaRequisicao(req),
++    }));
++  } catch (err) {
++    next(err);
++  }
++});
++
++router.post('/assinatura', limitadorSenhaPortal, async (req, res, next) => {
++  try {
++    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(req.body);
++    const autenticado = await autenticarAlunoPortal(cpf, senha);
++    if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
++    res.json(await assinaturas.obterOuCriarParaAluno({
++      alunoId: autenticado.aluno.id,
++      baseUrl: assinaturas.baseUrlDaRequisicao(req),
++    }));
++  } catch (err) {
++    next(err);
++  }
++});
++
+ module.exports = router;
+diff --git a/src/server.js b/src/server.js
+index 205f345..3a0281c 100644
+--- a/src/server.js
++++ b/src/server.js
+@@ -212,6 +212,10 @@ app.use(express.static(path.join(__dirname, '..', 'public'), {
+ }));
+ 
+ app.get('/health', (req, res) => res.json({ status: 'ok', servico: 'academia-gestao' }));
++app.get('/assinar/:id', (req, res) => {
++  res.set('Cache-Control', 'no-store');
++  res.sendFile(path.join(__dirname, '..', 'public', 'assinar.html'));
++});
+ 
+ // "Chamar instrutor" via tag NFC (2026-08) — fica fora do prefixo /api de
+ // propósito, ver comentário completo em src/routes/chamar.routes.js.
+diff --git a/src/services/assinaturas.service.js b/src/services/assinaturas.service.js
+new file mode 100644
+index 0000000..276f5f8
+--- /dev/null
++++ b/src/services/assinaturas.service.js
+@@ -0,0 +1,517 @@
++// Assinaturas do Mercado Pago: cobrança recorrente no cartão com baixa automática.
++//
++// Recurso OPCIONAL e desligado por padrão (MERCADOPAGO_ASSINATURAS=1 liga). Não
++// substitui o fluxo atual — "Gerar Contas a Receber" continua sendo quem cria as
++// cobranças de cada ciclo (decisão do dono: geração de cobrança é ação
++// financeira manual). Aqui o MP só COBRA o cartão do aluno a cada ciclo e, quando
++// a parcela é aprovada, damos baixa na conta em aberto mais antiga da matrícula.
++//
++// Fluxo:
++//   1. admin (ou o próprio aluno, no portal) gera a assinatura → link da página de
++//      oferta (/assinar/:id), que leva ao cadastro do cartão no Mercado Pago;
++//   2. MP cobra a cada ciclo e avisa por webhook (subscription_authorized_payment,
++//      subscription_preapproval e payment) → processarEvento() dá baixa.
++//
++// Desconto para quem assina (configurável na tela Configurações > Pagamento
++// automático): é TRAVADO na criação da assinatura — o valor cobrado pelo MP já é o
++// com desconto — e, na baixa, segue a convenção do sistema para descontos: o valor
++// da conta é reduzido pelo desconto e o pagamento é registrado pelo valor real.
++//
++// Idempotência: o MP reenvia webhook; cada parcela (payment_id) só baixa uma vez
++// (tabela assinaturas_mp_pagamentos).
++
++const { v4: uuid } = require('uuid');
++const db = require('../db/client');
++const mercadopago = require('./payment/mercadopago.service');
++const { MESES_POR_TIPO, TIPOS_RECORRENTES } = require('./cobrancas.service');
++
++const VALOR_MINIMO_CENTAVOS = 100; // nunca cobra menos de R$ 1,00 por ciclo (desconto absurdo = erro de digitação)
++
++function habilitado() {
++  return process.env.MERCADOPAGO_ASSINATURAS === '1';
++}
++
++function erro(mensagem, status) {
++  return Object.assign(new Error(mensagem), { status });
++}
++
++// ── Endereços, telefone, nome ───────────────────────────────────────────────
++
++// Endereço público do sistema (para montar o link da página de oferta). Prefere
++// PUBLIC_BASE_URL (recomendado: o painel pode rodar em localhost apontando pro
++// banco de produção — sem a variável o link sairia como http://localhost). Sem ela,
++// usa o host da própria requisição (respeitando o proxy da hospedagem).
++function baseUrlDaRequisicao(req) {
++  const env = (process.env.PUBLIC_BASE_URL || '').trim().replace(/\/$/, '');
++  if (env) return env;
++  const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
++  const host = String(req.headers['x-forwarded-host'] || req.get('host') || '').split(',')[0].trim();
++  return `${proto}://${host}`;
++}
++
++function urlOferta(baseUrl, assinaturaId) {
++  return `${baseUrl}/assinar/${assinaturaId}`;
++}
++
++// O MP exige back_url https; fora disso (ex.: teste em localhost) cai no site do MP.
++function urlRetorno(baseUrl, assinaturaId) {
++  return /^https:\/\//i.test(baseUrl || '') ? `${urlOferta(baseUrl, assinaturaId)}?retorno=1` : 'https://www.mercadopago.com.br';
++}
++
++function normalizarTelefone(telefone) {
++  const digitos = String(telefone || '').replace(/\D/g, '');
++  if (!digitos) return null;
++  return digitos.length >= 12 ? digitos : `55${digitos}`;
++}
++
++function primeiroNome(nome) {
++  const p = String(nome || '').trim().split(/\s+/)[0] || '';
++  return p ? p.charAt(0).toUpperCase() + p.slice(1).toLowerCase() : '';
++}
++
++// ── Configuração da oferta (textos, argumentos, desconto) ───────────────────
++// Guardada como JSON na chave `assinatura_oferta` de `configuracoes` e editada em
++// Configurações > Pagamento automático. Só afirmam o que o sistema realmente faz —
++// o dono pode trocar os textos, então a responsabilidade pelo que promete é dele.
++const OFERTA_PADRAO = {
++  selo: '⚡ Oferta para alunos',
++  // *palavra* vira destaque verde; {nome} vira o primeiro nome do aluno.
++  titulo: 'Deixe sua mensalidade no *automático*, {nome}!',
++  subtitulo: 'Treine sem pensar em vencimento: a cobrança é feita sozinha no seu cartão, todo ciclo.',
++  beneficios: [
++    'Pagamento automático: nunca mais esquece o vencimento',
++    'Sem fila no totem e sem Pix pra copiar todo mês',
++    'Acesso sempre em dia, sem susto na catraca',
++    'Cartão cadastrado direto no Mercado Pago — a academia não vê nem guarda seus dados',
++    'Cancele quando quiser: é só avisar a recepção',
++  ],
++  botao: 'Ativar pagamento automático →',
++  microtexto: '🔒 Pagamento seguro pelo Mercado Pago · leva cerca de 1 minuto',
++  faq: [
++    { p: 'Posso cancelar?', r: 'Sim. Basta avisar a recepção que a assinatura é cancelada.' },
++    { p: 'A academia guarda os dados do meu cartão?', r: 'Não. O cartão é cadastrado direto no Mercado Pago; a academia só recebe a confirmação do pagamento.' },
++    { p: 'E se meu cartão for recusado?', r: 'O Mercado Pago tenta cobrar novamente de forma automática por alguns dias antes de desistir.' },
++  ],
++  // Desconto por ciclo para quem opta pela assinatura. Vale enquanto a assinatura
++  // estiver ativa (o valor é travado quando o aluno assina).
++  desconto: { ativo: false, tipo: 'percentual', percentual: 0, valor_centavos: 0 },
++};
++
++const LIMITES = { texto: 160, subtitulo: 300, beneficio: 160, resposta: 400, beneficios: 8, faq: 6 };
++
++function textoLimpo(v, padrao, max) {
++  const t = typeof v === 'string' ? v.trim() : '';
++  return (t || padrao).slice(0, max);
++}
++
++// Valida e normaliza (usado ao ler do banco e ao salvar). Nunca lança: entrada
++// inválida cai no padrão — a página pública não pode quebrar por um JSON ruim.
++function normalizarOferta(bruto, legadoBeneficios) {
++  const b = bruto && typeof bruto === 'object' ? bruto : {};
++  const beneficios = (Array.isArray(b.beneficios) ? b.beneficios : legadoBeneficios || [])
++    .map((x) => String(x || '').trim().slice(0, LIMITES.beneficio)).filter(Boolean).slice(0, LIMITES.beneficios);
++  const faq = (Array.isArray(b.faq) ? b.faq : OFERTA_PADRAO.faq)
++    .map((x) => ({ p: String(x?.p || '').trim().slice(0, LIMITES.texto), r: String(x?.r || '').trim().slice(0, LIMITES.resposta) }))
++    .filter((x) => x.p && x.r).slice(0, LIMITES.faq);
++  const d = b.desconto && typeof b.desconto === 'object' ? b.desconto : {};
++  const tipo = d.tipo === 'valor' ? 'valor' : 'percentual';
++  const percentual = Math.min(Math.max(Number(d.percentual) || 0, 0), 90);
++  const valorCentavos = Math.max(Math.round(Number(d.valor_centavos) || 0), 0);
++  return {
++    selo: textoLimpo(b.selo, OFERTA_PADRAO.selo, 60),
++    titulo: textoLimpo(b.titulo, OFERTA_PADRAO.titulo, LIMITES.texto),
++    subtitulo: textoLimpo(b.subtitulo, OFERTA_PADRAO.subtitulo, LIMITES.subtitulo),
++    beneficios: beneficios.length ? beneficios : OFERTA_PADRAO.beneficios,
++    botao: textoLimpo(b.botao, OFERTA_PADRAO.botao, 60),
++    microtexto: textoLimpo(b.microtexto, OFERTA_PADRAO.microtexto, 120),
++    faq: faq.length || Array.isArray(b.faq) ? faq : OFERTA_PADRAO.faq,
++    desconto: {
++      ativo: d.ativo === true && (tipo === 'percentual' ? percentual > 0 : valorCentavos > 0),
++      tipo, percentual, valor_centavos: valorCentavos,
++    },
++  };
++}
++
++async function lerConfig(chaves) {
++  const out = {};
++  try {
++    const r = await db.execute({
++      sql: `SELECT chave, valor FROM configuracoes WHERE chave IN (${chaves.map(() => '?').join(', ')})`,
++      args: chaves,
++    });
++    for (const row of r.rows) out[row.chave] = row.valor;
++  } catch (e) { /* tabela/chave ausente: usa padrões */ }
++  return out;
++}
++
++async function obterOferta() {
++  const cfg = await lerConfig(['assinatura_oferta', 'assinatura_beneficios']);
++  let bruto = null;
++  try { bruto = cfg.assinatura_oferta ? JSON.parse(cfg.assinatura_oferta) : null; } catch (e) { bruto = null; }
++  // Compatibilidade: a versão anterior guardava só os benefícios, um por linha.
++  const legado = String(cfg.assinatura_beneficios || '').split('\n').map((l) => l.trim()).filter(Boolean);
++  return normalizarOferta(bruto, legado.length ? legado : OFERTA_PADRAO.beneficios);
++}
++
++async function salvarOferta(dados) {
++  const oferta = normalizarOferta(dados, OFERTA_PADRAO.beneficios);
++  await db.execute({
++    sql: `INSERT INTO configuracoes (chave, valor) VALUES ('assinatura_oferta', ?)
++          ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor`,
++    args: [JSON.stringify(oferta)],
++  });
++  return oferta;
++}
++
++// Desconto (centavos) por ciclo sobre o valor cheio. Sempre deixa pelo menos R$ 1,00.
++function calcularDescontoCentavos(valorCheioCentavos, desconto) {
++  if (!desconto?.ativo) return 0;
++  const bruto = desconto.tipo === 'valor'
++    ? Number(desconto.valor_centavos) || 0
++    : Math.round(valorCheioCentavos * ((Number(desconto.percentual) || 0) / 100));
++  return Math.max(0, Math.min(bruto, valorCheioCentavos - VALOR_MINIMO_CENTAVOS));
++}
++
++function precoDaOferta(valorCheioCentavos, oferta) {
++  const desconto = calcularDescontoCentavos(valorCheioCentavos, oferta.desconto);
++  return { valor_cheio_centavos: valorCheioCentavos, desconto_centavos: desconto, valor_centavos: valorCheioCentavos - desconto };
++}
++
++// ── Criar / listar / cancelar ───────────────────────────────────────────────
++
++async function criarAssinatura({ matriculaId, baseUrl }) {
++  if (!habilitado()) throw erro('Assinaturas do Mercado Pago estão desligadas (MERCADOPAGO_ASSINATURAS).', 503);
++
++  const r = await db.execute({
++    sql: `SELECT m.id, m.status, m.aluno_id, p.nome AS plano_nome, p.tipo, p.valor_centavos,
++                 a.nome AS aluno_nome, a.email, a.telefone
++          FROM matriculas m
++          JOIN planos p ON p.id = m.plano_id
++          JOIN alunos a ON a.id = m.aluno_id
++          WHERE m.id = ?`,
++    args: [matriculaId],
++  });
++  const m = r.rows[0];
++  if (!m) throw erro('Matrícula não encontrada.', 404);
++  if (m.status !== 'ativa') throw erro('Só matrícula ativa pode ter assinatura.', 409);
++  if (!TIPOS_RECORRENTES.includes(m.tipo)) throw erro('O plano desta matrícula não é recorrente.', 409);
++  if (!m.email) throw erro('O aluno precisa ter e-mail cadastrado — o Mercado Pago exige.', 400);
++
++  const existente = await db.execute({
++    sql: `SELECT id FROM assinaturas_mp WHERE matricula_id = ? AND status IN ('pending', 'authorized', 'paused')`,
++    args: [matriculaId],
++  });
++  if (existente.rows.length) throw erro('Esta matrícula já tem uma assinatura ativa ou aguardando o cartão.', 409);
++
++  const oferta = await obterOferta();
++  const preco = precoDaOferta(Number(m.valor_centavos), oferta);
++
++  const id = uuid();
++  const frequenciaMeses = MESES_POR_TIPO[m.tipo];
++  const mp = await mercadopago.criarAssinaturaPendente({
++    razao: `${m.plano_nome} — ${m.aluno_nome}`,
++    valorCentavos: preco.valor_centavos,
++    frequenciaMeses,
++    emailPagador: m.email,
++    referenciaExterna: id,
++    urlRetorno: urlRetorno(baseUrl, id),
++  });
++  if (!mp?.id) throw erro('Mercado Pago não devolveu o id da assinatura.', 502);
++
++  await db.execute({
++    sql: `INSERT INTO assinaturas_mp (id, matricula_id, aluno_id, preapproval_id, status, valor_centavos, valor_cheio_centavos, desconto_centavos, frequencia_meses, init_point)
++          VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
++    args: [id, matriculaId, m.aluno_id, String(mp.id), preco.valor_centavos, preco.valor_cheio_centavos, preco.desconto_centavos, frequenciaMeses, mp.init_point || null],
++  });
++
++  const oUrl = urlOferta(baseUrl, id);
++  const telefone = normalizarTelefone(m.telefone);
++  const mensagem = `Oi, ${primeiroNome(m.aluno_nome)}! 💪 Deixe sua mensalidade no automático${preco.desconto_centavos ? ' e ganhe desconto' : ''}. Veja como é rápido: ${oUrl}`;
++  return {
++    id,
++    preapproval_id: String(mp.id),
++    init_point: mp.init_point || null,
++    oferta_url: oUrl,
++    whatsapp_link: telefone ? `https://wa.me/${telefone}?text=${encodeURIComponent(mensagem)}` : null,
++    status: 'pending',
++    ...preco,
++  };
++}
++
++async function listar({ matriculaId }) {
++  const r = await db.execute({
++    sql: `SELECT id, matricula_id, aluno_id, preapproval_id, status, valor_centavos, valor_cheio_centavos, desconto_centavos,
++                 frequencia_meses, init_point, criado_em, atualizado_em
++          FROM assinaturas_mp WHERE matricula_id = ? ORDER BY criado_em DESC`,
++    args: [matriculaId],
++  });
++  return r.rows;
++}
++
++async function cancelar({ assinaturaId }) {
++  if (!habilitado()) throw erro('Assinaturas do Mercado Pago estão desligadas (MERCADOPAGO_ASSINATURAS).', 503);
++  const r = await db.execute({ sql: 'SELECT * FROM assinaturas_mp WHERE id = ?', args: [assinaturaId] });
++  const a = r.rows[0];
++  if (!a) throw erro('Assinatura não encontrada.', 404);
++  if (a.status === 'cancelled') return { id: a.id, status: 'cancelled' };
++  await mercadopago.cancelarAssinatura(a.preapproval_id);
++  await atualizarStatus(a.preapproval_id, 'cancelled');
++  return { id: a.id, status: 'cancelled' };
++}
++
++async function atualizarStatus(preapprovalId, status) {
++  const permitido = ['pending', 'authorized', 'paused', 'cancelled'];
++  if (!permitido.includes(status)) return;
++  await db.execute({
++    sql: `UPDATE assinaturas_mp SET status = ?, atualizado_em = datetime('now') WHERE preapproval_id = ?`,
++    args: [status, String(preapprovalId)],
++  });
++}
++
++// ── Baixa automática ────────────────────────────────────────────────────────
++
++// Dá baixa na conta em aberto MAIS ANTIGA da matrícula. Só chamada com pagamento
++// já confirmado como aprovado na API do MP (nunca direto do corpo do webhook).
++//
++// Valor pago x valor da conta:
++//   • pago >= conta                         → baixa normal;
++//   • pago = conta − desconto da assinatura → reduz o valor da conta pelo desconto
++//     (mesma convenção do pagamento manual com desconto) e baixa;
++//   • qualquer outra diferença              → NÃO baixa: registra "valor_divergente"
++//     para conferência humana (ex.: plano reajustado depois de assinar).
++async function baixarParcela({ assinatura, paymentId, valorCentavos, metodo }) {
++  const ja = await db.execute({
++    sql: 'SELECT 1 FROM assinaturas_mp_pagamentos WHERE payment_id = ?',
++    args: [String(paymentId)],
++  });
++  if (ja.rows.length) return { duplicado: true };
++
++  const aberta = await db.execute({
++    sql: `SELECT id, aluno_id, valor_centavos FROM cobrancas
++          WHERE matricula_id = ? AND status IN ('pendente', 'atrasado')
++          ORDER BY vencimento ASC, criado_em ASC LIMIT 1`,
++    args: [assinatura.matricula_id],
++  });
++  const conta = aberta.rows[0] || null;
++  const pago = Number(valorCentavos ?? assinatura.valor_centavos);
++
++  let baixa = 'sem_cobranca';
++  let novoValorConta = null;
++  if (conta) {
++    const valorConta = Number(conta.valor_centavos);
++    const desconto = Number(assinatura.desconto_centavos || 0);
++    if (pago >= valorConta) baixa = 'baixada';
++    else if (desconto > 0 && pago === valorConta - desconto) { baixa = 'baixada'; novoValorConta = pago; }
++    else baixa = 'valor_divergente';
++  }
++
++  // INSERT OR IGNORE: duas entregas simultâneas do mesmo webhook não baixam duas contas.
++  const ins = await db.execute({
++    sql: `INSERT OR IGNORE INTO assinaturas_mp_pagamentos (payment_id, assinatura_id, cobranca_id, valor_centavos, baixa)
++          VALUES (?, ?, ?, ?, ?)`,
++    args: [String(paymentId), assinatura.id, conta?.id || null, pago, baixa],
++  });
++  if (!ins.rowsAffected) return { duplicado: true };
++
++  if (baixa === 'baixada') {
++    if (novoValorConta !== null) {
++      await db.execute({ sql: 'UPDATE cobrancas SET valor_centavos = ? WHERE id = ?', args: [novoValorConta, conta.id] });
++    }
++    await db.execute({
++      sql: `UPDATE cobrancas SET status = 'pago', metodo_pagamento = ?, pago_em = datetime('now') WHERE id = ?`,
++      args: [metodo || 'credit_card', conta.id],
++    });
++    // Histórico/relatórios financeiros leem pagamentos_cobranca: registra o valor REAL cobrado.
++    await db.execute({
++      sql: `INSERT INTO pagamentos_cobranca (id, cobranca_id, data, valor_centavos, tipo, conta_corrente)
++            VALUES (?, ?, date('now', 'localtime'), ?, 'cartao_credito', NULL)`,
++      args: [uuid(), conta.id, pago],
++    });
++  } else if (baixa === 'sem_cobranca') {
++    console.warn(`[assinaturas] parcela ${paymentId} aprovada mas a matrícula ${assinatura.matricula_id} não tem conta em aberto — registrada como "sem_cobranca" para conferência.`);
++  } else {
++    console.warn(`[assinaturas] parcela ${paymentId} de ${pago} centavos não bate com a conta ${conta.id} (${conta.valor_centavos}) — NÃO baixada, conferir manualmente.`);
++  }
++  await atualizarStatus(assinatura.preapproval_id, 'authorized');
++  return { baixada: baixa === 'baixada', cobrancaId: conta?.id || null, alunoId: assinatura.aluno_id };
++}
++
++async function buscarPorPreapproval(preapprovalId) {
++  const r = await db.execute({ sql: 'SELECT * FROM assinaturas_mp WHERE preapproval_id = ?', args: [String(preapprovalId)] });
++  return r.rows[0] || null;
++}
++
++async function buscarPorId(id) {
++  const r = await db.execute({ sql: 'SELECT * FROM assinaturas_mp WHERE id = ?', args: [String(id)] });
++  return r.rows[0] || null;
++}
++
++/**
++ * Trata um evento do webhook do MP. `type` e `dataId` vêm do corpo notificado.
++ * Devolve { alunoId } quando alguma conta foi baixada (pra avisar o agente da
++ * catraca), ou null. Eventos que não são de assinatura retornam null sem erro.
++ * Sempre confirma o dado na API do MP — o corpo do webhook não prova nada.
++ */
++async function processarEvento({ type, dataId }) {
++  if (!habilitado() || !dataId) return null;
++
++  if (type === 'subscription_preapproval') {
++    const mp = await mercadopago.consultarAssinatura(dataId);
++    if (mp?.id) await atualizarStatus(mp.id, mp.status);
++    return null;
++  }
++
++  if (type === 'subscription_authorized_payment') {
++    const parcela = await mercadopago.consultarPagamentoAutorizado(dataId);
++    const assinatura = parcela?.preapproval_id ? await buscarPorPreapproval(parcela.preapproval_id) : null;
++    if (!assinatura) return null;
++    const pagamento = parcela.payment || {};
++    if (pagamento.status !== 'approved' || !pagamento.id) return null;
++    const valor = parcela.transaction_amount != null ? Math.round(Number(parcela.transaction_amount) * 100) : assinatura.valor_centavos;
++    const r = await baixarParcela({ assinatura, paymentId: pagamento.id, valorCentavos: valor, metodo: 'credit_card' });
++    return r.baixada ? { alunoId: r.alunoId } : null;
++  }
++
++  return null;
++}
++
++/**
++ * Atalho para o tópico "payment": se o pagamento aprovado veio de uma assinatura
++ * (external_reference = id local da assinatura), dá a baixa pela mesma via.
++ * `pagamento` é o objeto já consultado em GET /v1/payments/{id}.
++ */
++async function processarPagamentoAprovado(pagamento) {
++  if (!habilitado() || pagamento?.status !== 'approved' || !pagamento.external_reference) return null;
++  const assinatura = await buscarPorId(pagamento.external_reference);
++  if (!assinatura) return null;
++  const r = await baixarParcela({
++    assinatura,
++    paymentId: pagamento.id,
++    valorCentavos: pagamento.transaction_amount != null ? Math.round(Number(pagamento.transaction_amount) * 100) : assinatura.valor_centavos,
++    metodo: pagamento.payment_type_id || 'credit_card',
++  });
++  return r.baixada ? { alunoId: r.alunoId } : null;
++}
++
++// ── Página de oferta e portal do aluno ──────────────────────────────────────
++
++// Plano recorrente usado como exemplo na prévia da página (o mais barato ativo).
++async function planoDeExemplo() {
++  const r = await db.execute({
++    sql: `SELECT nome, valor_centavos, tipo FROM planos
++          WHERE ativo = 1 AND tipo IN (${TIPOS_RECORRENTES.map(() => '?').join(', ')})
++          ORDER BY valor_centavos ASC LIMIT 1`,
++    args: TIPOS_RECORRENTES,
++  });
++  return r.rows[0] || null;
++}
++
++function montarOferta(base, oferta, extras) {
++  return {
++    selo: oferta.selo, titulo: oferta.titulo, subtitulo: oferta.subtitulo,
++    beneficios: oferta.beneficios, botao: oferta.botao, microtexto: oferta.microtexto, faq: oferta.faq,
++    ...base, ...extras,
++  };
++}
++
++// Dados públicos da página (GET /api/pagamentos/assinaturas/oferta/:id). O id é um
++// UUID aleatório. Não expõe e-mail, CPF nem telefone do aluno. `id = 'preview'` monta
++// uma prévia com as configurações atuais (sem criar nada, sem link de pagamento).
++async function ofertaPublica(id) {
++  const [oferta, cfg] = await Promise.all([obterOferta(), lerConfig(['nome_app', 'whatsapp_contato'])]);
++  const base = { academia: cfg.nome_app || 'Academia', whatsapp_contato: normalizarTelefone(cfg.whatsapp_contato) };
++
++  if (id === 'preview') {
++    const plano = await planoDeExemplo();
++    const cheio = plano ? Number(plano.valor_centavos) : 9900;
++    return montarOferta(base, oferta, {
++      preview: true, aluno: 'Maria', plano: plano?.nome || 'Plano Mensal', status: 'pending', init_point: '#',
++      frequencia_meses: plano ? (MESES_POR_TIPO[plano.tipo] || 1) : 1,
++      ...precoDaOferta(cheio, oferta),
++    });
++  }
++
++  const r = await db.execute({
++    sql: `SELECT s.status, s.valor_centavos, s.valor_cheio_centavos, s.desconto_centavos, s.frequencia_meses, s.init_point,
++                 a.nome AS aluno_nome, p.nome AS plano_nome
++          FROM assinaturas_mp s
++          JOIN alunos a ON a.id = s.aluno_id
++          JOIN matriculas m ON m.id = s.matricula_id
++          JOIN planos p ON p.id = m.plano_id
++          WHERE s.id = ?`,
++    args: [String(id)],
++  });
++  const o = r.rows[0];
++  if (!o) return null;
++  const desconto = Number(o.desconto_centavos || 0);
++  return montarOferta(base, oferta, {
++    aluno: primeiroNome(o.aluno_nome),
++    plano: o.plano_nome,
++    status: o.status,
++    init_point: o.status === 'cancelled' ? null : o.init_point,
++    frequencia_meses: Number(o.frequencia_meses),
++    valor_centavos: Number(o.valor_centavos),
++    desconto_centavos: desconto,
++    // Assinaturas antigas (sem valor cheio gravado) não exibem "de/por".
++    valor_cheio_centavos: o.valor_cheio_centavos != null ? Number(o.valor_cheio_centavos) : Number(o.valor_centavos) + desconto,
++  });
++}
++
++// Matrícula do aluno que pode virar assinatura (ativa + plano recorrente).
++async function matriculaElegivel(alunoId) {
++  const r = await db.execute({
++    sql: `SELECT m.id, p.nome AS plano_nome, p.valor_centavos
++          FROM matriculas m JOIN planos p ON p.id = m.plano_id
++          WHERE m.aluno_id = ? AND m.status = 'ativa' AND p.tipo IN (${TIPOS_RECORRENTES.map(() => '?').join(', ')})
++          ORDER BY m.data_inicio DESC LIMIT 1`,
++    args: [alunoId, ...TIPOS_RECORRENTES],
++  });
++  return r.rows[0] || null;
++}
++
++async function assinaturaAbertaDaMatricula(matriculaId) {
++  const r = await db.execute({
++    sql: `SELECT id, status, valor_centavos FROM assinaturas_mp WHERE matricula_id = ? AND status IN ('pending', 'authorized', 'paused')
++          ORDER BY criado_em DESC LIMIT 1`,
++    args: [matriculaId],
++  });
++  return r.rows[0] || null;
++}
++
++// Para o portal do aluno: mostra o card "pague no automático"? Nunca mostra se o
++// recurso está desligado, se não há matrícula elegível ou se já está autorizada.
++// O preço exibido é o ATUAL (com o desconto vigente), não o de uma assinatura antiga.
++async function disponibilidadeParaAluno({ alunoId, baseUrl }) {
++  if (!habilitado()) return { disponivel: false };
++  const m = await matriculaElegivel(alunoId);
++  if (!m) return { disponivel: false };
++  const existente = await assinaturaAbertaDaMatricula(m.id);
++  if (existente && existente.status !== 'pending') return { disponivel: false, status: existente.status };
++  const preco = precoDaOferta(Number(m.valor_centavos), await obterOferta());
++  return {
++    disponivel: true,
++    plano: m.plano_nome,
++    ...preco,
++    // Só reaproveita o link se o preço não mudou desde que foi gerado.
++    oferta_url: existente && Number(existente.valor_centavos) === preco.valor_centavos ? urlOferta(baseUrl, existente.id) : null,
++  };
++}
++
++// Portal: reaproveita a assinatura que aguarda o cartão (se o preço ainda vale) ou
++// cancela a pendente desatualizada e cria outra — nenhum cartão foi cadastrado ainda.
++async function obterOuCriarParaAluno({ alunoId, baseUrl }) {
++  const disp = await disponibilidadeParaAluno({ alunoId, baseUrl });
++  if (!disp.disponivel) throw erro('Pagamento automático não está disponível para este aluno.', 409);
++  if (disp.oferta_url) return { oferta_url: disp.oferta_url };
++  const m = await matriculaElegivel(alunoId);
++  const pendente = await assinaturaAbertaDaMatricula(m.id);
++  if (pendente) await cancelar({ assinaturaId: pendente.id });
++  const criada = await criarAssinatura({ matriculaId: m.id, baseUrl });
++  return { oferta_url: criada.oferta_url };
++}
++
++module.exports = {
++  habilitado, criarAssinatura, listar, cancelar, processarEvento, processarPagamentoAprovado,
++  ofertaPublica, disponibilidadeParaAluno, obterOuCriarParaAluno, baseUrlDaRequisicao, urlOferta,
++  obterOferta, salvarOferta, calcularDescontoCentavos, OFERTA_PADRAO,
++};
+diff --git a/src/services/cobrancas.service.js b/src/services/cobrancas.service.js
+index 13d160b..c672bd9 100644
+--- a/src/services/cobrancas.service.js
++++ b/src/services/cobrancas.service.js
+@@ -284,4 +284,6 @@ module.exports = {
+   atualizarCobrancasVencidas,
+   primeiroVencimento,
+   resolverMatriculaDaConta,
++  MESES_POR_TIPO,
++  TIPOS_RECORRENTES,
+ };
+diff --git a/src/services/payment/mercadopago.service.js b/src/services/payment/mercadopago.service.js
+index 38d244d..4696016 100644
+--- a/src/services/payment/mercadopago.service.js
++++ b/src/services/payment/mercadopago.service.js
+@@ -139,10 +139,82 @@ async function consultarOrder(orderId) {
+   return resp.json();
+ }
+ 
++// ── Assinaturas (cobrança recorrente no cartão) ────────────────────────────
++// Modelo "sem plano associado, com pagamento pendente": criamos a assinatura
++// sem meio de pagamento e o MP devolve um init_point (link) — o aluno abre,
++// cadastra o cartão no ambiente do Mercado Pago (nenhum dado de cartão passa
++// pelo nosso servidor) e a partir daí o MP cobra sozinho a cada ciclo.
++// Docs: https://www.mercadopago.com.br/developers/pt/docs/subscriptions/integration-configuration/subscription-no-associated-plan/pending-payments
++async function criarAssinaturaPendente({ razao, valorCentavos, frequenciaMeses, emailPagador, referenciaExterna, urlRetorno }) {
++  const resp = await fetch(`${BASE_URL}/preapproval`, {
++    method: 'POST',
++    headers: {
++      Authorization: `Bearer ${getToken()}`,
++      'Content-Type': 'application/json',
++    },
++    body: JSON.stringify({
++      reason: razao,
++      external_reference: referenciaExterna,
++      payer_email: emailPagador,
++      back_url: urlRetorno,
++      status: 'pending',
++      auto_recurring: {
++        frequency: frequenciaMeses,
++        frequency_type: 'months',
++        transaction_amount: valorCentavos / 100,
++        currency_id: 'BRL',
++      },
++    }),
++  });
++  if (!resp.ok) {
++    const erro = await resp.text();
++    throw new Error(`Erro ao criar assinatura Mercado Pago: ${erro}`);
++  }
++  return resp.json(); // contém id + init_point
++}
++
++async function consultarAssinatura(preapprovalId) {
++  const resp = await fetch(`${BASE_URL}/preapproval/${encodeURIComponent(preapprovalId)}`, {
++    headers: { Authorization: `Bearer ${getToken()}` },
++  });
++  if (!resp.ok) throw new Error('Erro ao consultar assinatura no Mercado Pago');
++  return resp.json();
++}
++
++async function cancelarAssinatura(preapprovalId) {
++  const resp = await fetch(`${BASE_URL}/preapproval/${encodeURIComponent(preapprovalId)}`, {
++    method: 'PUT',
++    headers: {
++      Authorization: `Bearer ${getToken()}`,
++      'Content-Type': 'application/json',
++    },
++    body: JSON.stringify({ status: 'cancelled' }),
++  });
++  if (!resp.ok) {
++    const erro = await resp.text();
++    throw new Error(`Erro ao cancelar assinatura no Mercado Pago: ${erro}`);
++  }
++  return resp.json();
++}
++
++// Parcela cobrada pela assinatura (tópico subscription_authorized_payment).
++// Traz preapproval_id e o pagamento gerado ({ id, status }).
++async function consultarPagamentoAutorizado(authorizedPaymentId) {
++  const resp = await fetch(`${BASE_URL}/authorized_payments/${encodeURIComponent(authorizedPaymentId)}`, {
++    headers: { Authorization: `Bearer ${getToken()}` },
++  });
++  if (!resp.ok) throw new Error('Erro ao consultar parcela da assinatura no Mercado Pago');
++  return resp.json();
++}
++
+ module.exports = {
+   criarPreferencia,
+   criarPagamentoPix,
+   consultarPagamento,
+   criarOrderPix,
+   consultarOrder,
++  criarAssinaturaPendente,
++  consultarAssinatura,
++  cancelarAssinatura,
++  consultarPagamentoAutorizado,
+ };
+diff --git a/tests/assinaturas.test.js b/tests/assinaturas.test.js
+new file mode 100644
+index 0000000..e0fa331
+--- /dev/null
++++ b/tests/assinaturas.test.js
+@@ -0,0 +1,338 @@
++// Teste de ponta a ponta das assinaturas do Mercado Pago, SEM rede e SEM tocar
++// em produção: banco local descartável + mercadopago.service simulado.
++// Rodar: node --test tests/assinaturas.test.js
++// O banco é SEMPRE um arquivo local descartável: a DATABASE_URL do ambiente/.env
++// (que neste projeto pode apontar pro Turso de produção) é ignorada de propósito.
++process.env.DATABASE_URL = 'file:./teste-assinaturas.db';
++delete process.env.DATABASE_AUTH_TOKEN;
++process.env.MERCADOPAGO_ASSINATURAS = '1';
++process.env.MERCADOPAGO_ACCESS_TOKEN = 'TESTE';
++delete process.env.MERCADOPAGO_WEBHOOK_SECRET;
++
++const { test, before, after } = require('node:test');
++const assert = require('node:assert');
++const fs = require('fs');
++const path = require('path');
++
++// --- Mercado Pago simulado (antes de carregar qualquer serviço que o importe) ---
++const mpPath = require.resolve('../src/services/payment/mercadopago.service');
++const chamadas = [];
++const estadoMp = { parcelas: {}, assinaturas: {} };
++let contadorMp = 0;
++require.cache[mpPath] = {
++  id: mpPath, filename: mpPath, loaded: true,
++  exports: {
++    criarAssinaturaPendente: async (p) => {
++      chamadas.push(['criar', p]);
++      const id = `PRE-${++contadorMp}`;
++      estadoMp.assinaturas[id] = { id, status: 'pending' };
++      return { id, init_point: `https://mp.test/subscriptions/checkout?preapproval_id=${id}` };
++    },
++    consultarAssinatura: async (id) => estadoMp.assinaturas[id],
++    cancelarAssinatura: async (id) => { chamadas.push(['cancelar', id]); estadoMp.assinaturas[id].status = 'cancelled'; return estadoMp.assinaturas[id]; },
++    consultarPagamentoAutorizado: async (id) => estadoMp.parcelas[id],
++    consultarPagamento: async (id) => estadoMp.pagamentos?.[id],
++    criarPreferencia: async () => ({}), criarPagamentoPix: async () => ({}), criarOrderPix: async () => ({}), consultarOrder: async () => ({}),
++  },
++};
++
++// Banco novo + migração ANTES de abrir a conexão deste processo. migrate.js roda ao
++// ser executado (e dá process.exit), então vai em processo à parte.
++const arquivoBanco = path.resolve(process.env.DATABASE_URL.replace('file:', ''));
++function limparBanco() {
++  for (const f of [arquivoBanco, `${arquivoBanco}-journal`, `${arquivoBanco}-wal`, `${arquivoBanco}-shm`]) { try { fs.unlinkSync(f); } catch (e) { /* ok */ } }
++}
++limparBanco();
++require('child_process').execFileSync(process.execPath, [path.join(__dirname, '..', 'src', 'db', 'migrate.js')], {
++  env: { ...process.env, DATABASE_URL: process.env.DATABASE_URL, DATABASE_AUTH_TOKEN: '' },
++  stdio: 'pipe',
++});
++
++const db = require('../src/db/client');
++const assinaturas = require('../src/services/assinaturas.service');
++
++async function seed() {
++  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('a1', 'Aluno Teste', 'aluno@teste.com', '11122233344')` });
++  await db.execute({ sql: `INSERT INTO alunos (id, nome, cpf) VALUES ('a2', 'Sem Email', '55566677788')` });
++  await db.execute({ sql: `INSERT INTO planos (id, nome, tipo, valor_centavos) VALUES ('p1', 'Mensal', 'mensal', 9900), ('p2', 'Avulso', 'avulso', 1000)` });
++  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio) VALUES ('m1', 'a1', 'p1', '2026-11-01'), ('m2', 'a2', 'p1', '2026-11-01'), ('m3', 'a1', 'p2', '2026-11-01')` });
++  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, vencimento) VALUES
++    ('c-nov', 'a1', 'm1', 9900, 'pendente', 'recorrencia', '2026-11-10'),
++    ('c-dez', 'a1', 'm1', 9900, 'pendente', 'recorrencia', '2026-12-10')` });
++}
++
++before(async () => {
++  await seed();
++});
++
++after(() => limparBanco());
++
++test('criarAssinatura: manda valor/ciclo certos ao MP e devolve o link do cartão', async () => {
++  const r = await assinaturas.criarAssinatura({ matriculaId: 'm1', baseUrl: 'https://academia.test' });
++  assert.match(r.init_point, /preapproval_id=PRE-1/);
++  const [, payload] = chamadas.find((c) => c[0] === 'criar');
++  assert.strictEqual(payload.valorCentavos, 9900);
++  assert.strictEqual(payload.frequenciaMeses, 1);
++  assert.strictEqual(payload.emailPagador, 'aluno@teste.com');
++  assert.strictEqual(payload.referenciaExterna, r.id); // id local = external_reference
++});
++
++test('criarAssinatura: recusa duplicada, plano avulso e aluno sem e-mail', async () => {
++  await assert.rejects(assinaturas.criarAssinatura({ matriculaId: 'm1' }), /já tem uma assinatura/);
++  await assert.rejects(assinaturas.criarAssinatura({ matriculaId: 'm3' }), /não é recorrente/);
++  await assert.rejects(assinaturas.criarAssinatura({ matriculaId: 'm2' }), /e-mail/);
++});
++
++test('webhook de parcela aprovada baixa a conta MAIS ANTIGA e é idempotente', async () => {
++  estadoMp.parcelas['AP-1'] = { preapproval_id: 'PRE-1', transaction_amount: 99, payment: { id: 777, status: 'approved' } };
++  const r1 = await assinaturas.processarEvento({ type: 'subscription_authorized_payment', dataId: 'AP-1' });
++  assert.deepStrictEqual(r1, { alunoId: 'a1' });
++  let nov = (await db.execute({ sql: `SELECT status, metodo_pagamento, pago_em FROM cobrancas WHERE id='c-nov'` })).rows[0];
++  let dez = (await db.execute({ sql: `SELECT status FROM cobrancas WHERE id='c-dez'` })).rows[0];
++  assert.strictEqual(nov.status, 'pago');
++  assert.strictEqual(nov.metodo_pagamento, 'credit_card');
++  assert.ok(nov.pago_em);
++  assert.strictEqual(dez.status, 'pendente');
++
++  // MP reenvia o mesmo webhook: não pode baixar a de dezembro.
++  const r2 = await assinaturas.processarEvento({ type: 'subscription_authorized_payment', dataId: 'AP-1' });
++  assert.strictEqual(r2, null);
++  dez = (await db.execute({ sql: `SELECT status FROM cobrancas WHERE id='c-dez'` })).rows[0];
++  assert.strictEqual(dez.status, 'pendente');
++
++  const sub = (await db.execute({ sql: `SELECT status FROM assinaturas_mp WHERE preapproval_id='PRE-1'` })).rows[0];
++  assert.strictEqual(sub.status, 'authorized');
++});
++
++test('parcela recusada não baixa nada', async () => {
++  estadoMp.parcelas['AP-2'] = { preapproval_id: 'PRE-1', payment: { id: 778, status: 'rejected' } };
++  assert.strictEqual(await assinaturas.processarEvento({ type: 'subscription_authorized_payment', dataId: 'AP-2' }), null);
++  const dez = (await db.execute({ sql: `SELECT status FROM cobrancas WHERE id='c-dez'` })).rows[0];
++  assert.strictEqual(dez.status, 'pendente');
++});
++
++test('parcela aprovada sem conta em aberto fica registrada como sem_cobranca', async () => {
++  await db.execute({ sql: `UPDATE cobrancas SET status='pago' WHERE id='c-dez'` });
++  estadoMp.parcelas['AP-3'] = { preapproval_id: 'PRE-1', transaction_amount: 99, payment: { id: 779, status: 'approved' } };
++  assert.strictEqual(await assinaturas.processarEvento({ type: 'subscription_authorized_payment', dataId: 'AP-3' }), null);
++  const reg = (await db.execute({ sql: `SELECT baixa, cobranca_id FROM assinaturas_mp_pagamentos WHERE payment_id='779'` })).rows[0];
++  assert.strictEqual(reg.baixa, 'sem_cobranca');
++  assert.strictEqual(reg.cobranca_id, null);
++});
++
++test('tópico payment com external_reference da assinatura também baixa (e só uma vez)', async () => {
++  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, vencimento) VALUES ('c-jan', 'a1', 'm1', 9900, 'pendente', 'recorrencia', '2027-01-10')` });
++  const idLocal = (await db.execute({ sql: `SELECT id FROM assinaturas_mp WHERE preapproval_id='PRE-1'` })).rows[0].id;
++  const pagamento = { id: 900, status: 'approved', external_reference: idLocal, transaction_amount: 99, payment_type_id: 'credit_card' };
++  assert.deepStrictEqual(await assinaturas.processarPagamentoAprovado(pagamento), { alunoId: 'a1' });
++  assert.strictEqual(await assinaturas.processarPagamentoAprovado(pagamento), null);
++  const jan = (await db.execute({ sql: `SELECT status FROM cobrancas WHERE id='c-jan'` })).rows[0];
++  assert.strictEqual(jan.status, 'pago');
++});
++
++test('subscription_preapproval atualiza o status; cancelar chama o MP', async () => {
++  estadoMp.assinaturas['PRE-1'].status = 'paused';
++  await assinaturas.processarEvento({ type: 'subscription_preapproval', dataId: 'PRE-1' });
++  let sub = (await db.execute({ sql: `SELECT id, status FROM assinaturas_mp WHERE preapproval_id='PRE-1'` })).rows[0];
++  assert.strictEqual(sub.status, 'paused');
++  await assinaturas.cancelar({ assinaturaId: sub.id });
++  sub = (await db.execute({ sql: `SELECT status FROM assinaturas_mp WHERE preapproval_id='PRE-1'` })).rows[0];
++  assert.strictEqual(sub.status, 'cancelled');
++  assert.ok(chamadas.some((c) => c[0] === 'cancelar' && c[1] === 'PRE-1'));
++});
++
++test('com a flag desligada nada é processado', async () => {
++  process.env.MERCADOPAGO_ASSINATURAS = '0';
++  assert.strictEqual(await assinaturas.processarEvento({ type: 'subscription_authorized_payment', dataId: 'AP-1' }), null);
++  await assert.rejects(assinaturas.criarAssinatura({ matriculaId: 'm1' }), /desligadas/);
++  process.env.MERCADOPAGO_ASSINATURAS = '1';
++});
++
++// ── Página de oferta, WhatsApp e portal do aluno ────────────────────────────
++async function novoAlunoComMatricula(id, { telefone = null, plano = 'p1' } = {}) {
++  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf, telefone) VALUES (?, ?, ?, ?, ?)`, args: [id, `JOÃO ${id}`, `${id}@teste.com`, `cpf-${id}`, telefone] });
++  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio) VALUES (?, ?, ?, '2026-11-01')`, args: [`m-${id}`, id, plano] });
++}
++
++test('criarAssinatura: monta link da oferta, back_url https e link de WhatsApp', async () => {
++  await novoAlunoComMatricula('w1', { telefone: '(11) 98888-7777' });
++  const r = await assinaturas.criarAssinatura({ matriculaId: 'm-w1', baseUrl: 'https://academia.test' });
++  assert.strictEqual(r.oferta_url, `https://academia.test/assinar/${r.id}`);
++  assert.match(r.whatsapp_link, /^https:\/\/wa\.me\/5511988887777\?text=/);
++  assert.ok(decodeURIComponent(r.whatsapp_link).includes(r.oferta_url));
++  const [, payload] = chamadas.filter((c) => c[0] === 'criar').pop();
++  assert.strictEqual(payload.urlRetorno, `https://academia.test/assinar/${r.id}?retorno=1`);
++});
++
++test('criarAssinatura: em http (localhost) não manda back_url inválido ao MP', async () => {
++  await novoAlunoComMatricula('w2');
++  await assinaturas.criarAssinatura({ matriculaId: 'm-w2', baseUrl: 'http://localhost:3000' });
++  const [, payload] = chamadas.filter((c) => c[0] === 'criar').pop();
++  assert.strictEqual(payload.urlRetorno, 'https://www.mercadopago.com.br');
++});
++
++test('ofertaPublica: dados da página, sem vazar e-mail/CPF/telefone', async () => {
++  const sub = (await db.execute({ sql: `SELECT id FROM assinaturas_mp WHERE matricula_id='m-w1'` })).rows[0];
++  const o = await assinaturas.ofertaPublica(sub.id);
++  assert.strictEqual(o.aluno, 'João');
++  assert.strictEqual(o.plano, 'Mensal');
++  assert.strictEqual(o.valor_centavos, 9900);
++  assert.strictEqual(o.status, 'pending');
++  assert.match(o.init_point, /mp\.test/);
++  assert.ok(o.beneficios.length >= 3);
++  const txt = JSON.stringify(o);
++  assert.ok(!txt.includes('@teste.com') && !txt.includes('cpf-w1') && !txt.includes('98888'));
++  assert.strictEqual(await assinaturas.ofertaPublica('id-inexistente'), null);
++});
++
++test('ofertaPublica: benefícios personalizados vêm da configuração', async () => {
++  await db.execute({ sql: `INSERT INTO configuracoes (chave, valor) VALUES ('assinatura_beneficios', 'Primeira avaliação grátis\n\n  Camiseta de brinde  ')` });
++  const sub = (await db.execute({ sql: `SELECT id FROM assinaturas_mp WHERE matricula_id='m-w1'` })).rows[0];
++  const o = await assinaturas.ofertaPublica(sub.id);
++  assert.deepStrictEqual(o.beneficios, ['Primeira avaliação grátis', 'Camiseta de brinde']);
++  await db.execute({ sql: `DELETE FROM configuracoes WHERE chave='assinatura_beneficios'` });
++});
++
++test('oferta de assinatura cancelada não expõe o link de pagamento', async () => {
++  const sub = (await db.execute({ sql: `SELECT id FROM assinaturas_mp WHERE matricula_id='m-w2'` })).rows[0];
++  await assinaturas.cancelar({ assinaturaId: sub.id });
++  const o = await assinaturas.ofertaPublica(sub.id);
++  assert.strictEqual(o.status, 'cancelled');
++  assert.strictEqual(o.init_point, null);
++});
++
++test('portal: card disponível, reaproveita a assinatura pendente e some depois de ativa', async () => {
++  await novoAlunoComMatricula('p1x');
++  const base = 'https://academia.test';
++  let d = await assinaturas.disponibilidadeParaAluno({ alunoId: 'p1x', baseUrl: base });
++  assert.strictEqual(d.disponivel, true);
++  assert.strictEqual(d.oferta_url, null);
++
++  const r1 = await assinaturas.obterOuCriarParaAluno({ alunoId: 'p1x', baseUrl: base });
++  const r2 = await assinaturas.obterOuCriarParaAluno({ alunoId: 'p1x', baseUrl: base });
++  assert.strictEqual(r1.oferta_url, r2.oferta_url);   // não cria assinatura duplicada
++  const qtd = (await db.execute({ sql: `SELECT COUNT(*) n FROM assinaturas_mp WHERE aluno_id='p1x'` })).rows[0].n;
++  assert.strictEqual(Number(qtd), 1);
++
++  await db.execute({ sql: `UPDATE assinaturas_mp SET status='authorized' WHERE aluno_id='p1x'` });
++  d = await assinaturas.disponibilidadeParaAluno({ alunoId: 'p1x', baseUrl: base });
++  assert.strictEqual(d.disponivel, false);
++  await assert.rejects(assinaturas.obterOuCriarParaAluno({ alunoId: 'p1x', baseUrl: base }), /não está disponível/);
++});
++
++test('portal: plano avulso e recurso desligado não mostram o card', async () => {
++  await novoAlunoComMatricula('p2x', { plano: 'p2' });
++  assert.strictEqual((await assinaturas.disponibilidadeParaAluno({ alunoId: 'p2x', baseUrl: 'https://academia.test' })).disponivel, false);
++  await novoAlunoComMatricula('p3x');
++  process.env.MERCADOPAGO_ASSINATURAS = '0';
++  assert.strictEqual((await assinaturas.disponibilidadeParaAluno({ alunoId: 'p3x', baseUrl: 'https://academia.test' })).disponivel, false);
++  process.env.MERCADOPAGO_ASSINATURAS = '1';
++});
++
++test('baseUrlDaRequisicao: usa PUBLIC_BASE_URL, senão o host do proxy', () => {
++  const req = { headers: { 'x-forwarded-proto': 'https', 'x-forwarded-host': 'app.academia.com' }, protocol: 'http', get: () => 'localhost:3000' };
++  assert.strictEqual(assinaturas.baseUrlDaRequisicao(req), 'https://app.academia.com');
++  process.env.PUBLIC_BASE_URL = 'https://fixo.academia.com/';
++  assert.strictEqual(assinaturas.baseUrlDaRequisicao(req), 'https://fixo.academia.com');
++  delete process.env.PUBLIC_BASE_URL;
++});
++
++// ── Desconto para quem assina + edição da oferta ────────────────────────────
++const dinheiro = (r) => Number(r.valor_centavos);
++
++test('oferta: salvar normaliza, trava desconto inválido e lê de volta', async () => {
++  const salva = await assinaturas.salvarOferta({
++    selo: '  Só hoje  ', titulo: 'Oi {nome}, assine *já*', subtitulo: '', beneficios: ['A', '', '  B  '],
++    botao: 'Quero!', microtexto: 'seguro', faq: [{ p: 'Pergunta?', r: 'Resposta.' }, { p: '', r: 'sem pergunta' }],
++    desconto: { ativo: true, tipo: 'percentual', percentual: 10, valor_centavos: 0 },
++  });
++  assert.strictEqual(salva.selo, 'Só hoje');
++  assert.deepStrictEqual(salva.beneficios, ['A', 'B']);
++  assert.deepStrictEqual(salva.faq, [{ p: 'Pergunta?', r: 'Resposta.' }]);   // item sem pergunta é descartado
++  assert.strictEqual(salva.subtitulo, assinaturas.OFERTA_PADRAO.subtitulo);   // vazio cai no padrão
++  const lida = await assinaturas.obterOferta();
++  assert.deepStrictEqual(lida, salva);
++  // desconto "ativo" com valor zero não vale
++  const zero = await assinaturas.salvarOferta({ ...salva, desconto: { ativo: true, tipo: 'valor', percentual: 0, valor_centavos: 0 } });
++  assert.strictEqual(zero.desconto.ativo, false);
++});
++
++test('calcularDescontoCentavos: percentual, valor fixo e piso de R$ 1,00', () => {
++  const f = assinaturas.calcularDescontoCentavos;
++  assert.strictEqual(f(9900, { ativo: true, tipo: 'percentual', percentual: 10 }), 990);
++  assert.strictEqual(f(9900, { ativo: true, tipo: 'valor', valor_centavos: 1500 }), 1500);
++  assert.strictEqual(f(9900, { ativo: true, tipo: 'valor', valor_centavos: 999999 }), 9800);   // sobra R$ 1,00
++  assert.strictEqual(f(9900, { ativo: true, tipo: 'percentual', percentual: 90 }), 8910);
++  assert.strictEqual(f(9900, { ativo: false, tipo: 'percentual', percentual: 10 }), 0);
++});
++
++test('assinatura com desconto: MP cobra o valor com desconto e a página mostra de/por', async () => {
++  await assinaturas.salvarOferta({ ...(await assinaturas.obterOferta()), desconto: { ativo: true, tipo: 'percentual', percentual: 10, valor_centavos: 0 } });
++  await novoAlunoComMatricula('d1', { telefone: '11999990000' });
++  const r = await assinaturas.criarAssinatura({ matriculaId: 'm-d1', baseUrl: 'https://academia.test' });
++  const [, payload] = chamadas.filter((c) => c[0] === 'criar').pop();
++  assert.strictEqual(payload.valorCentavos, 8910);                   // o que o MP vai cobrar
++  assert.strictEqual(r.desconto_centavos, 990);
++  assert.ok(decodeURIComponent(r.whatsapp_link).includes('desconto'));
++  const o = await assinaturas.ofertaPublica(r.id);
++  assert.strictEqual(o.valor_centavos, 8910);
++  assert.strictEqual(o.valor_cheio_centavos, 9900);
++  assert.strictEqual(o.desconto_centavos, 990);
++  assert.strictEqual(o.titulo, 'Oi {nome}, assine *já*');             // textos editados chegam à página
++});
++
++test('baixa com desconto: reduz o valor da conta, registra o pagamento real e fecha a conta', async () => {
++  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, vencimento) VALUES ('c-d1', 'd1', 'm-d1', 9900, 'pendente', 'recorrencia', '2026-12-10')` });
++  const sub = (await db.execute({ sql: `SELECT preapproval_id FROM assinaturas_mp WHERE matricula_id='m-d1'` })).rows[0];
++  estadoMp.parcelas['AP-D1'] = { preapproval_id: sub.preapproval_id, transaction_amount: 89.1, payment: { id: 5001, status: 'approved' } };
++  assert.deepStrictEqual(await assinaturas.processarEvento({ type: 'subscription_authorized_payment', dataId: 'AP-D1' }), { alunoId: 'd1' });
++  const conta = (await db.execute({ sql: `SELECT status, valor_centavos FROM cobrancas WHERE id='c-d1'` })).rows[0];
++  assert.strictEqual(conta.status, 'pago');
++  assert.strictEqual(dinheiro(conta), 8910);                          // conta fecha pelo valor com desconto
++  const pag = (await db.execute({ sql: `SELECT valor_centavos, tipo FROM pagamentos_cobranca WHERE cobranca_id='c-d1'` })).rows;
++  assert.strictEqual(pag.length, 1);
++  assert.strictEqual(dinheiro(pag[0]), 8910);
++  assert.strictEqual(pag[0].tipo, 'cartao_credito');
++});
++
++test('baixa com valor inesperado NÃO fecha a conta (fica para conferência)', async () => {
++  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, vencimento) VALUES ('c-d2', 'd1', 'm-d1', 9900, 'pendente', 'recorrencia', '2027-01-10')` });
++  const sub = (await db.execute({ sql: `SELECT preapproval_id FROM assinaturas_mp WHERE matricula_id='m-d1'` })).rows[0];
++  estadoMp.parcelas['AP-D2'] = { preapproval_id: sub.preapproval_id, transaction_amount: 50, payment: { id: 5002, status: 'approved' } };
++  assert.strictEqual(await assinaturas.processarEvento({ type: 'subscription_authorized_payment', dataId: 'AP-D2' }), null);
++  const conta = (await db.execute({ sql: `SELECT status, valor_centavos FROM cobrancas WHERE id='c-d2'` })).rows[0];
++  assert.strictEqual(conta.status, 'pendente');
++  assert.strictEqual(dinheiro(conta), 9900);
++  const reg = (await db.execute({ sql: `SELECT baixa FROM assinaturas_mp_pagamentos WHERE payment_id='5002'` })).rows[0];
++  assert.strictEqual(reg.baixa, 'valor_divergente');
++});
++
++test('portal: mostra o preço ATUAL e recria a pendente quando o desconto mudou', async () => {
++  const base = 'https://academia.test';
++  await novoAlunoComMatricula('d2');
++  const r1 = await assinaturas.obterOuCriarParaAluno({ alunoId: 'd2', baseUrl: base });   // criada com 10% off (8910)
++  let d = await assinaturas.disponibilidadeParaAluno({ alunoId: 'd2', baseUrl: base });
++  assert.strictEqual(d.valor_centavos, 8910);
++  assert.strictEqual(d.oferta_url, r1.oferta_url);                                          // preço igual: reaproveita
++
++  await assinaturas.salvarOferta({ ...(await assinaturas.obterOferta()), desconto: { ativo: true, tipo: 'valor', percentual: 0, valor_centavos: 2000 } });
++  d = await assinaturas.disponibilidadeParaAluno({ alunoId: 'd2', baseUrl: base });
++  assert.strictEqual(d.valor_centavos, 7900);
++  assert.strictEqual(d.oferta_url, null);                                                   // preço mudou: link antigo não vale
++
++  const r2 = await assinaturas.obterOuCriarParaAluno({ alunoId: 'd2', baseUrl: base });
++  assert.notStrictEqual(r2.oferta_url, r1.oferta_url);
++  const abertas = (await db.execute({ sql: `SELECT COUNT(*) n FROM assinaturas_mp WHERE aluno_id='d2' AND status='pending'` })).rows[0].n;
++  assert.strictEqual(Number(abertas), 1);                                                   // a antiga foi cancelada
++  const antiga = await assinaturas.ofertaPublica(r1.oferta_url.split('/').pop());
++  assert.strictEqual(antiga.status, 'cancelled');
++});
++
++test('prévia: monta a página com as configurações atuais sem criar nada', async () => {
++  const antes = Number((await db.execute({ sql: 'SELECT COUNT(*) n FROM assinaturas_mp' })).rows[0].n);
++  const o = await assinaturas.ofertaPublica('preview');
++  assert.strictEqual(o.preview, true);
++  assert.strictEqual(o.init_point, '#');
++  assert.ok(o.valor_centavos < o.valor_cheio_centavos);               // desconto ativo aparece na prévia
++  assert.strictEqual(Number((await db.execute({ sql: 'SELECT COUNT(*) n FROM assinaturas_mp' })).rows[0].n), antes);
++});

@@ -284,4 +284,6 @@ module.exports = {
   atualizarCobrancasVencidas,
   primeiroVencimento,
   resolverMatriculaDaConta,
+  MESES_POR_TIPO,
+  TIPOS_RECORRENTES,
 };

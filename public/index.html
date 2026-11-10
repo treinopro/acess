@@ -2191,6 +2191,66 @@
           </form>
         </div>
 
+        <form class="form-painel" id="form-oferta-assinatura">
+          <h3 style="margin-top:0">💳 Pagamento automático — oferta e desconto</h3>
+          <p style="margin-top:0;color:#667085;font-size:13px">
+            Edite o que o aluno vê na página de oferta (link do botão "Assinar no cartão" e card do portal) e defina um
+            desconto para quem optar pela cobrança automática no cartão.
+          </p>
+          <p id="oferta-aviso-desligado" class="oculto" style="margin:0 0 10px;padding:8px 10px;border-radius:8px;background:#fef9c3;color:#854d0e;font-size:13px">
+            O recurso ainda está desligado no servidor (variável <code>MERCADOPAGO_ASSINATURAS=1</code>). Você já pode editar a oferta; o botão só aparece para os alunos depois que ele for ligado.
+          </p>
+
+          <h3>Desconto para quem assinar</h3>
+          <label style="display:flex;gap:8px;align-items:center;font-weight:600">
+            <input type="checkbox" id="oferta-desc-ativo" style="width:auto" /> Dar desconto a quem optar pelo pagamento automático
+          </label>
+          <div id="oferta-desc-bloco" class="oculto" style="display:none;gap:10px;flex-wrap:wrap;margin-top:8px">
+            <div>
+              <label>Tipo</label>
+              <select id="oferta-desc-tipo">
+                <option value="percentual">Percentual (%)</option>
+                <option value="valor">Valor fixo (R$)</option>
+              </select>
+            </div>
+            <div>
+              <label id="oferta-desc-label">Desconto (%)</label>
+              <input id="oferta-desc-valor" type="number" min="0" step="0.01" style="width:120px" />
+            </div>
+          </div>
+          <div id="oferta-desc-exemplos" style="margin:8px 0 0;color:#667085;font-size:13px"></div>
+          <p style="margin:8px 0 0;color:#667085;font-size:13px">
+            O desconto vale em cada cobrança enquanto a assinatura estiver ativa e fica travado no valor que o aluno viu ao assinar.
+            Quem já assinou antes de você mudar o desconto continua com o valor antigo. O sistema nunca cobra menos que R$ 1,00.
+          </p>
+
+          <h3>Textos da página</h3>
+          <label>Selo (etiqueta no topo)</label>
+          <input id="oferta-selo" maxlength="60" />
+          <label>Título</label>
+          <input id="oferta-titulo" maxlength="160" />
+          <p style="margin:4px 0 0;color:#667085;font-size:12px">Use <code>{nome}</code> para o primeiro nome do aluno e <code>*palavra*</code> para destacar em verde.</p>
+          <label>Subtítulo</label>
+          <textarea id="oferta-subtitulo" rows="2" maxlength="300"></textarea>
+          <label>Argumentos (um por linha, até 8)</label>
+          <textarea id="oferta-beneficios" rows="6"></textarea>
+          <label>Texto do botão</label>
+          <input id="oferta-botao" maxlength="60" />
+          <label>Texto abaixo do botão</label>
+          <input id="oferta-microtexto" maxlength="120" />
+          <label>Dúvidas comuns (uma por linha no formato <code>Pergunta | Resposta</code>, até 6)</label>
+          <textarea id="oferta-faq" rows="6"></textarea>
+          <p style="margin:6px 0 0;color:#b42318;font-size:12px">
+            Só prometa o que a academia cumpre de fato (ex.: cancelamento, prazos). O texto é público.
+          </p>
+
+          <div class="form-acoes">
+            <button type="submit" class="btn-primario">Salvar oferta</button>
+            <button type="button" class="btn-secundario" id="btn-oferta-previa">Ver prévia da página</button>
+            <button type="button" class="btn-secundario" id="btn-oferta-padrao">Restaurar textos padrão</button>
+          </div>
+        </form>
+
         <div class="form-painel oculto" id="painel-pendencias-sincronizacao">
           <h3 style="margin-top:0">Pendências de sincronização (totem offline)</h3>
           <p style="margin-top:0;color:#667085;font-size:13px">

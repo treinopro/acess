@@ -924,7 +924,7 @@ router.get('/:id/perfil', async (req, res, next) => {
           args: [alunoId],
         }),
         db.execute({
-          sql: `SELECT m.*, p.nome as plano_nome FROM matriculas m JOIN planos p ON p.id = m.plano_id
+          sql: `SELECT m.*, p.nome as plano_nome, p.tipo as plano_tipo FROM matriculas m JOIN planos p ON p.id = m.plano_id
                 WHERE m.aluno_id = ? ORDER BY m.data_inicio DESC`,
           args: [alunoId],
         }),

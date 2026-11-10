@@ -82,6 +82,49 @@ function suprimirBanner(bannerId) {
   try { localStorage.setItem(CHAVE_BANNERS_VISTOS, JSON.stringify(vistos)); } catch { /* idem acima */ }
 }
 
+/**
+ * Card "Pague no automático" (assinatura Mercado Pago). Só aparece quando o servidor
+ * diz que está disponível para este aluno (recurso ligado, matrícula recorrente
+ * ativa, ainda sem assinatura autorizada). O clique cria/reaproveita a assinatura
+ * e abre a página de oferta.
+ */
+async function carregarCardAssinaturaHub() {
+  const container = document.getElementById('feed-assinatura-hub');
+  if (!container || !cpfHubAtual || !senhaHubAtual) return;
+  container.innerHTML = '';
+  try {
+    const d = await api(`/api/portal/assinatura?cpf=${encodeURIComponent(cpfHubAtual)}&senha=${encodeURIComponent(senhaHubAtual)}`);
+    if (!d.disponivel) return;
+    container.innerHTML = `
+      <div class="cartao" style="text-align:left;background:linear-gradient(135deg,#0f172a,#1d4ed8);color:#fff;border:0;box-shadow:0 10px 30px rgba(29,78,216,.35)">
+        <div style="display:inline-block;background:rgba(250,204,21,.18);color:#facc15;border:1px solid rgba(250,204,21,.5);border-radius:999px;padding:4px 10px;font-size:11px;font-weight:800;letter-spacing:.06em">⚡ OFERTA PARA VOCÊ</div>
+        <h3 style="margin:10px 0 4px;color:#fff;font-size:20px">Deixe a mensalidade no automático</h3>
+        <p style="margin:0 0 12px;color:#dbeafe">Sem vencimento pra lembrar, sem fila no totem. ${escapeHtml(d.plano)}${d.desconto_centavos > 0
+          ? ` de <s>${formatarMoeda(d.valor_cheio_centavos)}</s> por <strong style="color:#facc15">${formatarMoeda(d.valor_centavos)}</strong> — você economiza ${formatarMoeda(d.desconto_centavos)} a cada cobrança`
+          : ` por ${formatarMoeda(d.valor_centavos)}`}, cobrado sozinho no cartão.</p>
+        <button type="button" id="btn-assinar-automatico" style="width:100%;border:0;border-radius:12px;padding:14px;font-size:16px;font-weight:900;color:#052e16;background:linear-gradient(180deg,#4ade80,#22c55e);box-shadow:0 6px 20px rgba(34,197,94,.45);cursor:pointer">Quero o pagamento automático →</button>
+      </div>`;
+    document.getElementById('btn-assinar-automatico').addEventListener('click', async (ev) => {
+      const btn = ev.currentTarget;
+      btn.disabled = true;
+      btn.textContent = 'Abrindo…';
+      try {
+        const r = await api('/api/portal/assinatura', {
+          method: 'POST',
+          body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual }),
+        });
+        window.location.href = r.oferta_url;
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = 'Quero o pagamento automático →';
+        alert(err.message || 'Não foi possível abrir agora. Tente de novo em instantes.');
+      }
+    });
+  } catch {
+    // Não é crítico: sem card, o resto do hub segue normal.
+  }
+}
+
 async function carregarBannersHub() {
   const container = document.getElementById('feed-banners-hub');
   if (!container || !cpfHubAtual || !senhaHubAtual) return;
@@ -514,6 +557,7 @@ function preencherDashboardHub(info) {
   }
 
   atualizarCardNotificacoes(info);
+  carregarCardAssinaturaHub();
   carregarBannersHub();
   carregarResumoContasHub();
   carregarAvaliacoesHub();

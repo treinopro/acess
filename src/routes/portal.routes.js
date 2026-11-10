@@ -1149,4 +1149,39 @@ router.get('/banners', limitadorSenhaPortal, async (req, res, next) => {
   }
 });
 
+// ── Pagamento automático no cartão (assinatura Mercado Pago) ────────────────
+// Recurso opcional (MERCADOPAGO_ASSINATURAS=1). O card "pague no automático" do
+// hub só aparece quando `disponivel` for true; o clique cria (ou reaproveita) a
+// assinatura e leva o aluno à página de oferta /assinar/:id.
+const assinaturas = require('../services/assinaturas.service');
+
+router.get('/assinatura', limitadorSenhaPortal, async (req, res, next) => {
+  try {
+    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(req.query);
+    const autenticado = await autenticarAlunoPortal(cpf, senha);
+    if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
+    res.set('Cache-Control', 'no-store');
+    res.json(await assinaturas.disponibilidadeParaAluno({
+      alunoId: autenticado.aluno.id,
+      baseUrl: assinaturas.baseUrlDaRequisicao(req),
+    }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/assinatura', limitadorSenhaPortal, async (req, res, next) => {
+  try {
+    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(req.body);
+    const autenticado = await autenticarAlunoPortal(cpf, senha);
+    if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
+    res.json(await assinaturas.obterOuCriarParaAluno({
+      alunoId: autenticado.aluno.id,
+      baseUrl: assinaturas.baseUrlDaRequisicao(req),
+    }));
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;

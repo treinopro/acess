@@ -139,10 +139,82 @@ async function consultarOrder(orderId) {
   return resp.json();
 }
 
+// ── Assinaturas (cobrança recorrente no cartão) ────────────────────────────
+// Modelo "sem plano associado, com pagamento pendente": criamos a assinatura
+// sem meio de pagamento e o MP devolve um init_point (link) — o aluno abre,
+// cadastra o cartão no ambiente do Mercado Pago (nenhum dado de cartão passa
+// pelo nosso servidor) e a partir daí o MP cobra sozinho a cada ciclo.
+// Docs: https://www.mercadopago.com.br/developers/pt/docs/subscriptions/integration-configuration/subscription-no-associated-plan/pending-payments
+async function criarAssinaturaPendente({ razao, valorCentavos, frequenciaMeses, emailPagador, referenciaExterna, urlRetorno }) {
+  const resp = await fetch(`${BASE_URL}/preapproval`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${getToken()}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      reason: razao,
+      external_reference: referenciaExterna,
+      payer_email: emailPagador,
+      back_url: urlRetorno,
+      status: 'pending',
+      auto_recurring: {
+        frequency: frequenciaMeses,
+        frequency_type: 'months',
+        transaction_amount: valorCentavos / 100,
+        currency_id: 'BRL',
+      },
+    }),
+  });
+  if (!resp.ok) {
+    const erro = await resp.text();
+    throw new Error(`Erro ao criar assinatura Mercado Pago: ${erro}`);
+  }
+  return resp.json(); // contém id + init_point
+}
+
+async function consultarAssinatura(preapprovalId) {
+  const resp = await fetch(`${BASE_URL}/preapproval/${encodeURIComponent(preapprovalId)}`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  });
+  if (!resp.ok) throw new Error('Erro ao consultar assinatura no Mercado Pago');
+  return resp.json();
+}
+
+async function cancelarAssinatura(preapprovalId) {
+  const resp = await fetch(`${BASE_URL}/preapproval/${encodeURIComponent(preapprovalId)}`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${getToken()}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ status: 'cancelled' }),
+  });
+  if (!resp.ok) {
+    const erro = await resp.text();
+    throw new Error(`Erro ao cancelar assinatura no Mercado Pago: ${erro}`);
+  }
+  return resp.json();
+}
+
+// Parcela cobrada pela assinatura (tópico subscription_authorized_payment).
+// Traz preapproval_id e o pagamento gerado ({ id, status }).
+async function consultarPagamentoAutorizado(authorizedPaymentId) {
+  const resp = await fetch(`${BASE_URL}/authorized_payments/${encodeURIComponent(authorizedPaymentId)}`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  });
+  if (!resp.ok) throw new Error('Erro ao consultar parcela da assinatura no Mercado Pago');
+  return resp.json();
+}
+
 module.exports = {
   criarPreferencia,
   criarPagamentoPix,
   consultarPagamento,
   criarOrderPix,
   consultarOrder,
+  criarAssinaturaPendente,
+  consultarAssinatura,
+  cancelarAssinatura,
+  consultarPagamentoAutorizado,
 };

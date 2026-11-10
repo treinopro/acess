@@ -768,3 +768,33 @@ CREATE INDEX IF NOT EXISTS idx_concessoes_acesso_aluno ON concessoes_acesso(alun
 CREATE INDEX IF NOT EXISTS idx_concessoes_acesso_validade ON concessoes_acesso(aluno_id, valido_ate);
 CREATE INDEX IF NOT EXISTS idx_mensagens_enviadas_aluno ON mensagens_enviadas(aluno_id);
 CREATE INDEX IF NOT EXISTS idx_mensagens_enviadas_criado_em ON mensagens_enviadas(criado_em);
+
+-- Assinaturas do Mercado Pago (cobrança recorrente no cartão) — 2026-11. Recurso
+-- OPCIONAL: só é usado com MERCADOPAGO_ASSINATURAS=1 (ver
+-- src/services/assinaturas.service.js). id é o external_reference enviado ao MP.
+CREATE TABLE IF NOT EXISTS assinaturas_mp (
+  id TEXT PRIMARY KEY,
+  matricula_id TEXT NOT NULL REFERENCES matriculas(id) ON DELETE CASCADE,
+  aluno_id TEXT NOT NULL REFERENCES alunos(id) ON DELETE CASCADE,
+  preapproval_id TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'pending', -- pending | authorized | paused | cancelled
+  valor_centavos INTEGER NOT NULL, -- valor COBRADO por ciclo (já com desconto, se houver)
+  valor_cheio_centavos INTEGER,    -- valor do plano sem desconto (NULL em assinaturas antigas)
+  desconto_centavos INTEGER NOT NULL DEFAULT 0, -- desconto por ciclo travado na criação
+  frequencia_meses INTEGER NOT NULL,
+  init_point TEXT,
+  criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+  atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);
+-- Parcelas já processadas (idempotência: o MP reenvia webhook). cobranca_id fica
+-- NULL e baixa = 'sem_cobranca' quando o pagamento chegou antes de existir uma
+-- conta em aberto da matrícula — fica registrado para conferência manual.
+CREATE TABLE IF NOT EXISTS assinaturas_mp_pagamentos (
+  payment_id TEXT PRIMARY KEY,
+  assinatura_id TEXT NOT NULL REFERENCES assinaturas_mp(id) ON DELETE CASCADE,
+  cobranca_id TEXT REFERENCES cobrancas(id),
+  valor_centavos INTEGER,
+  baixa TEXT NOT NULL, -- baixada | sem_cobranca
+  criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_assinaturas_mp_matricula ON assinaturas_mp(matricula_id, status);

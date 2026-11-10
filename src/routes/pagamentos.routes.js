@@ -7,6 +7,7 @@ const dbOffline = require('../db/clientOffline');
 const { autenticar, apenasAdmin } = require('../middleware/auth');
 const mercadopago = require('../services/payment/mercadopago.service');
 const { gerarCobrancasRecorrentes, ultimoDiaDoMes, resolverMatriculaDaConta } = require('../services/cobrancas.service');
+const assinaturas = require('../services/assinaturas.service');
 const { criarLimitador } = require('../middleware/rateLimit');
 const acessoTerminal = require('../services/acessoTerminal.service');
 const dbResiliente = require('../services/dbResiliente.service');
@@ -634,9 +635,21 @@ router.post('/webhook/mercadopago', limitadorWebhook, express.json(), async (req
     if (aviso) console.warn('[webhook/mercadopago]', aviso);
 
     const { type, data } = req.body;
+
+    // Assinaturas (recurso opcional, MERCADOPAGO_ASSINATURAS=1): parcela cobrada
+    // ou mudança de status da assinatura. Sem a flag, retorna null e segue.
+    if ((type === 'subscription_authorized_payment' || type === 'subscription_preapproval') && data?.id) {
+      const baixa = await assinaturas.processarEvento({ type, dataId: data.id });
+      if (baixa?.alunoId) acessoTerminal.notificarAgenteAtualizacaoAluno(baixa.alunoId);
+    }
+
     if (type === 'payment' && data?.id) {
       const pagamento = await mercadopago.consultarPagamento(data.id);
       const referenciaExterna = pagamento.external_reference;
+
+      // Pagamento gerado por uma assinatura (external_reference = id da assinatura).
+      const baixaAssinatura = await assinaturas.processarPagamentoAprovado(pagamento);
+      if (baixaAssinatura?.alunoId) acessoTerminal.notificarAgenteAtualizacaoAluno(baixaAssinatura.alunoId);
 
       if (pagamento.status === 'approved' && referenciaExterna) {
         await db.execute({
@@ -652,6 +665,109 @@ router.post('/webhook/mercadopago', limitadorWebhook, express.json(), async (req
       }
     }
     res.sendStatus(200); // Mercado Pago espera 200 rapidamente
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── Assinaturas do Mercado Pago (cobrança recorrente no cartão) ─────────────
+// Recurso opcional: precisa de MERCADOPAGO_ASSINATURAS=1 no ambiente. A baixa
+// das parcelas é automática pelo webhook acima; estas rotas só criam, listam e
+// cancelam. Ver src/services/assinaturas.service.js.
+
+// POST /api/pagamentos/assinaturas  { matricula_id } → { init_point }
+// O init_point é o link que o aluno abre para cadastrar o cartão no Mercado Pago.
+router.post('/assinaturas', autenticar, apenasAdmin, async (req, res, next) => {
+  try {
+    const { matricula_id } = z.object({ matricula_id: z.string().min(1) }).parse(req.body);
+    res.status(201).json(await assinaturas.criarAssinatura({
+      matriculaId: matricula_id,
+      baseUrl: assinaturas.baseUrlDaRequisicao(req),
+    }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/pagamentos/assinaturas/config — o painel só mostra o botão se o recurso estiver ligado.
+router.get('/assinaturas/config', autenticar, (req, res) => {
+  res.json({ habilitado: assinaturas.habilitado() });
+});
+
+// GET/PUT /api/pagamentos/assinaturas/oferta-config — textos, argumentos, perguntas e
+// desconto da página de oferta (Configurações > Pagamento automático). Só admin.
+const ofertaSchema = z.object({
+  selo: z.string().max(60),
+  titulo: z.string().min(1).max(160),
+  subtitulo: z.string().max(300),
+  beneficios: z.array(z.string().max(160)).max(8),
+  botao: z.string().min(1).max(60),
+  microtexto: z.string().max(120),
+  faq: z.array(z.object({ p: z.string().min(1).max(160), r: z.string().min(1).max(400) })).max(6),
+  desconto: z.object({
+    ativo: z.boolean(),
+    tipo: z.enum(['percentual', 'valor']),
+    percentual: z.number().min(0).max(90),
+    valor_centavos: z.number().int().min(0),
+  }).refine((d) => !d.ativo || (d.tipo === 'percentual' ? d.percentual > 0 : d.valor_centavos > 0), {
+    message: 'Informe o valor do desconto (maior que zero).',
+  }),
+});
+
+router.get('/assinaturas/oferta-config', autenticar, apenasAdmin, async (req, res, next) => {
+  try {
+    res.json({
+      habilitado: assinaturas.habilitado(),
+      oferta: await assinaturas.obterOferta(),
+      padrao: assinaturas.OFERTA_PADRAO,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put('/assinaturas/oferta-config', autenticar, apenasAdmin, async (req, res, next) => {
+  try {
+    const dados = ofertaSchema.parse(req.body);
+    res.json({ oferta: await assinaturas.salvarOferta(dados) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/pagamentos/assinaturas/oferta/:id — PÚBLICO (é o que a página /assinar/:id
+// consulta). Limitado por IP; o id é um UUID e a resposta não traz dados pessoais.
+const limitadorOferta = criarLimitador({
+  janelaMs: 5 * 60 * 1000,
+  maximo: 120,
+  mensagem: 'Muitas requisições. Aguarde alguns minutos.',
+});
+router.get('/assinaturas/oferta/:id', limitadorOferta, async (req, res, next) => {
+  try {
+    const oferta = await assinaturas.ofertaPublica(req.params.id);
+    if (!oferta) return res.status(404).json({ erro: 'Oferta não encontrada.' });
+    res.set('Cache-Control', 'no-store');
+    res.json(oferta);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/pagamentos/assinaturas?matricula_id=...
+router.get('/assinaturas', autenticar, async (req, res, next) => {
+  try {
+    const matriculaId = String(req.query.matricula_id || '');
+    if (!matriculaId) return res.status(400).json({ erro: 'Informe matricula_id.' });
+    res.json(await assinaturas.listar({ matriculaId }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/pagamentos/assinaturas/:id — cancela no Mercado Pago e localmente.
+router.delete('/assinaturas/:id', autenticar, apenasAdmin, async (req, res, next) => {
+  try {
+    res.json(await assinaturas.cancelar({ assinaturaId: req.params.id }));
   } catch (err) {
     next(err);
   }

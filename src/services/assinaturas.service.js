@@ -172,8 +172,10 @@ function calcularDescontoCentavos(valorCheioCentavos, desconto) {
   return Math.max(0, Math.min(bruto, valorCheioCentavos - VALOR_MINIMO_CENTAVOS));
 }
 
-function precoDaOferta(valorCheioCentavos, oferta) {
-  const desconto = calcularDescontoCentavos(valorCheioCentavos, oferta.desconto);
+// Aceita o objeto de desconto direto ({ativo,tipo,...}) ou a oferta legada ({desconto:{...}}).
+function precoDaOferta(valorCheioCentavos, descontoOuOferta) {
+  const cfg = descontoOuOferta && descontoOuOferta.desconto && typeof descontoOuOferta.desconto === 'object' ? descontoOuOferta.desconto : descontoOuOferta;
+  const desconto = calcularDescontoCentavos(valorCheioCentavos, cfg);
   return { valor_cheio_centavos: valorCheioCentavos, desconto_centavos: desconto, valor_centavos: valorCheioCentavos - desconto };
 }
 
@@ -290,6 +292,7 @@ async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPr
     referenciaExterna: id,
     urlRetorno: urlRetorno(baseUrl, id),
     dataInicio: dataInicioMP,
+    limiteCobrancas,
   });
   if (!mp?.id) throw erro('Mercado Pago não devolveu o id da assinatura.', 502);
 
@@ -437,6 +440,10 @@ async function baixarParcela({ assinatura, paymentId, valorCentavos, metodo }) {
       await registrarProximaCobranca(assinatura, conta);
     }
   } else if (baixa === 'sem_cobranca') {
+    // Primeira cobrança aprovada sem conta aberta: ainda assim ativa a matrícula e agenda o ciclo seguinte.
+    if (assinatura.modalidade && assinatura.modalidade !== 'legado') {
+      await registrarProximaCobranca(assinatura, { vencimento: new Date().toISOString().slice(0, 10) });
+    }
     console.warn(`[assinaturas] parcela ${paymentId} aprovada mas a matrícula ${assinatura.matricula_id} não tem conta em aberto — registrada como "sem_cobranca" para conferência.`);
   } else {
     console.warn(`[assinaturas] parcela ${paymentId} de ${pago} centavos não bate com a conta ${conta.id} (${conta.valor_centavos}) — NÃO baixada, conferir manualmente.`);

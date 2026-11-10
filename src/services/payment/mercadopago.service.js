@@ -145,7 +145,16 @@ async function consultarOrder(orderId) {
 // cadastra o cartão no ambiente do Mercado Pago (nenhum dado de cartão passa
 // pelo nosso servidor) e a partir daí o MP cobra sozinho a cada ciclo.
 // Docs: https://www.mercadopago.com.br/developers/pt/docs/subscriptions/integration-configuration/subscription-no-associated-plan/pending-payments
-async function criarAssinaturaPendente({ razao, valorCentavos, frequenciaMeses, emailPagador, referenciaExterna, urlRetorno, dataInicio }) {
+async function criarAssinaturaPendente({ razao, valorCentavos, frequenciaMeses, emailPagador, referenciaExterna, urlRetorno, dataInicio, limiteCobrancas = null }) {
+  // Trava de segurança no próprio MP: para contratos com número fixo de cobranças,
+  // define end_date logo após a última (a n-ésima sai em início + (n-1) meses).
+  let dataFim = null;
+  if (limiteCobrancas && Number(limiteCobrancas) > 0) {
+    const fim = new Date(dataInicio || Date.now());
+    fim.setUTCMonth(fim.getUTCMonth() + (Number(limiteCobrancas) - 1) * Number(frequenciaMeses || 1));
+    fim.setUTCDate(fim.getUTCDate() + 20);
+    dataFim = fim.toISOString();
+  }
   const resp = await fetch(`${BASE_URL}/preapproval`, {
     method: 'POST',
     headers: {
@@ -162,6 +171,7 @@ async function criarAssinaturaPendente({ razao, valorCentavos, frequenciaMeses, 
         frequency: frequenciaMeses,
         frequency_type: 'months',
         ...(dataInicio ? { start_date: dataInicio } : {}),
+        ...(dataFim ? { end_date: dataFim } : {}),
         transaction_amount: valorCentavos / 100,
         currency_id: 'BRL',
       },

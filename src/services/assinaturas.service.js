@@ -83,7 +83,7 @@ const OFERTA_PADRAO = {
     'Sem fila no totem e sem Pix pra copiar todo mês',
     'Acesso sempre em dia, sem susto na catraca',
     'Cartão cadastrado direto no Mercado Pago — a academia não vê nem guarda seus dados',
-    'Cancele quando quiser: é só avisar a recepção',
+    'Acompanhe a confirmação dos pagamentos pelo portal do aluno',
   ],
   botao: 'Ativar pagamento automático →',
   microtexto: '🔒 Pagamento seguro pelo Mercado Pago · leva cerca de 1 minuto',
@@ -556,6 +556,14 @@ async function ofertaPublica(id) {
   const o = r.rows[0];
   if (!o) return null;
   const desconto = Number(o.desconto_centavos || 0);
+  const beneficiosModalidade = [
+    ...oferta.beneficios.filter((b) => !/cancele quando quiser|sem fidelidade|permanência mínima/i.test(b)),
+    o.modalidade === '12_meses'
+      ? 'Compromisso de 12 cobranças mensais de R$ 65,00'
+      : o.modalidade === 'mensal_livre'
+        ? 'Sem fidelidade ou permanência mínima'
+        : null,
+  ].filter(Boolean).slice(0, LIMITES.beneficios);
   const faqModalidade = o.modalidade === '12_meses'
     ? [
       { p: 'Qual é o compromisso?', r: 'São 12 cobranças mensais de R$ 65,00, totalizando R$ 780,00. As condições de cancelamento antecipado seguem o contrato.' },
@@ -576,6 +584,7 @@ async function ofertaPublica(id) {
         ? 'Pagamento automático de R$ 70,00 por mês, sem compromisso de permanência mínima.'
         : oferta.subtitulo,
     faq: faqModalidade,
+    beneficios: beneficiosModalidade,
     aluno: primeiroNome(o.aluno_nome),
     plano: o.plano_nome,
     status: o.status,
@@ -594,8 +603,8 @@ async function ofertaPublica(id) {
 
 // Matrícula do aluno que pode virar assinatura (ativa + plano recorrente).
 async function matriculaElegivel(alunoId) {
-  // A oferta é uma migração de modalidade para qualquer aluno com matrícula ativa,
-  // não depende do tipo do plano tradicional atual.
+  // A oferta migra matrículas ativas de planos com ciclo recorrente (mensal,
+  // trimestral, semestral ou anual), independentemente do ciclo tradicional atual.
   const r = await db.execute({
     sql: `SELECT m.id, m.data_inicio, p.nome AS plano_nome, p.valor_centavos
           FROM matriculas m JOIN planos p ON p.id = m.plano_id

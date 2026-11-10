@@ -269,25 +269,20 @@ async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPr
   // Só o fluxo de NOVO cadastro usa a tabela configurável. A oferta de migração
   // para alunos existentes mantém as condições antigas e independentes.
   const planoCadastro = modalidade ? await buscarPlanoCadastro(modalidade) : null;
-  if (modalidade && !planoCadastro && !['12_meses', 'mensal_livre'].includes(modalidade)) {
-    throw erro('Modalidade de recorrência inválida.', 400);
-  }
   const preco = planoCadastro
     ? precoDaOferta(Number(planoCadastro.valor_centavos), planoCadastro.desconto)
-    : modalidade
-      ? { valor_cheio_centavos: modalidade === '12_meses' ? 6500 : 7000, desconto_centavos: 0, valor_centavos: modalidade === '12_meses' ? 6500 : 7000 }
-      : precoDaOferta(Number(m.valor_centavos), oferta);
+    : precoDaOferta(Number(m.valor_centavos), oferta);
 
   const id = uuid();
   const frequenciaMeses = modalidade ? 1 : MESES_POR_TIPO[m.tipo];
-  const limiteCobrancas = planoCadastro ? planoCadastro.limite_cobrancas : (modalidade === '12_meses' ? 12 : null);
+  const limiteCobrancas = planoCadastro ? planoCadastro.limite_cobrancas : null;
   const hojeCobranca = new Date().toISOString().slice(0, 10);
   const dataInicioMP = dataPrimeiraCobranca && dataPrimeiraCobranca > hojeCobranca
     ? `${dataPrimeiraCobranca}T00:00:00.000-03:00`
     : null;
   const mp = await mercadopago.criarAssinaturaPendente({
     razao: modalidade
-      ? (m.plano_nome + ' — ' + (planoCadastro ? planoCadastro.nome : modalidade === '12_meses' ? 'Compromisso de 12 meses' : 'Mensal sem fidelidade') + ' — ' + formatarValorParaDescricao(preco.valor_centavos) + ' por mês')
+      ? (m.plano_nome + ' — ' + planoCadastro.nome + ' — ' + formatarValorParaDescricao(preco.valor_centavos) + ' por mês')
       : (m.plano_nome + ' — ' + m.aluno_nome),
     valorCentavos: preco.valor_centavos,
     frequenciaMeses,

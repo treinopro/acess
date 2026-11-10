@@ -533,3 +533,26 @@ test('migração de aluno atual também usa a modalidade cadastrada no painel', 
   assert.strictEqual(contrato.valor_cheio_centavos, 8000);
   assert.strictEqual(contrato.limite_cobrancas, null);
 });
+
+
+test('checkout abandonado: expira após 48h, cancela no MP e restaura a cobrança original', async () => {
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('abandona', 'Aluno Abandona', 'abandona@teste.com', '22200099988')` });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-abandona', 'abandona', 'p1', '2026-11-10', 'pendente')` });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-abandona', 'abandona', 'm-abandona', 9900, 'pendente', 'mercadopago', 'Matrícula', '2026-11-10')` });
+  await assinaturas.salvarPlanosCadastro([{ id: 'mensal_livre', nome: 'Mensal', valor_centavos: 7000, limite_cobrancas: null, ativo: true }]);
+  await assinaturas.obterOuCriarParaNovoCadastro({ alunoId: 'abandona', matriculaId: 'm-abandona', baseUrl: 'https://academia.test', modalidade: 'mensal_livre' });
+
+  // Recente: não mexe.
+  let r = await assinaturas.expirarCheckoutsAbandonados({ horas: 48 });
+  assert.strictEqual(r.cancelados, 0);
+
+  await db.execute({ sql: `UPDATE assinaturas_mp SET criado_em = datetime('now', '-3 days') WHERE matricula_id = 'm-abandona'` });
+  r = await assinaturas.expirarCheckoutsAbandonados({ horas: 48 });
+  assert.strictEqual(r.cancelados, 1);
+
+  const a = (await db.execute({ sql: `SELECT status FROM assinaturas_mp WHERE matricula_id='m-abandona'` })).rows[0];
+  assert.strictEqual(a.status, 'cancelled');
+  const c = (await db.execute({ sql: `SELECT valor_centavos, status FROM cobrancas WHERE id='c-abandona'` })).rows[0];
+  assert.strictEqual(c.valor_centavos, 9900);
+  assert.strictEqual(c.status, 'pendente');
+});

@@ -530,6 +530,46 @@ async function registrarProximaCobranca(assinatura, cobrancaAtual) {
   }
 }
 
+/**
+ * Encerra checkouts recorrentes abandonados (aluno nunca cadastrou o cartão ou a
+ * 1ª cobrança não foi aprovada) com mais de `horas` horas. Antes de cancelar,
+ * confere o status real no MP: se já estiver autorizada, só sincroniza (webhook
+ * perdido). Ao cancelar, cancelar() restaura a cobrança tradicional original.
+ */
+async function expirarCheckoutsAbandonados({ horas = 48 } = {}) {
+  if (!habilitado()) return { cancelados: 0, sincronizados: 0 };
+  const r = await db.execute({
+    sql: `SELECT id, preapproval_id FROM assinaturas_mp
+          WHERE status = 'pending' AND criado_em <= datetime('now', ?)`,
+    args: [`-${Math.max(1, Number(horas) || 48)} hours`],
+  });
+  let cancelados = 0, sincronizados = 0;
+  for (const a of r.rows) {
+    try {
+      const mp = await mercadopago.consultarAssinatura(a.preapproval_id);
+      if (mp?.status && mp.status !== 'pending') {
+        await atualizarStatus(a.preapproval_id, mp.status);
+        sincronizados++;
+        if (mp.status !== 'cancelled') continue;
+      }
+      if (mp?.status !== 'cancelled') { await cancelar({ assinaturaId: a.id }); cancelados++; }
+      else {
+        // Já cancelada no MP: só restaura a cobrança original (status local ainda era pending).
+        const x = (await db.execute({ sql: 'SELECT * FROM assinaturas_mp WHERE id = ?', args: [a.id] })).rows[0];
+        if (x?.cobranca_inicial_id && x.valor_anterior_centavos != null) {
+          await db.execute({
+            sql: "UPDATE cobrancas SET valor_centavos = ?, status = ? WHERE id = ? AND status IN ('pendente','atrasado')",
+            args: [x.valor_anterior_centavos, x.status_anterior_cobranca || 'pendente', x.cobranca_inicial_id],
+          });
+        }
+      }
+    } catch (err) {
+      console.error('[assinaturas] falha ao expirar checkout', a.id, err.message);
+    }
+  }
+  return { cancelados, sincronizados };
+}
+
 async function buscarPorPreapproval(preapprovalId) {
   const r = await db.execute({ sql: 'SELECT * FROM assinaturas_mp WHERE preapproval_id = ?', args: [String(preapprovalId)] });
   return r.rows[0] || null;
@@ -859,5 +899,5 @@ module.exports = {
   habilitado, criarAssinatura, listar, cancelar, processarEvento, processarPagamentoAprovado,
   ofertaPublica, disponibilidadeParaAluno, obterOuCriarParaAluno, obterOuCriarParaNovoCadastro, baseUrlDaRequisicao, urlOferta,
   obterOferta, salvarOferta, calcularDescontoCentavos, OFERTA_PADRAO,
-  obterPlanosCadastro, salvarPlanosCadastro, listarPlanosCadastroPublicos,
+  obterPlanosCadastro, salvarPlanosCadastro, listarPlanosCadastroPublicos, expirarCheckoutsAbandonados,
 };

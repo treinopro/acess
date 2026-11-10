@@ -31,6 +31,7 @@ const { rodar: rodarMensagensAgendadas } = require('./jobs/mensagensAgendadas');
 const { rodar: rodarAvisoVencimento } = require('./jobs/avisoVencimento');
 const { rodar: rodarAvisoRenovacaoAvaliacao } = require('./jobs/avisoRenovacaoAvaliacao');
 const { rodar: rodarReconciliarPagamentosPix } = require('./jobs/reconciliarPagamentosPix');
+const { rodar: rodarExpirarCheckoutsRecorrencia } = require('./jobs/expirarCheckoutsRecorrencia');
 const { atualizarCobrancasVencidas } = require('./services/cobrancas.service');
 const agenteGateway = require('./services/agenteGateway.service');
 const dbResiliente = require('./services/dbResiliente.service');
@@ -357,6 +358,13 @@ server.listen(PORT, () => {
     setInterval(() => {
       rodarReconciliarPagamentosPix().catch((err) => console.error('[reconciliarPagamentosPix] erro na execução agendada:', err));
     }, 10 * 60 * 1000);
+  }
+
+  // Checkouts de recorrência abandonados (cartão nunca cadastrado): a cada hora.
+  if (EXECUTAR_JOBS_AGENDADOS) {
+    setInterval(() => {
+      rodarExpirarCheckoutsRecorrencia().catch((err) => console.error('[expirarCheckoutsRecorrencia] erro:', err));
+    }, 60 * 60 * 1000);
   }
 
   // "Modo totem offline-resiliente" (2026-07): só ativa quando

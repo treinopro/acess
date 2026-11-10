@@ -468,14 +468,67 @@ async function ofertaPublica(id) {
 
 // Matrícula do aluno que pode virar assinatura (ativa + plano recorrente).
 async function matriculaElegivel(alunoId) {
+  // A oferta é uma migração de modalidade para qualquer aluno com matrícula ativa,
+  // não depende do tipo do plano tradicional atual.
   const r = await db.execute({
-    sql: `SELECT m.id, p.nome AS plano_nome, p.valor_centavos
+    sql: `SELECT m.id, m.data_inicio, p.nome AS plano_nome, p.valor_centavos
           FROM matriculas m JOIN planos p ON p.id = m.plano_id
-          WHERE m.aluno_id = ? AND m.status = 'ativa' AND p.tipo IN (${TIPOS_RECORRENTES.map(() => '?').join(', ')})
+          WHERE m.aluno_id = ? AND m.status = 'ativa'
           ORDER BY m.data_inicio DESC LIMIT 1`,
-    args: [alunoId, ...TIPOS_RECORRENTES],
+    args: [alunoId],
   });
   return r.rows[0] || null;
+}
+
+function somarMesesISO(dataISO, meses) {
+  const [ano, mes, dia] = dataISO.slice(0, 10).split('-').map(Number);
+  const alvo = new Date(Date.UTC(ano, mes - 1 + meses, 1));
+  const ultimoDia = new Date(Date.UTC(alvo.getUTCFullYear(), alvo.getUTCMonth() + 1, 0)).getUTCDate();
+  return `${alvo.getUTCFullYear()}-${String(alvo.getUTCMonth() + 1).padStart(2, '0')}-${String(Math.min(dia, ultimoDia)).padStart(2, '0')}`;
+}
+
+// Na migração: reaproveita a primeira mensalidade em aberto. Se a competência
+// atual já foi quitada, inicia no próximo vencimento mensal; não cria segunda
+// cobrança para a mesma competência.
+async function prepararCobrancaInicial({ matricula, valorCentavos, modalidade }) {
+  const abertas = await db.execute({
+    sql: `SELECT id, vencimento FROM cobrancas
+          WHERE matricula_id = ? AND status IN ('pendente', 'atrasado')
+          ORDER BY vencimento ASC, criado_em ASC`,
+    args: [matricula.id],
+  });
+  const hoje = new Date().toISOString().slice(0, 10);
+  let vencimento;
+  let cobrancaId;
+  if (abertas.rows.length) {
+    vencimento = String(abertas.rows[0].vencimento || hoje).slice(0, 10);
+    cobrancaId = abertas.rows[0].id;
+    await db.execute({
+      sql: `UPDATE cobrancas SET valor_centavos = ?, descricao = ? WHERE id = ?`,
+      args: [valorCentavos, modalidade === '12_meses' ? 'Recorrência 12 meses - R$ 65,00' : 'Recorrência mensal - R$ 70,00', cobrancaId],
+    });
+    // Cancela contas futuras pré-geradas pela matrícula tradicional. A partir
+    // da migração, a sequência será conduzida pelas confirmações do Mercado Pago.
+    for (const futura of abertas.rows.slice(1)) {
+      await db.execute({ sql: `UPDATE cobrancas SET status = 'cancelado' WHERE id = ?`, args: [futura.id] });
+    }
+  } else {
+    const ultima = await db.execute({
+      sql: `SELECT vencimento FROM cobrancas WHERE matricula_id = ? ORDER BY vencimento DESC, criado_em DESC LIMIT 1`,
+      args: [matricula.id],
+    });
+    vencimento = ultima.rows[0]?.vencimento
+      ? somarMesesISO(String(ultima.rows[0].vencimento), 1)
+      : primeiroVencimento(matricula.data_inicio || hoje);
+    cobrancaId = uuid();
+    await db.execute({
+      sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento)
+            VALUES (?, ?, ?, ?, 'pendente', 'recorrencia', ?, ?)`,
+      args: [cobrancaId, matricula.aluno_id, matricula.id, valorCentavos,
+        modalidade === '12_meses' ? 'Recorrência 12 meses - R$ 65,00' : 'Recorrência mensal - R$ 70,00', vencimento],
+    });
+  }
+  return { vencimento, cobrancaId };
 }
 
 async function assinaturaAbertaDaMatricula(matriculaId) {
@@ -495,27 +548,37 @@ async function disponibilidadeParaAluno({ alunoId, baseUrl }) {
   const m = await matriculaElegivel(alunoId);
   if (!m) return { disponivel: false };
   const existente = await assinaturaAbertaDaMatricula(m.id);
-  if (existente && existente.status !== 'pending') return { disponivel: false, status: existente.status };
-  const preco = precoDaOferta(Number(m.valor_centavos), await obterOferta());
+  if (existente && ['authorized', 'paused'].includes(existente.status)) {
+    return { disponivel: false, status: existente.status };
+  }
   return {
     disponivel: true,
-    plano: m.plano_nome,
-    ...preco,
-    // Só reaproveita o link se o preço não mudou desde que foi gerado.
-    oferta_url: existente && Number(existente.valor_centavos) === preco.valor_centavos ? urlOferta(baseUrl, existente.id) : null,
+    plano_atual: m.plano_nome,
+    opcoes: [
+      { modalidade: '12_meses', titulo: 'Recorrência com compromisso de 12 meses', valor_centavos: 6500, limite_cobrancas: 12, total_centavos: 78000, descricao: '12 cobranças de R$ 65,00 (total de R$ 780,00).' },
+      { modalidade: 'mensal_livre', titulo: 'Mensal automático sem fidelidade', valor_centavos: 7000, limite_cobrancas: null, total_centavos: null, descricao: 'R$ 70,00 por mês, sem permanência mínima.' },
+    ],
+    assinatura_pendente: existente ? { id: existente.id, modalidade: existente.modalidade } : null,
   };
 }
 
-// Portal: reaproveita a assinatura que aguarda o cartão (se o preço ainda vale) ou
-// cancela a pendente desatualizada e cria outra — nenhum cartão foi cadastrado ainda.
-async function obterOuCriarParaAluno({ alunoId, baseUrl }) {
+// Reaproveita assinatura pendente da mesma modalidade. Uma assinatura ativa impede
+// criar outra, para não manter duas cobranças automáticas simultâneas.
+async function obterOuCriarParaAluno({ alunoId, baseUrl, modalidade }) {
+  if (!['12_meses', 'mensal_livre'].includes(modalidade)) throw erro('Escolha uma das modalidades disponíveis.', 400);
   const disp = await disponibilidadeParaAluno({ alunoId, baseUrl });
   if (!disp.disponivel) throw erro('Pagamento automático não está disponível para este aluno.', 409);
-  if (disp.oferta_url) return { oferta_url: disp.oferta_url };
   const m = await matriculaElegivel(alunoId);
   const pendente = await assinaturaAbertaDaMatricula(m.id);
+  if (pendente && pendente.modalidade === modalidade) {
+    return { oferta_url: urlOferta(baseUrl, pendente.id) };
+  }
   if (pendente) await cancelar({ assinaturaId: pendente.id });
-  const criada = await criarAssinatura({ matriculaId: m.id, baseUrl });
+  const valor = modalidade === '12_meses' ? 6500 : 7000;
+  const ciclo = await prepararCobrancaInicial({ matricula: { ...m, aluno_id: alunoId }, valorCentavos: valor, modalidade });
+  const criada = await criarAssinatura({
+    matriculaId: m.id, baseUrl, modalidade, dataPrimeiraCobranca: ciclo.vencimento,
+  });
   return { oferta_url: criada.oferta_url };
 }
 

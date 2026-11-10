@@ -206,7 +206,7 @@ test('portal: card disponível, reaproveita a assinatura pendente e some depois 
   const base = 'https://academia.test';
   let d = await assinaturas.disponibilidadeParaAluno({ alunoId: 'p1x', baseUrl: base });
   assert.strictEqual(d.disponivel, true);
-  assert.strictEqual(d.oferta_url, null);
+  assert.strictEqual(d.assinatura_pendente, null);
 
   const r1 = await assinaturas.obterOuCriarParaAluno({ alunoId: 'p1x', baseUrl: base, modalidade: 'mensal_livre' });
   const r2 = await assinaturas.obterOuCriarParaAluno({ alunoId: 'p1x', baseUrl: base, modalidade: 'mensal_livre' });

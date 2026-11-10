@@ -634,7 +634,10 @@ router.post('/webhook/mercadopago', limitadorWebhook, express.json(), async (req
     }
     if (aviso) console.warn('[webhook/mercadopago]', aviso);
 
-    const { type, data } = req.body;
+    // O MP pode entregar o tipo no corpo (type) ou na query (type/topic).
+    // Normaliza ambos os formatos usados pelo simulador e pelos webhooks reais.
+    const type = req.body?.type || req.query?.type || req.query?.topic;
+    const data = req.body?.data || { id: req.query?.['data.id'] };
 
     // Assinaturas (recurso opcional, MERCADOPAGO_ASSINATURAS=1): parcela cobrada
     // ou mudança de status da assinatura. Sem a flag, retorna null e segue.

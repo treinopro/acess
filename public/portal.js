@@ -2003,6 +2003,8 @@ function resetCadastroPortal() {
   pararCamera();
   cadastroPortalCpfAtual = null;
   cadastroPortalSenhaAtual = null;
+  cadastroPortalCobrancaId = null;
+  cadastroPortalMatriculaId = null;
   document.getElementById('portal-cadastro-nome').value = '';
   document.getElementById('portal-cadastro-cpf').value = '';
   document.getElementById('portal-cadastro-telefone').value = '';
@@ -2013,6 +2015,9 @@ function resetCadastroPortal() {
   document.getElementById('portal-cadastro-senha-caixa').textContent = '';
   document.getElementById('painel-cadastro-portal-form').classList.remove('oculto');
   document.getElementById('painel-cadastro-portal-pagamento').classList.add('oculto');
+  document.getElementById('cadastro-pix-conteudo').classList.add('oculto');
+  document.getElementById('oferta-recorrencia-novo-aluno').classList.remove('oculto');
+  document.getElementById('oferta-recorrencia-novo-aluno').innerHTML = '';
   document.getElementById('painel-cadastro-portal-sucesso').classList.add('oculto');
   document.getElementById('painel-cadastro-portal-facial').classList.add('oculto');
   document.getElementById('btn-copiar-pix-cadastro-portal').classList.add('oculto');

@@ -392,3 +392,40 @@ test('prévia: monta a página com as configurações atuais sem criar nada', as
   assert.ok(o.valor_centavos < o.valor_cheio_centavos);               // desconto ativo aparece na prévia
   assert.strictEqual(Number((await db.execute({ sql: 'SELECT COUNT(*) n FROM assinaturas_mp' })).rows[0].n), antes);
 });
+
+test('pagamento recorrente estende a validade da matrícula até o próximo vencimento', async () => {
+  await novoAlunoComMatricula('renova-validade');
+  await db.execute({
+    sql: `UPDATE matriculas SET data_fim = '2026-11-11' WHERE id = 'm-renova-validade'`,
+  });
+  await assinaturas.obterOuCriarParaAluno({
+    alunoId: 'renova-validade',
+    baseUrl: 'https://academia.test',
+    modalidade: 'mensal_livre',
+  });
+  const sub = (await db.execute({
+    sql: `SELECT * FROM assinaturas_mp WHERE aluno_id = 'renova-validade'`,
+  })).rows[0];
+  const primeira = (await db.execute({
+    sql: `SELECT id, vencimento FROM cobrancas WHERE matricula_id = 'm-renova-validade' AND status = 'pendente'`,
+  })).rows[0];
+  const [ano, mes, dia] = primeira.vencimento.split('-').map(Number);
+  const alvo = new Date(Date.UTC(ano, mes, 1));
+  const ultimo = new Date(Date.UTC(alvo.getUTCFullYear(), alvo.getUTCMonth() + 1, 0)).getUTCDate();
+  const proximoEsperado = `${alvo.getUTCFullYear()}-${String(alvo.getUTCMonth() + 1).padStart(2, '0')}-${String(Math.min(dia, ultimo)).padStart(2, '0')}`;
+
+  estadoMp.parcelas['AP-RENOVA-VALIDADE'] = {
+    preapproval_id: sub.preapproval_id,
+    transaction_amount: 70,
+    payment: { id: 'PAY-RENOVA-VALIDADE', status: 'approved' },
+  };
+  await assinaturas.processarEvento({
+    type: 'subscription_authorized_payment',
+    dataId: 'AP-RENOVA-VALIDADE',
+  });
+
+  const matricula = (await db.execute({
+    sql: `SELECT data_fim FROM matriculas WHERE id = 'm-renova-validade'`,
+  })).rows[0];
+  assert.strictEqual(matricula.data_fim, proximoEsperado);
+});

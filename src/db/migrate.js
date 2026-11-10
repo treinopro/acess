@@ -82,6 +82,10 @@ const ALTERACOES_INCREMENTAIS = [
   // Desconto da assinatura no cartão (2026-11): tabela criada antes desta coluna.
   "ALTER TABLE assinaturas_mp ADD COLUMN valor_cheio_centavos INTEGER",
   "ALTER TABLE assinaturas_mp ADD COLUMN desconto_centavos INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE assinaturas_mp ADD COLUMN modalidade TEXT NOT NULL DEFAULT 'legado'",
+  "ALTER TABLE assinaturas_mp ADD COLUMN limite_cobrancas INTEGER",
+  "ALTER TABLE assinaturas_mp ADD COLUMN cobrancas_processadas INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE assinaturas_mp ADD COLUMN data_primeira_cobranca TEXT",
 ];
 
 // Divide um arquivo .sql em statements individuais (o driver libsql nao aceita

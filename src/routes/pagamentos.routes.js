@@ -812,6 +812,17 @@ router.get('/assinaturas', autenticar, async (req, res, next) => {
   }
 });
 
+// POST /api/pagamentos/assinaturas/:id/sincronizar — consulta o MP agora e dá baixa no que já foi pago.
+router.post('/assinaturas/:id/sincronizar', autenticar, apenasAdmin, async (req, res, next) => {
+  try {
+    const r = await assinaturas.sincronizarAgora({ assinaturaId: req.params.id });
+    for (const alunoId of new Set(r.alunosAtualizados)) acessoTerminal.notificarAgenteAtualizacaoAluno(alunoId);
+    res.json({ status: r.status, baixas: r.baixas });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // DELETE /api/pagamentos/assinaturas/:id — cancela no Mercado Pago e localmente.
 router.delete('/assinaturas/:id', autenticar, apenasAdmin, async (req, res, next) => {
   try {

@@ -593,6 +593,24 @@ async function expirarCheckoutsAbandonados({ horas = 48 } = {}) {
   return { cancelados, sincronizados };
 }
 
+// Sincroniza UMA assinatura com o MP: status + cobranças aprovadas ainda não processadas.
+// Lança erro se o MP não responder (para o painel mostrar o motivo).
+async function reconciliarUmaAssinatura(preapprovalId) {
+  const r = { baixas: 0, alunosAtualizados: [] };
+  await processarEvento({ type: 'subscription_preapproval', dataId: preapprovalId });
+  const cobrancas = await mercadopago.listarCobrancasDaAssinatura(preapprovalId);
+  for (const parcela of cobrancas) {
+    const pagamento = parcela.payment || {};
+    if (pagamento.status !== 'approved' || !pagamento.id) continue;
+    const assinatura = await buscarPorPreapproval(preapprovalId); // recarrega: o contador muda a cada baixa
+    if (!assinatura || assinatura.status === 'completed') break;
+    const valor = parcela.transaction_amount != null ? Math.round(Number(parcela.transaction_amount) * 100) : assinatura.valor_centavos;
+    const b = await baixarParcela({ assinatura, paymentId: pagamento.id, valorCentavos: valor, metodo: 'credit_card' });
+    if (b.baixada) { r.baixas++; r.alunosAtualizados.push(b.alunoId); }
+  }
+  return r;
+}
+
 /**
  * Reconciliação ativa (rede de segurança para webhook que não chega): para cada
  * assinatura ainda viva, sincroniza o status e dá baixa nas cobranças aprovadas
@@ -609,22 +627,24 @@ async function reconciliarAssinaturas() {
   for (const v of vivas.rows) {
     try {
       resultado.assinaturas++;
-      await processarEvento({ type: 'subscription_preapproval', dataId: v.preapproval_id });
-      const cobrancas = await mercadopago.listarCobrancasDaAssinatura(v.preapproval_id);
-      for (const parcela of cobrancas) {
-        const pagamento = parcela.payment || {};
-        if (pagamento.status !== 'approved' || !pagamento.id) continue;
-        const assinatura = await buscarPorPreapproval(v.preapproval_id); // recarrega: o contador muda a cada baixa
-        if (!assinatura || assinatura.status === 'completed') break;
-        const valor = parcela.transaction_amount != null ? Math.round(Number(parcela.transaction_amount) * 100) : assinatura.valor_centavos;
-        const r = await baixarParcela({ assinatura, paymentId: pagamento.id, valorCentavos: valor, metodo: 'credit_card' });
-        if (r.baixada) { resultado.baixas++; resultado.alunosAtualizados.push(r.alunoId); }
-      }
+      const r = await reconciliarUmaAssinatura(v.preapproval_id);
+      resultado.baixas += r.baixas;
+      resultado.alunosAtualizados.push(...r.alunosAtualizados);
     } catch (err) {
       console.error('[assinaturas] falha ao reconciliar', v.id, err.message);
     }
   }
   return resultado;
+}
+
+// Botão "Atualizar status" do painel: sincroniza uma assinatura agora.
+async function sincronizarAgora({ assinaturaId }) {
+  if (!habilitado()) throw erro('Assinaturas do Mercado Pago estão desligadas (MERCADOPAGO_ASSINATURAS).', 503);
+  const a = await buscarPorId(assinaturaId);
+  if (!a) throw erro('Assinatura não encontrada.', 404);
+  const r = await reconciliarUmaAssinatura(a.preapproval_id);
+  const atual = await buscarPorId(assinaturaId);
+  return { status: atual.status, baixas: r.baixas, alunosAtualizados: r.alunosAtualizados };
 }
 
 async function buscarPorPreapproval(preapprovalId) {
@@ -966,5 +986,5 @@ module.exports = {
   habilitado, criarAssinatura, listar, cancelar, processarEvento, processarPagamentoAprovado,
   ofertaPublica, disponibilidadeParaAluno, obterOuCriarParaAluno, obterOuCriarParaNovoCadastro, baseUrlDaRequisicao, urlOferta,
   obterOferta, salvarOferta, calcularDescontoCentavos, OFERTA_PADRAO,
-  obterPlanosCadastro, salvarPlanosCadastro, listarPlanosCadastroPublicos, expirarCheckoutsAbandonados, reconciliarAssinaturas, cronogramaCobrancaAutomatica,
+  obterPlanosCadastro, salvarPlanosCadastro, listarPlanosCadastroPublicos, expirarCheckoutsAbandonados, reconciliarAssinaturas, sincronizarAgora, cronogramaCobrancaAutomatica,
 };

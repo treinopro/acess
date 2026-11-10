@@ -660,3 +660,19 @@ test('cancelar recorrência ativa volta a matrícula para a regra normal (renova
   const paga = (await db.execute({ sql: `SELECT status FROM cobrancas WHERE id='c-volta'` })).rows[0];
   assert.strictEqual(paga.status, 'pago'); // histórico preservado
 });
+
+test('sincronizarAgora (botão do painel): dá baixa no pagamento já aprovado no MP', async () => {
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('sync', 'Aluno Sync', 'sync@teste.com', '66600099944')` });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-sync', 'sync', 'p1', '2026-11-10', 'pendente')` });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-sync', 'sync', 'm-sync', 9900, 'pendente', 'mercadopago', 'Matrícula', '2026-11-10')` });
+  await assinaturas.salvarPlanosCadastro([{ id: 'mensal_livre', nome: 'Mensal', valor_centavos: 7000, limite_cobrancas: null, ativo: true }]);
+  await assinaturas.obterOuCriarParaNovoCadastro({ alunoId: 'sync', matriculaId: 'm-sync', baseUrl: 'https://academia.test', modalidade: 'mensal_livre' });
+  const { id, preapproval_id: pre } = (await db.execute({ sql: `SELECT id, preapproval_id FROM assinaturas_mp WHERE matricula_id='m-sync'` })).rows[0];
+  estadoMp.assinaturas[pre].status = 'authorized';
+  estadoMp.cobrancas = { ...(estadoMp.cobrancas || {}), [pre]: [{ id: 'AP-S1', preapproval_id: pre, transaction_amount: 70, payment: { id: 9201, status: 'approved' } }] };
+  const r = await assinaturas.sincronizarAgora({ assinaturaId: id });
+  assert.strictEqual(r.baixas, 1);
+  assert.strictEqual(r.status, 'authorized');
+  const c = (await db.execute({ sql: `SELECT status FROM cobrancas WHERE id='c-sync'` })).rows[0];
+  assert.strictEqual(c.status, 'pago');
+});

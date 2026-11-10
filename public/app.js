@@ -3602,7 +3602,7 @@ async function abrirDialogoAssinatura(matricula, aluno) {
           <a class="btn-linha" style="text-decoration:none" target="_blank" rel="noopener" href="${escapeHtml(ofertaUrl)}">Ver como o aluno vê</a>
         </div>` : ''}
       <div style="display:flex;gap:8px;justify-content:space-between;margin-top:16px">
-        ${ativa ? '<button type="button" class="btn-linha perigo" data-acao="cancelar">Cancelar assinatura</button>' : (modalidadesAdmin.length ? '<select data-campo="modalidade" style="max-width:260px">' + modalidadesAdmin.map((m) => '<option value="' + escapeHtml(m.id) + '">' + escapeHtml(m.rotulo) + '</option>').join('') + '</select>' : '') + '<button type="button" class="btn-assinar-cartao" data-acao="gerar">Gerar link de assinatura</button>'}
+        ${ativa ? '<span style="display:flex;gap:8px"><button type="button" class="btn-linha perigo" data-acao="cancelar">Cancelar assinatura</button><button type="button" class="btn-linha" data-acao="sincronizar">Atualizar status</button></span>' : (modalidadesAdmin.length ? '<select data-campo="modalidade" style="max-width:260px">' + modalidadesAdmin.map((m) => '<option value="' + escapeHtml(m.id) + '">' + escapeHtml(m.rotulo) + '</option>').join('') + '</select>' : '') + '<button type="button" class="btn-assinar-cartao" data-acao="gerar">Gerar link de assinatura</button>'}
         <button type="button" class="btn-linha" data-acao="fechar">Fechar</button>
       </div>`;
     dlg.querySelector('[data-acao="fechar"]').addEventListener('click', fechar);
@@ -3617,6 +3617,16 @@ async function abrirDialogoAssinatura(matricula, aluno) {
         const r = await api('/api/pagamentos/assinaturas', { method: 'POST', body: JSON.stringify({ matricula_id: matricula.id, ...(dlg.querySelector('[data-campo="modalidade"]') ? { modalidade: dlg.querySelector('[data-campo="modalidade"]').value } : {}) }) });
         desenhar({ id: r.id, status: r.status, valor_centavos: r.valor_centavos, valor_cheio_centavos: r.valor_cheio_centavos, desconto_centavos: r.desconto_centavos }, r.oferta_url, r.whatsapp_link);
       } catch (err) { mostrarToast(err.message, true); gerar.disabled = false; }
+    });
+const sincronizar = dlg.querySelector('[data-acao="sincronizar"]');
+    if (sincronizar) sincronizar.addEventListener('click', async () => {
+      sincronizar.disabled = true; sincronizar.textContent = 'Consultando…';
+      try {
+        const r = await api(`/api/pagamentos/assinaturas/${assinatura.id}/sincronizar`, { method: 'POST' });
+        mostrarToast(r.baixas ? `Pagamento confirmado: ${r.baixas} cobrança(s) baixada(s).` : `Status no Mercado Pago: ${ROTULO_STATUS_ASSINATURA[r.status] || r.status}. Nenhum pagamento novo.`);
+        if (r.baixas) { fechar(); if (typeof recarregarPerfilAtual === 'function') recarregarPerfilAtual(); }
+      } catch (err) { mostrarToast(err.message, true); }
+      sincronizar.disabled = false; sincronizar.textContent = 'Atualizar status';
     });
     const cancelar = dlg.querySelector('[data-acao="cancelar"]');
     if (cancelar) cancelar.addEventListener('click', async () => {

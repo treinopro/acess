@@ -214,9 +214,6 @@ async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPr
   const limiteCobrancas = modalidade === '12_meses' ? 12 : null;
   const hojeCobranca = new Date().toISOString().slice(0, 10);
   const inicioEfetivo = dataPrimeiraCobranca && dataPrimeiraCobranca > hojeCobranca ? dataPrimeiraCobranca : hojeCobranca;
-  const dataFimCobranca = modalidade === '12_meses'
-    ? `${somarMesesISO(inicioEfetivo, 11)}T23:59:59.000-03:00`
-    : null;
   const dataInicioMP = dataPrimeiraCobranca && dataPrimeiraCobranca > hojeCobranca
     ? `${dataPrimeiraCobranca}T00:00:00.000-03:00`
     : null;
@@ -228,7 +225,6 @@ async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPr
     referenciaExterna: id,
     urlRetorno: urlRetorno(baseUrl, id),
     dataInicio: dataInicioMP,
-    dataFim: dataFimCobranca,
   });
   if (!mp?.id) throw erro('Mercado Pago não devolveu o id da assinatura.', 502);
 
@@ -301,7 +297,7 @@ async function baixarParcela({ assinatura, paymentId, valorCentavos, metodo }) {
   if (ja.rows.length) return { duplicado: true };
 
   const aberta = await db.execute({
-    sql: `SELECT id, aluno_id, valor_centavos FROM cobrancas
+    sql: `SELECT id, aluno_id, valor_centavos, vencimento FROM cobrancas
           WHERE matricula_id = ? AND status IN ('pendente', 'atrasado')
           ORDER BY vencimento ASC, criado_em ASC LIMIT 1`,
     args: [assinatura.matricula_id],
@@ -356,13 +352,14 @@ async function baixarParcela({ assinatura, paymentId, valorCentavos, metodo }) {
 }
 
 async function registrarProximaCobranca(assinatura, cobrancaAtual) {
-  const atualizada = await db.execute({
+  await db.execute({
     sql: `UPDATE assinaturas_mp SET cobrancas_processadas = cobrancas_processadas + 1, atualizado_em = datetime('now') WHERE id = ?`,
     args: [assinatura.id],
   });
   const lida = await db.execute({ sql: 'SELECT * FROM assinaturas_mp WHERE id = ?', args: [assinatura.id] });
   const a = lida.rows[0];
   if (!a) return;
+  await db.execute({ sql: 'UPDATE matriculas SET renovacao_automatica = 0 WHERE id = ?', args: [a.matricula_id] });
   const quantidade = Number(a.cobrancas_processadas || 0);
   const limite = a.limite_cobrancas == null ? null : Number(a.limite_cobrancas);
   const hoje = new Date().toISOString().slice(0, 10);

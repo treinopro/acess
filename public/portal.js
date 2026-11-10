@@ -2070,18 +2070,26 @@ document.getElementById('btn-portal-cadastro-continuar').addEventListener('click
 
 async function carregarOfertaRecorrenciaNovoAluno(){
  const container=document.getElementById('oferta-recorrencia-novo-aluno');if(!container)return;
+ let opcoes=[];
+ try{const dados=await api('/api/portal/cadastro/recorrencia/planos');opcoes=Array.isArray(dados.opcoes)?dados.opcoes:[];}catch(e){/* Pix continua disponível mesmo se a lista não carregar. */}
+ const cards=opcoes.map((p,i)=>{
+  const mensal=formatarMoeda(p.valor_final_centavos);
+  const detalhe=p.limite_cobrancas?String(p.limite_cobrancas)+' parcelas de '+mensal+' no cartão':'Cobrança mensal contínua • Sem permanência mínima';
+  const desconto=p.desconto_centavos>0?'<small style="display:block;color:#64748b">De '+formatarMoeda(p.valor_centavos)+' por mês</small>':'';
+  const classe=i===0?'primario':'secundario';
+  return '<div style="background:#0f172a;border-radius:10px;padding:12px;margin:10px 0"><strong>'+escapeHtml(p.nome)+'</strong><div style="font-size:23px;font-weight:800;color:#10b981">'+mensal+'/mês</div>'+desconto+'<small>'+escapeHtml(detalhe)+'</small><button type="button" data-modalidade="'+escapeHtml(p.id)+'" data-rotulo="'+escapeHtml(p.nome)+'" class="botao-grande '+classe+'" style="margin-top:8px">Escolher '+escapeHtml(p.nome)+'</button></div>';
+ }).join('');
  container.innerHTML=`
   <div style="text-align:left"><div style="font-weight:800;color:#10b981">⚡ ESCOLHA COMO DESEJA PAGAR</div>
   <h3 style="margin:8px 0">Condição especial no cartão</h3>
   <p>Seu cadastro e sua matrícula foram registrados, mas ainda não ativados. Escolha uma opção:</p>
-  <div style="background:#0f172a;border-radius:10px;padding:12px;margin:10px 0"><strong>Compromisso de 12 meses</strong><div style="font-size:23px;font-weight:800;color:#10b981">R$ 65,00/mês</div><small>12 parcelas de R$ 65,00 no cartão</small><button type="button" data-modalidade="12_meses" class="botao-grande primario" style="margin-top:8px">Escolher 12 meses</button></div>
-  <div style="background:#0f172a;border-radius:10px;padding:12px;margin:10px 0"><strong>Mensal sem fidelidade</strong><div style="font-size:23px;font-weight:800;color:#60a5fa">R$ 70,00/mês</div><small>Sem permanência mínima</small><button type="button" data-modalidade="mensal_livre" class="botao-grande secundario" style="margin-top:8px">Escolher mensal livre</button></div>
+  ${cards||'<p>No momento não há modalidades de recorrência disponíveis.</p>'}
   <button type="button" data-escolher-pix class="botao-grande primario" style="width:100%;margin-top:12px">Continuar com Pix do plano escolhido</button>
   <small>Se sair agora, seu cadastro ficará salvo como pendente, sem cobrança nem ativação.</small><div class="erro-msg" data-erro-recorrencia></div></div>`;
  container.querySelectorAll('[data-modalidade]').forEach(btn=>btn.addEventListener('click',async()=>{
   const modalidade=btn.dataset.modalidade,botoes=Array.from(container.querySelectorAll('button'));botoes.forEach(b=>b.disabled=true);btn.textContent='Abrindo Mercado Pago…';
   try{const r=await api('/api/portal/cadastro/recorrencia',{method:'POST',body:JSON.stringify({cpf:cadastroPortalCpfAtual,senha:cadastroPortalSenhaAtual,matricula_id:cadastroPortalMatriculaId,modalidade})});if(!r.oferta_url)throw new Error('O Mercado Pago não retornou o endereço da oferta.');window.location.href=r.oferta_url;}
-  catch(err){container.querySelector('[data-erro-recorrencia]').textContent=err.message||'Não foi possível abrir a recorrência.';botoes.forEach(b=>b.disabled=false);btn.textContent=modalidade==='12_meses'?'Escolher 12 meses':'Escolher mensal livre';}
+  catch(err){container.querySelector('[data-erro-recorrencia]').textContent=err.message||'Não foi possível abrir a recorrência.';botoes.forEach(b=>b.disabled=false);btn.textContent='Escolher '+btn.dataset.rotulo;}
  }));
  container.querySelector('[data-escolher-pix]').addEventListener('click',async ev=>{
   const btn=ev.currentTarget;btn.disabled=true;btn.textContent='Gerando Pix…';
@@ -2093,7 +2101,7 @@ async function carregarOfertaRecorrenciaNovoAluno(){
    const alvo=document.getElementById('qrcode-cadastro-portal');alvo.innerHTML='';const copiar=document.getElementById('btn-copiar-pix-cadastro-portal');
    if(pix.qr_code_pix_imagem){const img=document.createElement('img');img.src='data:image/png;base64,'+pix.qr_code_pix_imagem;img.style.width='220px';img.style.height='220px';img.style.borderRadius='12px';alvo.appendChild(img);}
    else if(pix.qr_code_pix)new QRCode(alvo,{text:pix.qr_code_pix,width:220,height:220,colorDark:'#0f172a',colorLight:'#ffffff'});
-   if(pix.qr_code_pix){copiar.classList.remove('oculto');copiar.onclick=async()=>{try{await navigator.clipboard.writeText(pix.qr_code_pix);copiar.textContent='Código copiado!';setTimeout(()=>{copiar.textContent='Copiar código Pix';},2000);}catch{alert('Não foi possível copiar automaticamente. Código Pix:\n'+pix.qr_code_pix);}};}else copiar.classList.add('oculto');
+   if(pix.qr_code_pix){copiar.classList.remove('oculto');copiar.onclick=async()=>{try{await navigator.clipboard.writeText(pix.qr_code_pix);copiar.textContent='Código copiado!';setTimeout(()=>{copiar.textContent='Copiar código Pix';},2000);}catch{alert('Não foi possível copiar automaticamente. Código Pix:\\n'+pix.qr_code_pix);}};}else copiar.classList.add('oculto');
    iniciarPollCadastroPortal(pix.cobranca_id);
   }catch(err){btn.disabled=false;btn.textContent='Continuar com Pix do plano escolhido';container.querySelector('[data-erro-recorrencia]').textContent=err.message||'Não foi possível gerar o Pix.';}
  });

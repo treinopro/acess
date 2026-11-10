@@ -1187,7 +1187,7 @@ router.post('/assinatura', limitadorSenhaPortal, async (req, res, next) => {
   try {
     const { cpf, senha, modalidade } = z.object({
       cpf: z.string().min(1), senha: z.string().min(1),
-      modalidade: z.enum(['12_meses', 'mensal_livre']),
+      modalidade: z.string().min(1).max(40),
     }).parse(req.body);
     const autenticado = await autenticarAlunoPortal(cpf, senha);
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });

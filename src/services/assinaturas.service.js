@@ -339,7 +339,8 @@ async function baixarParcela({ assinatura, paymentId, valorCentavos, metodo }) {
   if (conta) {
     const valorConta = Number(conta.valor_centavos);
     const desconto = Number(assinatura.desconto_centavos || 0);
-    if (pago >= valorConta) baixa = 'baixada';
+    if (assinatura.modalidade && assinatura.modalidade !== 'legado' && pago === Number(assinatura.valor_centavos)) { baixa = 'baixada'; novoValorConta = pago; }
+    else if (pago >= valorConta) baixa = 'baixada';
     else if (desconto > 0 && pago === valorConta - desconto) { baixa = 'baixada'; novoValorConta = pago; }
     else baixa = 'valor_divergente';
   }
@@ -478,12 +479,17 @@ async function processarEvento({ type, dataId }) {
   if (type === 'subscription_preapproval') {
     const mp = await mercadopago.consultarAssinatura(dataId);
     if (mp?.id) {
+      const assinaturaAntes = await buscarPorPreapproval(mp.id);
       await atualizarStatus(mp.id, mp.status);
       if (mp.status === 'authorized') {
-        const assinatura = await buscarPorPreapproval(mp.id);
-        if (assinatura?.modalidade && assinatura.modalidade !== 'legado') {
-          await db.execute({ sql: 'UPDATE matriculas SET renovacao_automatica = 0 WHERE id = ?', args: [assinatura.matricula_id] });
+        if (assinaturaAntes?.modalidade && assinaturaAntes.modalidade !== 'legado') {
+          await db.execute({ sql: 'UPDATE matriculas SET renovacao_automatica = 0 WHERE id = ?', args: [assinaturaAntes.matricula_id] });
         }
+      } else if (mp.status === 'cancelled' && assinaturaAntes?.status === 'pending' && assinaturaAntes.cobranca_inicial_id && assinaturaAntes.valor_anterior_centavos != null) {
+        await db.execute({
+          sql: "UPDATE cobrancas SET valor_centavos = ?, status = ? WHERE id = ? AND status IN ('pendente','atrasado')",
+          args: [assinaturaAntes.valor_anterior_centavos, assinaturaAntes.status_anterior_cobranca || 'pendente', assinaturaAntes.cobranca_inicial_id],
+        });
       }
     }
     return null;

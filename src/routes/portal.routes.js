@@ -864,6 +864,8 @@ router.post('/cadastro/pix', limitadorSenhaPortal, async (req,res,next) => {
   const auth=await autenticarAlunoPortal(d.cpf,d.senha); if(auth.erro)return res.status(auth.status).json({erro:auth.erro});
   const q=await db.execute({sql:`SELECT c.*,p.nome AS plano_nome FROM cobrancas c JOIN matriculas m ON m.id=c.matricula_id JOIN planos p ON p.id=m.plano_id WHERE c.id=? AND c.aluno_id=? AND m.status='pendente'`,args:[d.cobranca_id,auth.aluno.id]});
   const c=q.rows[0]; if(!c||c.status!=='pendente')return res.status(404).json({erro:'Matrícula pendente não encontrada.'});
+  const assinaturaPendente=await db.execute({sql:"SELECT id FROM assinaturas_mp WHERE matricula_id=? AND status IN ('pending','authorized','paused') LIMIT 1",args:[c.matricula_id]});
+  if(assinaturaPendente.rows[0])return res.status(409).json({erro:'Já existe uma assinatura aguardando confirmação. Conclua ou cancele a etapa no Mercado Pago antes de escolher Pix.'});
   if(c.provedor_referencia){const o=await mercadopago.consultarOrder(c.provedor_referencia);const pm=o.transactions?.payments?.[0]?.payment_method||{};return res.json({cobranca_id:c.id,valor_centavos:c.valor_centavos,qr_code_pix:pm.qr_code||null,qr_code_pix_imagem:pm.qr_code_base64||null});}
   const teste=process.env.MERCADOPAGO_TEST_PAYER_EMAIL;
   const o=await mercadopago.criarOrderPix({descricao:c.descricao||`Matrícula - ${c.plano_nome}`,valorCentavos:Number(c.valor_centavos),referenciaExterna:c.id,email:teste||auth.aluno.email||`aluno-${String(auth.aluno.cpf).replace(/\\D/g,'')}@academia-gestao.com`,firstName:teste?'APRO':undefined});

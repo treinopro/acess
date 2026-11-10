@@ -394,6 +394,13 @@ async function registrarProximaCobranca(assinatura, cobrancaAtual) {
   const hoje = new Date().toISOString().slice(0, 10);
   const baseVencimento = String(cobrancaAtual.vencimento || hoje).slice(0, 10);
   let proximoVencimento = somarMesesISO(baseVencimento < hoje ? hoje : baseVencimento, 1);
+  // A assinatura substitui a geração automática tradicional de cobranças
+  // (renovacao_automatica fica desligada). Portanto, cada parcela aprovada
+  // precisa estender a validade da matrícula até o próximo vencimento.
+  await db.execute({
+    sql: 'UPDATE matriculas SET data_fim = ? WHERE id = ?',
+    args: [proximoVencimento, a.matricula_id],
+  });
   if (limite && quantidade >= limite) {
     await db.execute({
       sql: `UPDATE cobrancas SET status = 'cancelado' WHERE matricula_id = ? AND status IN ('pendente','atrasado') AND vencimento > ?`,

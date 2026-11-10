@@ -694,11 +694,15 @@ router.post('/webhook/mercadopago', limitadorWebhook, express.json(), async (req
 // O init_point é o link que o aluno abre para cadastrar o cartão no Mercado Pago.
 router.post('/assinaturas', autenticar, apenasAdmin, async (req, res, next) => {
   try {
-    const { matricula_id } = z.object({ matricula_id: z.string().min(1) }).parse(req.body);
-    res.status(201).json(await assinaturas.criarAssinatura({
-      matriculaId: matricula_id,
-      baseUrl: assinaturas.baseUrlDaRequisicao(req),
-    }));
+    const { matricula_id, modalidade } = z.object({ matricula_id: z.string().min(1), modalidade: z.string().min(1).max(40).optional() }).parse(req.body);
+    const baseUrl = assinaturas.baseUrlDaRequisicao(req);
+    if (modalidade) {
+      // Modalidade escolhida no painel (mesmas condições que o aluno vê no portal).
+      const m = (await db.execute({ sql: 'SELECT aluno_id FROM matriculas WHERE id = ?', args: [matricula_id] })).rows[0];
+      if (!m) return res.status(404).json({ erro: 'Matrícula não encontrada.' });
+      return res.status(201).json(await assinaturas.obterOuCriarParaAluno({ alunoId: m.aluno_id, baseUrl, modalidade }));
+    }
+    res.status(201).json(await assinaturas.criarAssinatura({ matriculaId: matricula_id, baseUrl }));
   } catch (err) {
     next(err);
   }

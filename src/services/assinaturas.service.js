@@ -900,10 +900,11 @@ async function disponibilidadeParaAluno({ alunoId, baseUrl }) {
   return {
     disponivel: true,
     plano_atual: m.plano_nome,
-    opcoes: [
-      { modalidade: '12_meses', titulo: 'Recorrência com compromisso de 12 meses', valor_centavos: 6500, limite_cobrancas: 12, total_centavos: 78000, descricao: '12 cobranças de R$ 65,00 (total de R$ 780,00).' },
-      { modalidade: 'mensal_livre', titulo: 'Mensal automático sem fidelidade', valor_centavos: 7000, limite_cobrancas: null, total_centavos: null, descricao: 'R$ 70,00 por mês, sem permanência mínima.' },
-    ],
+    opcoes: (await listarPlanosCadastroPublicos()).map((p) => ({
+      modalidade: p.id, titulo: p.nome, valor_centavos: p.valor_final_centavos, limite_cobrancas: p.limite_cobrancas,
+      total_centavos: p.limite_cobrancas ? p.valor_final_centavos * p.limite_cobrancas : null,
+      descricao: p.limite_cobrancas ? `${p.limite_cobrancas} cobranças mensais de ${formatarValorParaDescricao(p.valor_final_centavos)}.` : `${formatarValorParaDescricao(p.valor_final_centavos)} por mês, sem permanência mínima.`,
+    })),
     assinatura_pendente: existente ? { id: existente.id, modalidade: existente.modalidade } : null,
   };
 }
@@ -917,7 +918,7 @@ async function obterOuCriarParaAluno({ alunoId, baseUrl, modalidade }) {
   const m = await matriculaElegivel(alunoId);
   const pendente = await assinaturaAbertaDaMatricula(m.id);
   if (pendente && pendente.modalidade === modalidade) {
-    return { oferta_url: urlOferta(baseUrl, pendente.id) };
+    return { id: pendente.id, status: 'pending', oferta_url: urlOferta(baseUrl, pendente.id) };
   }
   if (pendente) await cancelar({ assinaturaId: pendente.id });
   const planoCadastro = await buscarPlanoCadastro(modalidade);
@@ -929,7 +930,7 @@ async function obterOuCriarParaAluno({ alunoId, baseUrl, modalidade }) {
       cobrancaInicialId: ciclo.cobrancaId, valorAnteriorCentavos: ciclo.valorAnteriorCentavos,
       statusAnteriorCobranca: ciclo.statusAnteriorCobranca, cobrancaInicialCriada: ciclo.cobrancaCriada,
     });
-    return { oferta_url: criada.oferta_url };
+    return criada;
   } catch (err) {
     if (ciclo.cobrancaCriada) {
       await db.execute({ sql: `UPDATE cobrancas SET status = 'cancelado' WHERE id = ? AND status = 'pendente'`, args: [ciclo.cobrancaId] });

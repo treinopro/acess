@@ -1172,11 +1172,15 @@ router.get('/assinatura', limitadorSenhaPortal, async (req, res, next) => {
 
 router.post('/assinatura', limitadorSenhaPortal, async (req, res, next) => {
   try {
-    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(req.body);
+    const { cpf, senha, modalidade } = z.object({
+      cpf: z.string().min(1), senha: z.string().min(1),
+      modalidade: z.enum(['12_meses', 'mensal_livre']),
+    }).parse(req.body);
     const autenticado = await autenticarAlunoPortal(cpf, senha);
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
     res.json(await assinaturas.obterOuCriarParaAluno({
       alunoId: autenticado.aluno.id,
+      modalidade,
       baseUrl: assinaturas.baseUrlDaRequisicao(req),
     }));
   } catch (err) {

@@ -267,7 +267,7 @@ async function cancelar({ assinaturaId }) {
   const r = await db.execute({ sql: 'SELECT * FROM assinaturas_mp WHERE id = ?', args: [assinaturaId] });
   const a = r.rows[0];
   if (!a) throw erro('Assinatura não encontrada.', 404);
-  if (a.status === 'cancelled') return { id: a.id, status: 'cancelled' };
+  if (a.status === 'cancelled' || a.status === 'completed') return { id: a.id, status: a.status };
   await mercadopago.cancelarAssinatura(a.preapproval_id);
   await atualizarStatus(a.preapproval_id, 'cancelled');
   return { id: a.id, status: 'cancelled' };
@@ -277,8 +277,8 @@ async function atualizarStatus(preapprovalId, status) {
   const permitido = ['pending', 'authorized', 'paused', 'cancelled', 'completed'];
   if (!permitido.includes(status)) return;
   await db.execute({
-    sql: `UPDATE assinaturas_mp SET status = ?, atualizado_em = datetime('now') WHERE preapproval_id = ?`,
-    args: [status, String(preapprovalId)],
+    sql: `UPDATE assinaturas_mp SET status = ?, atualizado_em = datetime('now') WHERE preapproval_id = ? AND (status != 'completed' OR ? = 'completed')`,
+    args: [status, String(preapprovalId), status],
   });
 }
 
@@ -365,6 +365,9 @@ async function registrarProximaCobranca(assinatura, cobrancaAtual) {
   if (!a) return;
   const quantidade = Number(a.cobrancas_processadas || 0);
   const limite = a.limite_cobrancas == null ? null : Number(a.limite_cobrancas);
+  const hoje = new Date().toISOString().slice(0, 10);
+  const baseVencimento = String(cobrancaAtual.vencimento || hoje).slice(0, 10);
+  const proximoVencimento = somarMesesISO(baseVencimento < hoje ? hoje : baseVencimento, 1);
   if (limite && quantidade >= limite) {
     // Fecha a assinatura limitada após a 12ª cobrança aprovada.
     try { await mercadopago.cancelarAssinatura(a.preapproval_id); }
@@ -375,13 +378,10 @@ async function registrarProximaCobranca(assinatura, cobrancaAtual) {
     });
     await db.execute({
       sql: `UPDATE matriculas SET data_fim = ?, renovacao_automatica = 0 WHERE id = ?`,
-      args: [cobrancaAtual.vencimento, a.matricula_id],
+      args: [proximoVencimento, a.matricula_id],
     });
     return;
   }
-  const hoje = new Date().toISOString().slice(0, 10);
-  const baseVencimento = String(cobrancaAtual.vencimento || hoje).slice(0, 10);
-  const proximoVencimento = somarMesesISO(baseVencimento < hoje ? hoje : baseVencimento, 1);
   const descricao = a.modalidade === '12_meses' ? 'Recorrência 12 meses - R$ 65,00' : 'Recorrência mensal - R$ 70,00';
   await db.execute({
     sql: `INSERT OR IGNORE INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento)
@@ -529,7 +529,7 @@ async function ofertaPublica(id) {
     aluno: primeiroNome(o.aluno_nome),
     plano: o.plano_nome,
     status: o.status,
-    init_point: o.status === 'cancelled' ? null : o.init_point,
+    init_point: ['cancelled', 'completed'].includes(o.status) ? null : o.init_point,
     frequencia_meses: Number(o.frequencia_meses),
     modalidade: o.modalidade || 'legado',
     limite_cobrancas: o.limite_cobrancas == null ? null : Number(o.limite_cobrancas),
@@ -550,7 +550,9 @@ async function matriculaElegivel(alunoId) {
     sql: `SELECT m.id, m.data_inicio, p.nome AS plano_nome, p.valor_centavos
           FROM matriculas m JOIN planos p ON p.id = m.plano_id
           WHERE m.aluno_id = ? AND m.status = 'ativa'
+            AND (m.data_fim IS NULL OR m.data_fim >= date('now'))
             AND p.tipo IN (${TIPOS_RECORRENTES.map(() => '?').join(', ')})
+            AND NOT EXISTS (SELECT 1 FROM assinaturas_mp s WHERE s.matricula_id = m.id AND s.status = 'completed')
           ORDER BY m.data_inicio DESC LIMIT 1`,
     args: [alunoId, ...TIPOS_RECORRENTES],
   });

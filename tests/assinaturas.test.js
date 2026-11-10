@@ -475,3 +475,41 @@ test('pagamento recorrente estende a validade da matrícula até o próximo venc
   })).rows[0];
   assert.strictEqual(matricula.data_fim, proximoEsperado);
 });
+
+
+test('modalidade configurável: aplica desconto e congela preço e quantidade no contrato', async () => {
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('novo-config', 'Aluno Config', 'config@teste.com', '11100099988')` });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-config', 'novo-config', 'p1', '2026-11-10', 'pendente')` });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-config', 'novo-config', 'm-config', 9900, 'pendente', 'mercadopago', 'Matrícula - Mensal', '2026-11-10')` });
+
+  const planos = [{
+    id: 'trimestral_promocional', nome: 'Trimestral promocional', valor_centavos: 6000,
+    limite_cobrancas: 3, ativo: true,
+    desconto: { ativo: true, tipo: 'percentual', percentual: 10, valor_centavos: 0 },
+  }];
+  await assinaturas.salvarPlanosCadastro(planos);
+  const opcoes = await assinaturas.listarPlanosCadastroPublicos();
+  assert.strictEqual(opcoes.length, 1);
+  assert.strictEqual(opcoes[0].valor_final_centavos, 5400);
+  assert.strictEqual(opcoes[0].limite_cobrancas, 3);
+
+  await assinaturas.obterOuCriarParaNovoCadastro({
+    alunoId: 'novo-config', matriculaId: 'm-config', baseUrl: 'https://academia.test', modalidade: 'trimestral_promocional',
+  });
+  let contrato = (await db.execute({ sql: `SELECT valor_centavos, valor_cheio_centavos, desconto_centavos, limite_cobrancas FROM assinaturas_mp WHERE matricula_id='m-config'` })).rows[0];
+  assert.strictEqual(contrato.valor_centavos, 5400);
+  assert.strictEqual(contrato.valor_cheio_centavos, 6000);
+  assert.strictEqual(contrato.desconto_centavos, 600);
+  assert.strictEqual(contrato.limite_cobrancas, 3);
+
+  // Reajustar a oferta só altera novos contratos.
+  await assinaturas.salvarPlanosCadastro([{
+    ...planos[0], valor_centavos: 8000, limite_cobrancas: 6,
+    desconto: { ativo: false, tipo: 'percentual', percentual: 0, valor_centavos: 0 },
+  }]);
+  contrato = (await db.execute({ sql: `SELECT valor_centavos, valor_cheio_centavos, desconto_centavos, limite_cobrancas FROM assinaturas_mp WHERE matricula_id='m-config'` })).rows[0];
+  assert.strictEqual(contrato.valor_centavos, 5400);
+  assert.strictEqual(contrato.valor_cheio_centavos, 6000);
+  assert.strictEqual(contrato.desconto_centavos, 600);
+  assert.strictEqual(contrato.limite_cobrancas, 3);
+});

@@ -233,7 +233,7 @@ test('cadastro novo: recorrência deixa matrícula pendente até a primeira parc
   assert.strictEqual(matricula.status, 'pendente');
   let cobranca = (await db.execute({ sql: `SELECT valor_centavos, provedor, status FROM cobrancas WHERE id='c-novo-rec'` })).rows[0];
   assert.strictEqual(cobranca.valor_centavos, 6500);
-  assert.strictEqual(cobranca.provedor, 'recorrencia');
+  assert.strictEqual(cobranca.provedor, 'mercadopago');
   assert.strictEqual(cobranca.status, 'pendente');
 
   const [, payload] = chamadas.filter((c) => c[0] === 'criar').pop();
@@ -246,6 +246,22 @@ test('cadastro novo: recorrência deixa matrícula pendente até a primeira parc
   assert.strictEqual(matricula.status, 'ativa');
   cobranca = (await db.execute({ sql: `SELECT status FROM cobrancas WHERE id='c-novo-rec'` })).rows[0];
   assert.strictEqual(cobranca.status, 'pago');
+});
+
+test('cadastro novo: cancelar checkout recorrente restaura o valor tradicional', async () => {
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('novo-cancel', 'Aluno Cancel', 'cancel@teste.com', '99988877755')` });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-novo-cancel', 'novo-cancel', 'p1', '2026-11-10', 'pendente')` });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-novo-cancel', 'novo-cancel', 'm-novo-cancel', 9900, 'pendente', 'mercadopago', 'Matrícula - Mensal', '2026-11-20')` });
+  const criada = await assinaturas.obterOuCriarParaNovoCadastro({ alunoId:'novo-cancel', matriculaId:'m-novo-cancel', baseUrl:'https://academia.test', modalidade:'mensal_livre' });
+  const id = (await db.execute({ sql:`SELECT id FROM assinaturas_mp WHERE matricula_id='m-novo-cancel'` })).rows[0].id;
+  await assinaturas.cancelar({ assinaturaId:id });
+  const c = (await db.execute({ sql:`SELECT valor_centavos, status, provedor, vencimento FROM cobrancas WHERE id='c-novo-cancel'` })).rows[0];
+  assert.strictEqual(c.valor_centavos,9900);
+  assert.strictEqual(c.status,'pendente');
+  assert.strictEqual(c.provedor,'mercadopago');
+  assert.strictEqual(c.vencimento,'2026-11-20');
+  const m = (await db.execute({ sql:`SELECT status FROM matriculas WHERE id='m-novo-cancel'` })).rows[0];
+  assert.strictEqual(m.status,'pendente');
 });
 
 test('portal: plano avulso e recurso desligado não mostram o card', async () => {

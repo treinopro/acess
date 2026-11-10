@@ -786,6 +786,9 @@ CREATE TABLE IF NOT EXISTS assinaturas_mp (
   limite_cobrancas INTEGER, -- NULL = assinatura contínua
   cobrancas_processadas INTEGER NOT NULL DEFAULT 0,
   data_primeira_cobranca TEXT,
+  cobranca_inicial_id TEXT,
+  valor_anterior_centavos INTEGER,
+  cobranca_inicial_criada INTEGER NOT NULL DEFAULT 0,
   init_point TEXT,
   criado_em TEXT NOT NULL DEFAULT (datetime('now')),
   atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))

@@ -504,7 +504,26 @@ async function ofertaPublica(id) {
   const o = r.rows[0];
   if (!o) return null;
   const desconto = Number(o.desconto_centavos || 0);
+  const faqModalidade = o.modalidade === '12_meses'
+    ? [
+      { p: 'Qual é o compromisso?', r: 'São 12 cobranças mensais de R$ 65,00, totalizando R$ 780,00. As condições de cancelamento antecipado seguem o contrato.' },
+      { p: 'A academia guarda os dados do cartão?', r: 'Não. O cartão é cadastrado diretamente no Mercado Pago.' },
+      { p: 'E se o cartão for recusado?', r: 'O Mercado Pago poderá tentar processar novamente. A situação da cobrança será atualizada após a confirmação.' },
+    ]
+    : o.modalidade === 'mensal_livre'
+      ? [
+        { p: 'Tem fidelidade?', r: 'Não. É uma cobrança mensal de R$ 70,00, sem permanência mínima. O cancelamento deve ser solicitado antes da próxima cobrança, conforme o contrato.' },
+        { p: 'A academia guarda os dados do cartão?', r: 'Não. O cartão é cadastrado diretamente no Mercado Pago.' },
+        { p: 'E se o cartão for recusado?', r: 'O Mercado Pago poderá tentar processar novamente. A situação da cobrança será atualizada após a confirmação.' },
+      ]
+      : oferta.faq;
   return montarOferta(base, oferta, {
+    subtitulo: o.modalidade === '12_meses'
+      ? 'Pagamento automático de R$ 65,00 por mês, durante 12 cobranças. Total contratado: R$ 780,00.'
+      : o.modalidade === 'mensal_livre'
+        ? 'Pagamento automático de R$ 70,00 por mês, sem compromisso de permanência mínima.'
+        : oferta.subtitulo,
+    faq: faqModalidade,
     aluno: primeiroNome(o.aluno_nome),
     plano: o.plano_nome,
     status: o.status,

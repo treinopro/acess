@@ -265,7 +265,23 @@ async function cancelar({ assinaturaId }) {
   if (a.status === 'cancelled' || a.status === 'completed') return { id: a.id, status: a.status };
   await mercadopago.cancelarAssinatura(a.preapproval_id);
   await atualizarStatus(a.preapproval_id, 'cancelled');
-  return { id: a.id, status: 'cancelled' };
+  const ultimaPaga = await db.execute({
+    sql: `SELECT vencimento FROM cobrancas WHERE matricula_id = ? AND status = 'pago' ORDER BY vencimento DESC, pago_em DESC LIMIT 1`,
+    args: [a.matricula_id],
+  });
+  const hoje = new Date().toISOString().slice(0, 10);
+  const fimAcesso = ultimaPaga.rows[0]?.vencimento
+    ? somarMesesISO(String(ultimaPaga.rows[0].vencimento), 1)
+    : hoje;
+  await db.execute({
+    sql: `UPDATE matriculas SET data_fim = ?, renovacao_automatica = 0 WHERE id = ?`,
+    args: [fimAcesso, a.matricula_id],
+  });
+  await db.execute({
+    sql: `UPDATE cobrancas SET status = 'cancelado' WHERE matricula_id = ? AND status IN ('pendente', 'atrasado')`,
+    args: [a.matricula_id],
+  });
+  return { id: a.id, status: 'cancelled', acesso_ate: fimAcesso };
 }
 
 async function atualizarStatus(preapprovalId, status) {

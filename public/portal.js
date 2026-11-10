@@ -95,30 +95,47 @@ async function carregarCardAssinaturaHub() {
   try {
     const d = await api(`/api/portal/assinatura?cpf=${encodeURIComponent(cpfHubAtual)}&senha=${encodeURIComponent(senhaHubAtual)}`);
     if (!d.disponivel) return;
+    const opcoes = Array.isArray(d.opcoes) ? d.opcoes : [];
+    if (!opcoes.length) return;
     container.innerHTML = `
       <div class="cartao" style="text-align:left;background:linear-gradient(135deg,#0f172a,#1d4ed8);color:#fff;border:0;box-shadow:0 10px 30px rgba(29,78,216,.35)">
-        <div style="display:inline-block;background:rgba(250,204,21,.18);color:#facc15;border:1px solid rgba(250,204,21,.5);border-radius:999px;padding:4px 10px;font-size:11px;font-weight:800;letter-spacing:.06em">⚡ OFERTA PARA VOCÊ</div>
-        <h3 style="margin:10px 0 4px;color:#fff;font-size:20px">Deixe a mensalidade no automático</h3>
-        <p style="margin:0 0 12px;color:#dbeafe">Sem vencimento pra lembrar, sem fila no totem. ${escapeHtml(d.plano)}${d.desconto_centavos > 0
-          ? ` de <s>${formatarMoeda(d.valor_cheio_centavos)}</s> por <strong style="color:#facc15">${formatarMoeda(d.valor_centavos)}</strong> — você economiza ${formatarMoeda(d.desconto_centavos)} a cada cobrança`
-          : ` por ${formatarMoeda(d.valor_centavos)}`}, cobrado sozinho no cartão.</p>
-        <button type="button" id="btn-assinar-automatico" style="width:100%;border:0;border-radius:12px;padding:14px;font-size:16px;font-weight:900;color:#052e16;background:linear-gradient(180deg,#4ade80,#22c55e);box-shadow:0 6px 20px rgba(34,197,94,.45);cursor:pointer">Quero o pagamento automático →</button>
+        <div style="display:inline-block;background:rgba(250,204,21,.18);color:#facc15;border:1px solid rgba(250,204,21,.5);border-radius:999px;padding:4px 10px;font-size:11px;font-weight:800;letter-spacing:.06em">⚡ PAGAMENTO AUTOMÁTICO</div>
+        <h3 style="margin:10px 0 4px;color:#fff;font-size:20px">Escolha como prefere pagar</h3>
+        <p style="margin:0 0 14px;color:#dbeafe">A cobrança acontece automaticamente no cartão, sem comprometer o limite total com o valor de vários meses.</p>
+        <div style="display:grid;gap:12px">
+          <div style="background:#fff;color:#0f172a;border-radius:12px;padding:14px">
+            <strong style="font-size:16px">12 meses de compromisso</strong>
+            <div style="font-size:27px;font-weight:900;margin:4px 0;color:#166534">R$ 65,00/mês</div>
+            <div style="font-size:13px;color:#475569">12 cobranças • Total de R$ 780,00</div>
+            <button type="button" data-modalidade="12_meses" style="width:100%;margin-top:12px;border:0;border-radius:9px;padding:12px;font-size:15px;font-weight:800;color:#fff;background:#15803d;cursor:pointer">Escolher plano de 12 meses</button>
+          </div>
+          <div style="background:#fff;color:#0f172a;border-radius:12px;padding:14px">
+            <strong style="font-size:16px">Mensal sem fidelidade</strong>
+            <div style="font-size:27px;font-weight:900;margin:4px 0;color:#1d4ed8">R$ 70,00/mês</div>
+            <div style="font-size:13px;color:#475569">Cobrança mensal contínua • Sem permanência mínima</div>
+            <button type="button" data-modalidade="mensal_livre" style="width:100%;margin-top:12px;border:0;border-radius:9px;padding:12px;font-size:15px;font-weight:800;color:#fff;background:#1d4ed8;cursor:pointer">Escolher mensal sem fidelidade</button>
+          </div>
+        </div>
+        <p style="font-size:11px;color:#dbeafe;margin:12px 0 0">O cartão é cadastrado diretamente no Mercado Pago. Consulte as condições contratuais antes de confirmar.</p>
       </div>`;
-    document.getElementById('btn-assinar-automatico').addEventListener('click', async (ev) => {
-      const btn = ev.currentTarget;
-      btn.disabled = true;
-      btn.textContent = 'Abrindo…';
-      try {
-        const r = await api('/api/portal/assinatura', {
-          method: 'POST',
-          body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual }),
-        });
-        window.location.href = r.oferta_url;
-      } catch (err) {
-        btn.disabled = false;
-        btn.textContent = 'Quero o pagamento automático →';
-        alert(err.message || 'Não foi possível abrir agora. Tente de novo em instantes.');
-      }
+    container.querySelectorAll('[data-modalidade]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const modalidade = btn.getAttribute('data-modalidade');
+        const botoes = Array.from(container.querySelectorAll('[data-modalidade]'));
+        botoes.forEach((b) => { b.disabled = true; b.textContent = 'Abrindo…'; });
+        try {
+          const r = await api('/api/portal/assinatura', {
+            method: 'POST',
+            body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, modalidade }),
+          });
+          window.location.href = r.oferta_url;
+        } catch (err) {
+          botoes.forEach((b) => { b.disabled = false; });
+          const escolhido = botoes.find((b) => b.getAttribute('data-modalidade') === modalidade);
+          if (escolhido) escolhido.textContent = modalidade === '12_meses' ? 'Escolher plano de 12 meses' : 'Escolher mensal sem fidelidade';
+          alert(err.message || 'Não foi possível abrir agora. Tente novamente em instantes.');
+        }
+      });
     });
   } catch {
     // Não é crítico: sem card, o resto do hub segue normal.

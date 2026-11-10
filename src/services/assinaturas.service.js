@@ -212,10 +212,12 @@ async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPr
   const id = uuid();
   const frequenciaMeses = modalidade ? 1 : MESES_POR_TIPO[m.tipo];
   const limiteCobrancas = modalidade === '12_meses' ? 12 : null;
-  const dataFimCobranca = modalidade === '12_meses' && dataPrimeiraCobranca
-    ? `${somarMesesISO(dataPrimeiraCobranca, 11)}T23:59:59.000-03:00`
+  const hojeCobranca = new Date().toISOString().slice(0, 10);
+  const inicioEfetivo = dataPrimeiraCobranca && dataPrimeiraCobranca > hojeCobranca ? dataPrimeiraCobranca : hojeCobranca;
+  const dataFimCobranca = modalidade === '12_meses'
+    ? `${somarMesesISO(inicioEfetivo, 11)}T23:59:59.000-03:00`
     : null;
-  const dataInicioMP = dataPrimeiraCobranca && dataPrimeiraCobranca > new Date().toISOString().slice(0, 10)
+  const dataInicioMP = dataPrimeiraCobranca && dataPrimeiraCobranca > hojeCobranca
     ? `${dataPrimeiraCobranca}T00:00:00.000-03:00`
     : null;
   const mp = await mercadopago.criarAssinaturaPendente({
@@ -375,7 +377,9 @@ async function registrarProximaCobranca(assinatura, cobrancaAtual) {
     });
     return;
   }
-  const proximoVencimento = somarMesesISO(String(cobrancaAtual.vencimento), 1);
+  const hoje = new Date().toISOString().slice(0, 10);
+  const baseVencimento = String(cobrancaAtual.vencimento || hoje).slice(0, 10);
+  const proximoVencimento = somarMesesISO(baseVencimento < hoje ? hoje : baseVencimento, 1);
   const descricao = a.modalidade === '12_meses' ? 'Recorrência 12 meses - R$ 65,00' : 'Recorrência mensal - R$ 70,00';
   await db.execute({
     sql: `INSERT OR IGNORE INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento)
@@ -488,7 +492,7 @@ async function ofertaPublica(id) {
   }
 
   const r = await db.execute({
-    sql: `SELECT s.status, s.valor_centavos, s.valor_cheio_centavos, s.desconto_centavos, s.frequencia_meses, s.init_point,
+    sql: `SELECT s.status, s.valor_centavos, s.valor_cheio_centavos, s.desconto_centavos, s.frequencia_meses, s.modalidade, s.limite_cobrancas, s.cobrancas_processadas, s.data_primeira_cobranca, s.init_point,
                  a.nome AS aluno_nome, p.nome AS plano_nome
           FROM assinaturas_mp s
           JOIN alunos a ON a.id = s.aluno_id
@@ -506,6 +510,10 @@ async function ofertaPublica(id) {
     status: o.status,
     init_point: o.status === 'cancelled' ? null : o.init_point,
     frequencia_meses: Number(o.frequencia_meses),
+    modalidade: o.modalidade || 'legado',
+    limite_cobrancas: o.limite_cobrancas == null ? null : Number(o.limite_cobrancas),
+    cobrancas_processadas: Number(o.cobrancas_processadas || 0),
+    total_contratado_centavos: o.limite_cobrancas == null ? null : Number(o.valor_centavos) * Number(o.limite_cobrancas),
     valor_centavos: Number(o.valor_centavos),
     desconto_centavos: desconto,
     // Assinaturas antigas (sem valor cheio gravado) não exibem "de/por".
@@ -580,7 +588,7 @@ async function prepararCobrancaInicial({ matricula, valorCentavos, modalidade })
 
 async function assinaturaAbertaDaMatricula(matriculaId) {
   const r = await db.execute({
-    sql: `SELECT id, status, valor_centavos FROM assinaturas_mp WHERE matricula_id = ? AND status IN ('pending', 'authorized', 'paused')
+    sql: `SELECT id, status, valor_centavos, modalidade FROM assinaturas_mp WHERE matricula_id = ? AND status IN ('pending', 'authorized', 'paused')
           ORDER BY criado_em DESC LIMIT 1`,
     args: [matriculaId],
   });

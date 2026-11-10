@@ -245,7 +245,7 @@ function formatarValorParaDescricao(centavos) {
 
 // ── Criar / listar / cancelar ───────────────────────────────────────────────
 
-async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPrimeiraCobranca = null, cobrancaInicialId = null, valorAnteriorCentavos = null, statusAnteriorCobranca = null, cobrancaInicialCriada = false, permitirMatriculaPendente = false }) {
+async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPrimeiraCobranca = null, cobrancaInicialId = null, valorAnteriorCentavos = null, statusAnteriorCobranca = null, vencimentoAnterior = null, cobrancaInicialCriada = false, permitirMatriculaPendente = false }) {
   if (!habilitado()) throw erro('Assinaturas do Mercado Pago estão desligadas (MERCADOPAGO_ASSINATURAS).', 503);
 
   const r = await db.execute({
@@ -299,9 +299,9 @@ async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPr
   if (!mp?.id) throw erro('Mercado Pago não devolveu o id da assinatura.', 502);
 
   await db.execute({
-    sql: `INSERT INTO assinaturas_mp (id, matricula_id, aluno_id, preapproval_id, status, valor_centavos, valor_cheio_centavos, desconto_centavos, frequencia_meses, modalidade, limite_cobrancas, cobrancas_processadas, data_primeira_cobranca, cobranca_inicial_id, valor_anterior_centavos, status_anterior_cobranca, cobranca_inicial_criada, init_point)
-          VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
-    args: [id, matriculaId, m.aluno_id, String(mp.id), preco.valor_centavos, preco.valor_cheio_centavos, preco.desconto_centavos, frequenciaMeses, modalidade || 'legado', limiteCobrancas, dataPrimeiraCobranca, cobrancaInicialId, valorAnteriorCentavos, statusAnteriorCobranca, cobrancaInicialCriada ? 1 : 0, mp.init_point || null],
+    sql: `INSERT INTO assinaturas_mp (id, matricula_id, aluno_id, preapproval_id, status, valor_centavos, valor_cheio_centavos, desconto_centavos, frequencia_meses, modalidade, limite_cobrancas, cobrancas_processadas, data_primeira_cobranca, cobranca_inicial_id, valor_anterior_centavos, status_anterior_cobranca, vencimento_anterior, cobranca_inicial_criada, init_point)
+          VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [id, matriculaId, m.aluno_id, String(mp.id), preco.valor_centavos, preco.valor_cheio_centavos, preco.desconto_centavos, frequenciaMeses, modalidade || 'legado', limiteCobrancas, dataPrimeiraCobranca, cobrancaInicialId, valorAnteriorCentavos, statusAnteriorCobranca, vencimentoAnterior, cobrancaInicialCriada ? 1 : 0, mp.init_point || null],
   });
 
   const oUrl = urlOferta(baseUrl, id);
@@ -328,7 +328,35 @@ async function listar({ matriculaId }) {
   return r.rows;
 }
 
-async function cancelar({ assinaturaId }) {
+// Devolve a cobrança do cadastro ao estado de antes do checkout (valor, status e
+// vencimento originais — regra normal 10/20). Usado em cancelamento, recusa e expiração.
+async function restaurarCobrancaInicial(a) {
+  if (!a?.cobranca_inicial_id) return;
+  if (Number(a.cobranca_inicial_criada) === 1) {
+    await db.execute({ sql: `UPDATE cobrancas SET status = 'cancelado' WHERE id = ? AND status IN ('pendente','atrasado')`, args: [a.cobranca_inicial_id] });
+    return;
+  }
+  if (a.valor_anterior_centavos == null) return;
+  await db.execute({
+    sql: `UPDATE cobrancas SET valor_centavos = ?, status = ?, vencimento = COALESCE(?, vencimento)
+          WHERE id = ? AND status IN ('pendente','atrasado')`,
+    args: [a.valor_anterior_centavos, a.status_anterior_cobranca || 'pendente', a.vencimento_anterior || null, a.cobranca_inicial_id],
+  });
+}
+
+// Recorrência encerrada com a matrícula seguindo: volta a valer a regra normal
+// (renovação automática do sistema, vencimentos dia 10/20, pagamento Pix/balcão).
+// Apaga só as contas em aberto criadas pela assinatura (provedor 'assinatura_mp');
+// as pagas ficam no histórico e o gerador normal retoma a partir da última paga.
+async function reverterParaPlanoNormal(a) {
+  await db.execute({
+    sql: `DELETE FROM cobrancas WHERE matricula_id = ? AND provedor = 'assinatura_mp' AND status IN ('pendente','atrasado')`,
+    args: [a.matricula_id],
+  });
+  await db.execute({ sql: `UPDATE matriculas SET renovacao_automatica = 1 WHERE id = ? AND status = 'ativa'`, args: [a.matricula_id] });
+}
+
+async function cancelar({ assinaturaId, encerrarMatricula = false }) {
   if (!habilitado()) throw erro('Assinaturas do Mercado Pago estão desligadas (MERCADOPAGO_ASSINATURAS).', 503);
   const r = await db.execute({ sql: 'SELECT * FROM assinaturas_mp WHERE id = ?', args: [assinaturaId] });
   const a = r.rows[0];
@@ -338,17 +366,14 @@ async function cancelar({ assinaturaId }) {
   await atualizarStatus(a.preapproval_id, 'cancelled');
   // Checkout pendente ainda não migrou a matrícula nem encerrou a modalidade atual.
   if (a.status === 'pending') {
-    if (a.cobranca_inicial_id) {
-      if (Number(a.cobranca_inicial_criada) === 1) {
-        await db.execute({ sql: `UPDATE cobrancas SET status = 'cancelado' WHERE id = ? AND status IN ('pendente','atrasado')`, args: [a.cobranca_inicial_id] });
-      } else if (a.valor_anterior_centavos != null) {
-        await db.execute({
-          sql: 'UPDATE cobrancas SET valor_centavos = ?, status = ? WHERE id = ? AND status IN (\'pendente\',\'atrasado\')',
-          args: [a.valor_anterior_centavos, a.status_anterior_cobranca || 'pendente', a.cobranca_inicial_id],
-        });
-      }
-    }
+    await restaurarCobrancaInicial(a);
     return { id: a.id, status: 'cancelled' };
+  }
+  // Recorrência de novo cadastro: cancelar = voltar ao plano normal (a matrícula segue
+  // ativa pela regra de hoje). Só encerra o acesso se pedirem explicitamente.
+  if (a.modalidade && a.modalidade !== 'legado' && !encerrarMatricula) {
+    await reverterParaPlanoNormal(a);
+    return { id: a.id, status: 'cancelled', voltou_plano_normal: true };
   }
   const ultimaPaga = await db.execute({
     sql: `SELECT vencimento FROM cobrancas WHERE matricula_id = ? AND status = 'pago' ORDER BY vencimento DESC, pago_em DESC LIMIT 1`,
@@ -482,13 +507,14 @@ async function registrarProximaCobranca(assinatura, cobrancaAtual) {
       sql: `UPDATE cobrancas SET status = 'cancelado' WHERE matricula_id = ? AND status IN ('pendente','atrasado') AND vencimento > ?`,
       args: [a.matricula_id, baseVencimento],
     });
-    // Fecha a assinatura limitada após a 12ª cobrança aprovada.
-    try { await mercadopago.cancelarAssinatura(a.preapproval_id); }
-    catch (err) { console.error('[assinaturas] não foi possível encerrar no Mercado Pago após o último ciclo:', err.message); }
+    // Fecha a assinatura limitada após a última cobrança aprovada. Marca 'completed' ANTES
+    // de cancelar no MP, para o webhook de cancelamento não tratar como cancelamento do aluno.
     await db.execute({
       sql: `UPDATE assinaturas_mp SET status = 'completed', atualizado_em = datetime('now') WHERE id = ?`,
       args: [a.id],
     });
+    try { await mercadopago.cancelarAssinatura(a.preapproval_id); }
+    catch (err) { console.error('[assinaturas] não foi possível encerrar no Mercado Pago após o último ciclo:', err.message); }
     await db.execute({
       sql: `UPDATE matriculas SET data_fim = ?, renovacao_automatica = 0 WHERE id = ?`,
       args: [proximoVencimento, a.matricula_id],
@@ -519,14 +545,14 @@ async function registrarProximaCobranca(assinatura, cobrancaAtual) {
   if (proximaExistente.rows[0]) {
     if (proximaExistente.rows[0].status !== 'pago') {
       await db.execute({
-        sql: `UPDATE cobrancas SET aluno_id = ?, valor_centavos = ?, status = 'pendente', provedor = 'recorrencia', descricao = ?, pago_em = NULL, metodo_pagamento = NULL WHERE id = ?`,
+        sql: `UPDATE cobrancas SET aluno_id = ?, valor_centavos = ?, status = 'pendente', provedor = 'assinatura_mp', descricao = ?, pago_em = NULL, metodo_pagamento = NULL WHERE id = ?`,
         args: [a.aluno_id, a.valor_centavos, descricao, proximaExistente.rows[0].id],
       });
     }
   } else {
     await db.execute({
       sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento)
-            VALUES (?, ?, ?, ?, 'pendente', 'recorrencia', ?, ?)`,
+            VALUES (?, ?, ?, ?, 'pendente', 'assinatura_mp', ?, ?)`,
       args: [uuid(), a.aluno_id, a.matricula_id, a.valor_centavos, descricao, proximoVencimento],
     });
   }
@@ -558,12 +584,7 @@ async function expirarCheckoutsAbandonados({ horas = 48 } = {}) {
       else {
         // Já cancelada no MP: só restaura a cobrança original (status local ainda era pending).
         const x = (await db.execute({ sql: 'SELECT * FROM assinaturas_mp WHERE id = ?', args: [a.id] })).rows[0];
-        if (x?.cobranca_inicial_id && x.valor_anterior_centavos != null) {
-          await db.execute({
-            sql: "UPDATE cobrancas SET valor_centavos = ?, status = ? WHERE id = ? AND status IN ('pendente','atrasado')",
-            args: [x.valor_anterior_centavos, x.status_anterior_cobranca || 'pendente', x.cobranca_inicial_id],
-          });
-        }
+        await restaurarCobrancaInicial(x);
       }
     } catch (err) {
       console.error('[assinaturas] falha ao expirar checkout', a.id, err.message);
@@ -634,11 +655,11 @@ async function processarEvento({ type, dataId }) {
         if (assinaturaAntes?.modalidade && assinaturaAntes.modalidade !== 'legado') {
           await db.execute({ sql: 'UPDATE matriculas SET renovacao_automatica = 0 WHERE id = ?', args: [assinaturaAntes.matricula_id] });
         }
-      } else if (mp.status === 'cancelled' && assinaturaAntes?.status === 'pending' && assinaturaAntes.cobranca_inicial_id && assinaturaAntes.valor_anterior_centavos != null) {
-        await db.execute({
-          sql: "UPDATE cobrancas SET valor_centavos = ?, status = ? WHERE id = ? AND status IN ('pendente','atrasado')",
-          args: [assinaturaAntes.valor_anterior_centavos, assinaturaAntes.status_anterior_cobranca || 'pendente', assinaturaAntes.cobranca_inicial_id],
-        });
+      } else if (mp.status === 'cancelled' && assinaturaAntes?.status === 'pending') {
+        await restaurarCobrancaInicial(assinaturaAntes);
+      } else if (mp.status === 'cancelled' && ['authorized', 'paused'].includes(assinaturaAntes?.status) && assinaturaAntes.modalidade && assinaturaAntes.modalidade !== 'legado') {
+        // Cancelada do lado do Mercado Pago (ex.: aluno cancelou no app do banco): volta ao plano normal.
+        await reverterParaPlanoNormal(assinaturaAntes);
       }
     }
     return null;
@@ -790,12 +811,10 @@ function somarMesesISO(dataISO, meses) {
   return `${alvo.getUTCFullYear()}-${String(alvo.getUTCMonth() + 1).padStart(2, '0')}-${String(Math.min(dia, ultimoDia)).padStart(2, '0')}`;
 }
 
-// Quando o aluno será cobrado no cartão, a partir do vencimento da matrícula (dia 10/20):
-//  • vencimento no futuro  → a 1ª cobrança é nessa data e a próxima, 1 mês depois;
-//  • vencimento hoje/passado → a 1ª cobrança é ao cadastrar o cartão e a próxima, 1 mês depois dela.
-function cronogramaCobrancaAutomatica(vencimento, hoje = new Date().toISOString().slice(0, 10)) {
-  const v = String(vencimento || '').slice(0, 10);
-  if (v && v > hoje) return { primeira_cobranca: v, primeira_ao_cadastrar: false, proxima_cobranca: somarMesesISO(v, 1) };
+// Cobrança automática de NOVO cadastro: a 1ª é feita na hora em que o cartão é cadastrado
+// (a matrícula ativa na hora) e as seguintes caem no mesmo dia dos meses seguintes. Não segue
+// o dia 10/20 das mensalidades normais — isso só volta a valer se a recorrência for cancelada.
+function cronogramaCobrancaAutomatica(hoje = new Date().toISOString().slice(0, 10)) {
   return { primeira_cobranca: hoje, primeira_ao_cadastrar: true, proxima_cobranca: somarMesesISO(hoje, 1) };
 }
 
@@ -935,9 +954,11 @@ async function obterOuCriarParaNovoCadastro({alunoId,matriculaId,baseUrl,modalid
  if(pend.rows[0]){if(pend.rows[0].modalidade===modalidade&&pend.rows[0].status==='pending')return{oferta_url:urlOferta(baseUrl,pend.rows[0].id)};throw erro('Já existe uma assinatura aguardando confirmação para esta matrícula.',409);}
  const planoCadastro = await buscarPlanoCadastro(modalidade);
  const preco = precoDaOferta(Number(planoCadastro.valor_centavos), planoCadastro.desconto); const valor=preco.valor_centavos,hoje=new Date().toISOString().slice(0,10);
- await db.execute({sql:"UPDATE cobrancas SET valor_centavos=? WHERE id=? AND status='pendente'",args:[valor,c.id]});
- try{const criada=await criarAssinatura({matriculaId,baseUrl,modalidade,dataPrimeiraCobranca:c.vencimento||hoje,cobrancaInicialId:c.id,valorAnteriorCentavos:Number(c.valor_centavos),statusAnteriorCobranca:'pendente',permitirMatriculaPendente:true});return{oferta_url:criada.oferta_url};}
- catch(e){await db.execute({sql:'UPDATE cobrancas SET valor_centavos=? WHERE id=? AND status=\'pendente\'',args:[c.valor_centavos,c.id]}).catch(()=>{});throw e;}
+ // Novo cadastro no cartão: cobra NA HORA (sem start_date) e o ciclo segue a data da adesão; a conta
+ // passa a vencer hoje. O vencimento original (10/20) fica guardado para o caso de cancelar.
+ await db.execute({sql:"UPDATE cobrancas SET valor_centavos=?, vencimento=? WHERE id=? AND status='pendente'",args:[valor,hoje,c.id]});
+ try{const criada=await criarAssinatura({matriculaId,baseUrl,modalidade,dataPrimeiraCobranca:null,cobrancaInicialId:c.id,valorAnteriorCentavos:Number(c.valor_centavos),statusAnteriorCobranca:'pendente',vencimentoAnterior:c.vencimento||null,permitirMatriculaPendente:true});return{oferta_url:criada.oferta_url};}
+ catch(e){await db.execute({sql:'UPDATE cobrancas SET valor_centavos=?, vencimento=? WHERE id=? AND status=\'pendente\'',args:[c.valor_centavos,c.vencimento,c.id]}).catch(()=>{});throw e;}
 }
 
 module.exports = {

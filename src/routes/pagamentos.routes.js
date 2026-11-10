@@ -811,7 +811,7 @@ router.get('/assinaturas', autenticar, async (req, res, next) => {
 // DELETE /api/pagamentos/assinaturas/:id — cancela no Mercado Pago e localmente.
 router.delete('/assinaturas/:id', autenticar, apenasAdmin, async (req, res, next) => {
   try {
-    res.json(await assinaturas.cancelar({ assinaturaId: req.params.id }));
+    res.json(await assinaturas.cancelar({ assinaturaId: req.params.id, encerrarMatricula: req.query.encerrar === '1' }));
   } catch (err) {
     next(err);
   }

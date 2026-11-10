@@ -789,6 +789,7 @@ CREATE TABLE IF NOT EXISTS assinaturas_mp (
   cobranca_inicial_id TEXT,
   valor_anterior_centavos INTEGER,
   status_anterior_cobranca TEXT,
+  vencimento_anterior TEXT, -- vencimento original (10/20) da conta do cadastro, restaurado se a recorrência não for adiante
   cobranca_inicial_criada INTEGER NOT NULL DEFAULT 0,
   init_point TEXT,
   criado_em TEXT NOT NULL DEFAULT (datetime('now')),

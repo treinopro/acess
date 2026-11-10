@@ -2075,8 +2075,8 @@ function formatarDataBR(iso){const m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso|
 function blocoExplicativoRecorrencia(){
  const c=cadastroPortalCronograma;
  const prox=c&&c.proxima_cobranca?formatarDataBR(c.proxima_cobranca):'';
- const primeira=c&&c.primeira_ao_cadastrar===false&&c.primeira_cobranca?'A primeira cobrança será no dia <strong>'+formatarDataBR(c.primeira_cobranca)+'</strong> (vencimento da sua matrícula).':'A primeira cobrança acontece assim que você cadastrar o cartão, na próxima página.';
- const proxima=prox?'<div style="margin-top:6px">📅 <strong>Próxima cobrança automática: dia '+prox+'</strong>, e depois todo mês no mesmo dia.</div>':'<div style="margin-top:6px">📅 <strong>As próximas cobranças são automáticas, todo mês, no vencimento da sua matrícula.</strong></div>';
+ const primeira='A primeira cobrança acontece assim que você cadastrar o cartão, na próxima página, e a matrícula é ativada na hora.';
+ const proxima=prox?'<div style="margin-top:6px">📅 <strong>Próxima cobrança automática: dia '+prox+'</strong>, e depois todo mês no mesmo dia da sua adesão.</div>':'<div style="margin-top:6px">📅 <strong>As próximas cobranças são automáticas, todo mês, no mesmo dia da sua adesão.</strong></div>';
  return '<div style="background:#0f172a;border:1px solid #10b981;border-radius:10px;padding:12px;margin:10px 0;font-size:14px;line-height:1.45">'
   +'<div style="font-weight:800;color:#10b981">🔁 Como funciona o pagamento recorrente</div>'
   +'<div style="margin-top:6px">Na próxima página você cadastra o cartão uma única vez. A mensalidade passa a ser <strong>cobrada automaticamente no cartão</strong> a cada vencimento — você não precisa se preocupar nem lembrar de pagar.</div>'

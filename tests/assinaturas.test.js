@@ -606,13 +606,57 @@ test('recurso desligado: não oferece modalidades no cadastro', async () => {
   assert.ok((await assinaturas.listarPlanosCadastroPublicos()).length >= 1);
 });
 
-test('cronograma da cobrança automática segue o vencimento da matrícula', () => {
-  // Vencimento no futuro (aluno entrou dia 5, vence dia 10): 1ª cobrança nessa data, próxima 1 mês depois.
-  assert.deepStrictEqual(assinaturas.cronogramaCobrancaAutomatica('2026-11-10', '2026-11-05'),
-    { primeira_cobranca: '2026-11-10', primeira_ao_cadastrar: false, proxima_cobranca: '2026-12-10' });
-  // Vencimento já passado (entrou dia 12, venceu dia 10): cobra ao cadastrar o cartão; próxima em 1 mês.
-  assert.deepStrictEqual(assinaturas.cronogramaCobrancaAutomatica('2026-11-10', '2026-11-12'),
+test('cronograma da cobrança automática: 1ª ao cadastrar o cartão, seguintes no mesmo dia da adesão', () => {
+  assert.deepStrictEqual(assinaturas.cronogramaCobrancaAutomatica('2026-11-12'),
     { primeira_cobranca: '2026-11-12', primeira_ao_cadastrar: true, proxima_cobranca: '2026-12-12' });
-  // Fim de mês: 31/01 → 28/02.
-  assert.strictEqual(assinaturas.cronogramaCobrancaAutomatica('2027-01-20', '2027-01-31').proxima_cobranca, '2027-02-28');
+  assert.strictEqual(assinaturas.cronogramaCobrancaAutomatica('2027-01-31').proxima_cobranca, '2027-02-28');
+});
+
+test('novo cadastro no cartão cobra na hora e, ao cancelar o checkout, volta o vencimento 10/20 original', async () => {
+  const hoje = new Date().toISOString().slice(0, 10);
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('venc', 'Aluno Venc', 'venc@teste.com', '44400099966')` });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-venc', 'venc', 'p1', ?, 'pendente')`, args: [hoje] });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-venc', 'venc', 'm-venc', 9900, 'pendente', 'mercadopago', 'Matrícula', '2099-01-20')` });
+  await assinaturas.salvarPlanosCadastro([{ id: 'mensal_livre', nome: 'Mensal', valor_centavos: 7000, limite_cobrancas: null, ativo: true }]);
+  await assinaturas.obterOuCriarParaNovoCadastro({ alunoId: 'venc', matriculaId: 'm-venc', baseUrl: 'https://academia.test', modalidade: 'mensal_livre' });
+
+  // Mesmo com vencimento futuro (dia 20), o MP é chamado SEM start_date: cobra ao cadastrar o cartão.
+  const [, payload] = chamadas.filter((c) => c[0] === 'criar').pop();
+  assert.strictEqual(payload.dataInicio, null);
+  let c = (await db.execute({ sql: `SELECT vencimento, valor_centavos FROM cobrancas WHERE id='c-venc'` })).rows[0];
+  assert.strictEqual(c.vencimento, hoje);
+  assert.strictEqual(c.valor_centavos, 7000);
+
+  const { id } = (await db.execute({ sql: `SELECT id FROM assinaturas_mp WHERE matricula_id='m-venc'` })).rows[0];
+  await assinaturas.cancelar({ assinaturaId: id });
+  c = (await db.execute({ sql: `SELECT vencimento, valor_centavos, status FROM cobrancas WHERE id='c-venc'` })).rows[0];
+  assert.deepStrictEqual({ ...c }, { vencimento: '2099-01-20', valor_centavos: 9900, status: 'pendente' });
+});
+
+test('cancelar recorrência ativa volta a matrícula para a regra normal (renovação automática, sem contas da assinatura)', async () => {
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('volta', 'Aluno Volta', 'volta@teste.com', '55500099955')` });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-volta', 'volta', 'p1', '2026-11-10', 'pendente')` });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-volta', 'volta', 'm-volta', 9900, 'pendente', 'mercadopago', 'Matrícula', '2026-11-10')` });
+  await assinaturas.salvarPlanosCadastro([{ id: 'mensal_livre', nome: 'Mensal', valor_centavos: 7000, limite_cobrancas: null, ativo: true }]);
+  await assinaturas.obterOuCriarParaNovoCadastro({ alunoId: 'volta', matriculaId: 'm-volta', baseUrl: 'https://academia.test', modalidade: 'mensal_livre' });
+  const { id, preapproval_id: pre } = (await db.execute({ sql: `SELECT id, preapproval_id FROM assinaturas_mp WHERE matricula_id='m-volta'` })).rows[0];
+  estadoMp.assinaturas[pre].status = 'authorized';
+  estadoMp.cobrancas = { ...(estadoMp.cobrancas || {}), [pre]: [{ id: 'AP-V1', preapproval_id: pre, transaction_amount: 70, debit_date: '2026-11-10', payment: { id: 9101, status: 'approved' } }] };
+  await assinaturas.reconciliarAssinaturas();
+
+  let m = (await db.execute({ sql: `SELECT status, renovacao_automatica FROM matriculas WHERE id='m-volta'` })).rows[0];
+  assert.strictEqual(m.status, 'ativa');
+  assert.strictEqual(m.renovacao_automatica, 0); // durante a recorrência, o gerador normal fica desligado
+  let abertas = (await db.execute({ sql: `SELECT provedor FROM cobrancas WHERE matricula_id='m-volta' AND status='pendente'` })).rows;
+  assert.deepStrictEqual(abertas.map((x) => x.provedor), ['assinatura_mp']); // conta da assinatura, separada das normais
+
+  const r = await assinaturas.cancelar({ assinaturaId: id });
+  assert.strictEqual(r.voltou_plano_normal, true);
+  m = (await db.execute({ sql: `SELECT status, renovacao_automatica FROM matriculas WHERE id='m-volta'` })).rows[0];
+  assert.strictEqual(m.status, 'ativa');
+  assert.strictEqual(m.renovacao_automatica, 1); // regra normal (10/20) volta a valer
+  abertas = (await db.execute({ sql: `SELECT id FROM cobrancas WHERE matricula_id='m-volta' AND status IN ('pendente','atrasado')` })).rows;
+  assert.strictEqual(abertas.length, 0);
+  const paga = (await db.execute({ sql: `SELECT status FROM cobrancas WHERE id='c-volta'` })).rows[0];
+  assert.strictEqual(paga.status, 'pago'); // histórico preservado
 });

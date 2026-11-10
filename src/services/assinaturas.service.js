@@ -392,6 +392,10 @@ async function registrarProximaCobranca(assinatura, cobrancaAtual) {
   const baseVencimento = String(cobrancaAtual.vencimento || hoje).slice(0, 10);
   const proximoVencimento = somarMesesISO(baseVencimento < hoje ? hoje : baseVencimento, 1);
   if (limite && quantidade >= limite) {
+    await db.execute({
+      sql: `UPDATE cobrancas SET status = 'cancelado' WHERE matricula_id = ? AND status IN ('pendente','atrasado') AND vencimento > ?`,
+      args: [a.matricula_id, baseVencimento],
+    });
     // Fecha a assinatura limitada após a 12ª cobrança aprovada.
     try { await mercadopago.cancelarAssinatura(a.preapproval_id); }
     catch (err) { console.error('[assinaturas] não foi possível encerrar no Mercado Pago após o último ciclo:', err.message); }

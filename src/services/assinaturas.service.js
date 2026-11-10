@@ -771,12 +771,14 @@ async function obterOuCriarParaNovoCadastro({alunoId,matriculaId,baseUrl,modalid
  if(!['12_meses','mensal_livre'].includes(modalidade))throw erro('Modalidade inválida.',400);
  const m=await db.execute({sql:"SELECT id FROM matriculas WHERE id=? AND aluno_id=? AND status='pendente'",args:[matriculaId,alunoId]});
  if(!m.rows[0])throw erro('Matrícula pendente não encontrada.',404);
- const q=await db.execute({sql:"SELECT id,provedor_referencia FROM cobrancas WHERE matricula_id=? AND status='pendente' ORDER BY criado_em LIMIT 1",args:[matriculaId]});
+ const q=await db.execute({sql:"SELECT id,provedor_referencia,valor_centavos,vencimento,descricao,provedor FROM cobrancas WHERE matricula_id=? AND status='pendente' ORDER BY criado_em LIMIT 1",args:[matriculaId]});
  const c=q.rows[0];if(!c||c.provedor_referencia)throw erro('O Pix já foi iniciado ou a cobrança não está disponível.',409);
+ const pend=await db.execute({sql:"SELECT id,modalidade,status FROM assinaturas_mp WHERE matricula_id=? AND status IN ('pending','authorized','paused') ORDER BY criado_em DESC LIMIT 1",args:[matriculaId]});
+ if(pend.rows[0]){if(pend.rows[0].modalidade===modalidade&&pend.rows[0].status==='pending')return{oferta_url:urlOferta(baseUrl,pend.rows[0].id)};throw erro('Já existe uma assinatura aguardando confirmação para esta matrícula.',409);}
  const valor=modalidade==='12_meses'?6500:7000,hoje=new Date().toISOString().slice(0,10);
  await db.execute({sql:"UPDATE cobrancas SET valor_centavos=?,provedor='recorrencia',descricao=?,vencimento=? WHERE id=? AND status='pendente'",args:[valor,modalidade==='12_meses'?'Recorrência 12 meses - R$ 65,00':'Recorrência mensal - R$ 70,00',hoje,c.id]});
  try{const criada=await criarAssinatura({matriculaId,baseUrl,modalidade,dataPrimeiraCobranca:hoje,cobrancaInicialId:c.id,permitirMatriculaPendente:true});return{oferta_url:criada.oferta_url};}
- catch(e){await db.execute({sql:"UPDATE cobrancas SET valor_centavos=(SELECT p.valor_centavos FROM matriculas m JOIN planos p ON p.id=m.plano_id WHERE m.id=?),provedor='mercadopago',descricao='Matrícula' WHERE id=? AND status='pendente'",args:[matriculaId,c.id]}).catch(()=>{});throw e;}
+ catch(e){await db.execute({sql:'UPDATE cobrancas SET valor_centavos=?,provedor=?,descricao=?,vencimento=? WHERE id=? AND status=\'pendente\'',args:[c.valor_centavos,c.provedor,c.descricao,c.vencimento,c.id]}).catch(()=>{});throw e;}
 }
 
 module.exports = {

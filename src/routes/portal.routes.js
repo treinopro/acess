@@ -811,27 +811,6 @@ router.post('/cadastro', async (req, res, next) => {
     const cobrancaId = uuid();
     const descricao = `Matrícula - ${p.nome}`;
 
-    const emailTeste = process.env.MERCADOPAGO_TEST_PAYER_EMAIL;
-    const emailPagador = emailTeste || dados.email || `aluno-${dados.cpf.replace(/\D/g, '')}@academia-gestao.com`;
-    const firstNamePagador = emailTeste ? 'APRO' : undefined;
-
-    let order;
-    try {
-      order = await mercadopago.criarOrderPix({
-        descricao,
-        valorCentavos: p.valor_centavos,
-        referenciaExterna: cobrancaId,
-        email: emailPagador,
-        firstName: firstNamePagador,
-      });
-    } catch (err) {
-      // Desfaz o cadastro pra não deixar o CPF "preso" (cadastrado, mas sem
-      // nenhuma cobrança pra pagar) — a pessoa tenta de novo do zero.
-      await db.execute({ sql: 'DELETE FROM alunos WHERE id = ?', args: [alunoId] }).catch(() => {});
-      throw err;
-    }
-    const metodoPix = order.transactions?.payments?.[0]?.payment_method || {};
-
     // E-mail de boas-vindas automático (2026-07) — best-effort, nunca atrasa
     // nem quebra o cadastro/pagamento em si (ver emailBoasVindas.service.js).
     emailBoasVindas.enviarBoasVindasSeguro({ id: alunoId, nome: dados.nome, email: dados.email }).catch(() => {});
@@ -851,9 +830,9 @@ router.post('/cadastro', async (req, res, next) => {
     // verdade — ver mesmo comentário em planos.routes.js.
     const vencimentoCobranca = ehRecorrente(p.tipo) ? primeiroVencimento(hoje) : hoje;
     await db.execute({
-      sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, provedor, provedor_referencia, descricao, vencimento)
-            VALUES (?, ?, ?, ?, 'mercadopago', ?, ?, ?)`,
-      args: [cobrancaId, alunoId, matriculaId, p.valor_centavos, String(order.id), descricao, vencimentoCobranca],
+      sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, provedor, descricao, vencimento)
+            VALUES (?, ?, ?, ?, 'mercadopago', ?, ?)`,
+      args: [cobrancaId, alunoId, matriculaId, p.valor_centavos, descricao, vencimentoCobranca],
     });
 
     // Senha do portal (2026-07): já gera o código sequencial de uma vez
@@ -865,8 +844,7 @@ router.post('/cadastro', async (req, res, next) => {
 
     res.status(201).json({
       cobranca_id: cobrancaId,
-      qr_code_pix: metodoPix.qr_code || null,
-      qr_code_pix_imagem: metodoPix.qr_code_base64 || null,
+      matricula_id: matriculaId,
       valor_centavos: p.valor_centavos,
       aluno_nome: dados.nome,
       senha_acesso: senhaAcesso,
@@ -877,6 +855,32 @@ router.post('/cadastro', async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+
+router.post('/cadastro/pix', limitadorSenhaPortal, async (req,res,next) => {
+ try {
+  const d=z.object({cpf:z.string().min(1),senha:z.string().min(1),cobranca_id:z.string().min(1)}).parse(req.body);
+  const auth=await autenticarAlunoPortal(d.cpf,d.senha); if(auth.erro)return res.status(auth.status).json({erro:auth.erro});
+  const q=await db.execute({sql:`SELECT c.*,p.nome AS plano_nome FROM cobrancas c JOIN matriculas m ON m.id=c.matricula_id JOIN planos p ON p.id=m.plano_id WHERE c.id=? AND c.aluno_id=? AND m.status='pendente'`,args:[d.cobranca_id,auth.aluno.id]});
+  const c=q.rows[0]; if(!c||c.status!=='pendente')return res.status(404).json({erro:'Matrícula pendente não encontrada.'});
+  if(c.provedor_referencia){const o=await mercadopago.consultarOrder(c.provedor_referencia);const pm=o.transactions?.payments?.[0]?.payment_method||{};return res.json({cobranca_id:c.id,valor_centavos:c.valor_centavos,qr_code_pix:pm.qr_code||null,qr_code_pix_imagem:pm.qr_code_base64||null});}
+  const teste=process.env.MERCADOPAGO_TEST_PAYER_EMAIL;
+  const o=await mercadopago.criarOrderPix({descricao:c.descricao||`Matrícula - ${c.plano_nome}`,valorCentavos:Number(c.valor_centavos),referenciaExterna:c.id,email:teste||auth.aluno.email||`aluno-${String(auth.aluno.cpf).replace(/\\D/g,'')}@academia-gestao.com`,firstName:teste?'APRO':undefined});
+  await db.execute({sql:'UPDATE cobrancas SET provedor_referencia=? WHERE id=? AND provedor_referencia IS NULL',args:[String(o.id),c.id]});
+  const pm=o.transactions?.payments?.[0]?.payment_method||{};res.json({cobranca_id:c.id,valor_centavos:c.valor_centavos,qr_code_pix:pm.qr_code||null,qr_code_pix_imagem:pm.qr_code_base64||null});
+ }catch(e){next(e);}
+});
+router.post('/cadastro/recorrencia', limitadorSenhaPortal, async(req,res,next)=>{
+ try{
+  const d=z.object({cpf:z.string().min(1),senha:z.string().min(1),matricula_id:z.string().min(1),modalidade:z.enum(['12_meses','mensal_livre'])}).parse(req.body);
+  const auth=await autenticarAlunoPortal(d.cpf,d.senha);if(auth.erro)return res.status(auth.status).json({erro:auth.erro});
+  const m=await db.execute({sql:"SELECT id FROM matriculas WHERE id=? AND aluno_id=? AND status='pendente'",args:[d.matricula_id,auth.aluno.id]});
+  if(!m.rows[0])return res.status(404).json({erro:'Matrícula pendente não encontrada.'});
+  const c=await db.execute({sql:"SELECT id,provedor_referencia FROM cobrancas WHERE matricula_id=? AND status='pendente'",args:[d.matricula_id]});
+  if(!c.rows.length||c.rows.some(x=>x.provedor_referencia))return res.status(409).json({erro:'O Pix já foi iniciado ou a cobrança não está disponível.'});
+  res.json(await assinaturas.obterOuCriarParaNovoCadastro({alunoId:auth.aluno.id,matriculaId:d.matricula_id,modalidade:d.modalidade,baseUrl:assinaturas.baseUrlDaRequisicao(req)}));
+ }catch(e){next(e);}
 });
 
 // Ativa a matrícula ligada a uma cobrança quando o pagamento é confirmado —

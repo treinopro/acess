@@ -513,3 +513,23 @@ test('modalidade configurável: aplica desconto e congela preço e quantidade no
   assert.strictEqual(contrato.desconto_centavos, 600);
   assert.strictEqual(contrato.limite_cobrancas, 3);
 });
+
+
+test('migração de aluno atual também usa a modalidade cadastrada no painel', async () => {
+  await novoAlunoComMatricula('mig-custom');
+  await assinaturas.salvarPlanosCadastro([{
+    id: 'mensal_custom', nome: 'Mensal personalizado', valor_centavos: 8000,
+    limite_cobrancas: null, ativo: true,
+    desconto: { ativo: false, tipo: 'percentual', percentual: 0, valor_centavos: 0 },
+  }]);
+  const criada = await assinaturas.obterOuCriarParaAluno({
+    alunoId: 'mig-custom', baseUrl: 'https://academia.test', modalidade: 'mensal_custom',
+  });
+  assert.match(criada.oferta_url, /\/assinar\//);
+  const contrato = (await db.execute({
+    sql: `SELECT valor_centavos, valor_cheio_centavos, limite_cobrancas FROM assinaturas_mp WHERE matricula_id='m-mig-custom'`,
+  })).rows[0];
+  assert.strictEqual(contrato.valor_centavos, 8000);
+  assert.strictEqual(contrato.valor_cheio_centavos, 8000);
+  assert.strictEqual(contrato.limite_cobrancas, null);
+});

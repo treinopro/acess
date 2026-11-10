@@ -266,21 +266,28 @@ async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPr
   if (existente.rows.length) throw erro('Esta matrícula já tem uma assinatura ativa ou aguardando o cartão.', 409);
 
   const oferta = await obterOferta();
-  const planoCadastro = modalidade ? await buscarPlanoCadastro(modalidade) : null;
-  const preco = modalidade
+  // Só o fluxo de NOVO cadastro usa a tabela configurável. A oferta de migração
+  // para alunos existentes mantém as condições antigas e independentes.
+  const planoCadastro = permitirMatriculaPendente && modalidade ? await buscarPlanoCadastro(modalidade) : null;
+  if (modalidade && !planoCadastro && !['12_meses', 'mensal_livre'].includes(modalidade)) {
+    throw erro('Modalidade de recorrência inválida.', 400);
+  }
+  const preco = planoCadastro
     ? precoDaOferta(Number(planoCadastro.valor_centavos), planoCadastro.desconto)
-    : precoDaOferta(Number(m.valor_centavos), oferta);
+    : modalidade
+      ? { valor_cheio_centavos: modalidade === '12_meses' ? 6500 : 7000, desconto_centavos: 0, valor_centavos: modalidade === '12_meses' ? 6500 : 7000 }
+      : precoDaOferta(Number(m.valor_centavos), oferta);
 
   const id = uuid();
   const frequenciaMeses = modalidade ? 1 : MESES_POR_TIPO[m.tipo];
-  const limiteCobrancas = modalidade ? planoCadastro.limite_cobrancas : null;
+  const limiteCobrancas = planoCadastro ? planoCadastro.limite_cobrancas : (modalidade === '12_meses' ? 12 : null);
   const hojeCobranca = new Date().toISOString().slice(0, 10);
   const dataInicioMP = dataPrimeiraCobranca && dataPrimeiraCobranca > hojeCobranca
     ? `${dataPrimeiraCobranca}T00:00:00.000-03:00`
     : null;
   const mp = await mercadopago.criarAssinaturaPendente({
     razao: modalidade
-      ? (m.plano_nome + ' — ' + planoCadastro.nome + ' — ' + formatarValorParaDescricao(preco.valor_centavos) + ' por mês')
+      ? (m.plano_nome + ' — ' + (planoCadastro ? planoCadastro.nome : modalidade === '12_meses' ? 'Compromisso de 12 meses' : 'Mensal sem fidelidade') + ' — ' + formatarValorParaDescricao(preco.valor_centavos) + ' por mês')
       : (m.plano_nome + ' — ' + m.aluno_nome),
     valorCentavos: preco.valor_centavos,
     frequenciaMeses,
@@ -642,33 +649,27 @@ async function ofertaPublica(id) {
   const o = r.rows[0];
   if (!o) return null;
   const desconto = Number(o.desconto_centavos || 0);
+  const modalidadeConfigurada = o.modalidade && o.modalidade !== 'legado';
+  const valorMensal = Number(o.valor_centavos || 0);
+  const limiteContratado = o.limite_cobrancas == null ? null : Number(o.limite_cobrancas);
+  const resumoCondicao = modalidadeConfigurada
+    ? (limiteContratado ? 'Compromisso de ' + limiteContratado + ' cobranças mensais de ' + formatarValorParaDescricao(valorMensal) : 'Cobrança mensal de ' + formatarValorParaDescricao(valorMensal) + ', sem permanência mínima')
+    : null;
   const beneficiosModalidade = [
     ...oferta.beneficios.filter((b) => !/cancele quando quiser|sem fidelidade|permanência mínima/i.test(b)),
-    o.modalidade === '12_meses'
-      ? 'Compromisso de 12 cobranças mensais de R$ 65,00'
-      : o.modalidade === 'mensal_livre'
-        ? 'Sem fidelidade ou permanência mínima'
-        : null,
+    resumoCondicao,
   ].filter(Boolean).slice(0, LIMITES.beneficios);
-  const faqModalidade = o.modalidade === '12_meses'
+  const faqModalidade = modalidadeConfigurada
     ? [
-      { p: 'Qual é o compromisso?', r: 'São 12 cobranças automáticas de R$ 65,00, uma por mês, durante 12 meses. As condições de cancelamento antecipado seguem o contrato.' },
+      { p: 'Quais são as condições?', r: resumoCondicao + '. O valor e a quantidade de cobranças ficam registrados no contrato no momento da adesão.' },
       { p: 'A academia guarda os dados do cartão?', r: 'Não. O cartão é cadastrado diretamente no Mercado Pago.' },
       { p: 'E se o cartão for recusado?', r: 'O Mercado Pago poderá tentar processar novamente. A situação da cobrança será atualizada após a confirmação.' },
     ]
-    : o.modalidade === 'mensal_livre'
-      ? [
-        { p: 'Tem fidelidade?', r: 'Não. É uma cobrança mensal de R$ 70,00, sem permanência mínima. O cancelamento deve ser solicitado antes da próxima cobrança, conforme o contrato.' },
-        { p: 'A academia guarda os dados do cartão?', r: 'Não. O cartão é cadastrado diretamente no Mercado Pago.' },
-        { p: 'E se o cartão for recusado?', r: 'O Mercado Pago poderá tentar processar novamente. A situação da cobrança será atualizada após a confirmação.' },
-      ]
-      : oferta.faq;
+    : oferta.faq;
   return montarOferta(base, oferta, {
-    subtitulo: o.modalidade === '12_meses'
-      ? 'Plano ' + o.plano_nome + ': pagamento automático de R$ 65,00 por mês, durante 12 meses.'
-      : o.modalidade === 'mensal_livre'
-        ? 'Pagamento automático de R$ 70,00 por mês, sem compromisso de permanência mínima.'
-        : oferta.subtitulo,
+    subtitulo: modalidadeConfigurada
+      ? 'Plano ' + o.plano_nome + ': ' + resumoCondicao.toLowerCase() + '.'
+      : oferta.subtitulo,
     faq: faqModalidade,
     beneficios: beneficiosModalidade,
     aluno: primeiroNome(o.aluno_nome),

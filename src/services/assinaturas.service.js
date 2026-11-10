@@ -835,13 +835,13 @@ async function obterOuCriarParaAluno({ alunoId, baseUrl, modalidade }) {
 
 async function obterOuCriarParaNovoCadastro({alunoId,matriculaId,baseUrl,modalidade}){
  if(!habilitado())throw erro('Pagamento recorrente indisponível no momento.',503);
- const planoCadastro = await buscarPlanoCadastro(modalidade);
  const m=await db.execute({sql:"SELECT id FROM matriculas WHERE id=? AND aluno_id=? AND status='pendente'",args:[matriculaId,alunoId]});
  if(!m.rows[0])throw erro('Matrícula pendente não encontrada.',404);
  const q=await db.execute({sql:"SELECT id,provedor_referencia,valor_centavos,vencimento,descricao,provedor FROM cobrancas WHERE matricula_id=? AND status='pendente' ORDER BY criado_em LIMIT 1",args:[matriculaId]});
  const c=q.rows[0];if(!c||c.provedor_referencia)throw erro('O Pix já foi iniciado ou a cobrança não está disponível.',409);
  const pend=await db.execute({sql:"SELECT id,modalidade,status FROM assinaturas_mp WHERE matricula_id=? AND status IN ('pending','authorized','paused') ORDER BY criado_em DESC LIMIT 1",args:[matriculaId]});
  if(pend.rows[0]){if(pend.rows[0].modalidade===modalidade&&pend.rows[0].status==='pending')return{oferta_url:urlOferta(baseUrl,pend.rows[0].id)};throw erro('Já existe uma assinatura aguardando confirmação para esta matrícula.',409);}
+ const planoCadastro = await buscarPlanoCadastro(modalidade);
  const preco = precoDaOferta(Number(planoCadastro.valor_centavos), planoCadastro.desconto); const valor=preco.valor_centavos,hoje=new Date().toISOString().slice(0,10);
  await db.execute({sql:"UPDATE cobrancas SET valor_centavos=? WHERE id=? AND status='pendente'",args:[valor,c.id]});
  try{const criada=await criarAssinatura({matriculaId,baseUrl,modalidade,dataPrimeiraCobranca:c.vencimento||hoje,cobrancaInicialId:c.id,valorAnteriorCentavos:Number(c.valor_centavos),statusAnteriorCobranca:'pendente',permitirMatriculaPendente:true});return{oferta_url:criada.oferta_url};}

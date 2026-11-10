@@ -218,6 +218,18 @@ async function consultarPagamentoAutorizado(authorizedPaymentId) {
   return resp.json();
 }
 
+// Cobranças (invoices) de uma assinatura — usado na reconciliação periódica, que
+// cobre o caso de o webhook não chegar. Devolve a lista (mais antigas primeiro).
+async function listarCobrancasDaAssinatura(preapprovalId) {
+  const resp = await fetch(`${BASE_URL}/authorized_payments/search?preapproval_id=${encodeURIComponent(preapprovalId)}`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  });
+  if (!resp.ok) throw new Error(`Erro ao listar cobranças da assinatura no Mercado Pago (${resp.status})`);
+  const dados = await resp.json();
+  const lista = Array.isArray(dados?.results) ? dados.results : [];
+  return lista.sort((a, b) => String(a.debit_date || a.date_created || '').localeCompare(String(b.debit_date || b.date_created || '')));
+}
+
 module.exports = {
   criarPreferencia,
   criarPagamentoPix,
@@ -228,4 +240,5 @@ module.exports = {
   consultarAssinatura,
   cancelarAssinatura,
   consultarPagamentoAutorizado,
+  listarCobrancasDaAssinatura,
 };

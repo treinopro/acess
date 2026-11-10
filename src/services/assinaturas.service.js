@@ -570,6 +570,40 @@ async function expirarCheckoutsAbandonados({ horas = 48 } = {}) {
   return { cancelados, sincronizados };
 }
 
+/**
+ * Reconciliação ativa (rede de segurança para webhook que não chega): para cada
+ * assinatura ainda viva, sincroniza o status e dá baixa nas cobranças aprovadas
+ * no MP que ainda não foram processadas. Idempotente — usa a mesma baixarParcela
+ * (INSERT OR IGNORE por payment_id), então rodar junto com o webhook não duplica.
+ * Devolve { assinaturas, baixas, alunosAtualizados[] }.
+ */
+async function reconciliarAssinaturas() {
+  const resultado = { assinaturas: 0, baixas: 0, alunosAtualizados: [] };
+  if (!habilitado()) return resultado;
+  const vivas = await db.execute({
+    sql: `SELECT id, preapproval_id FROM assinaturas_mp WHERE status IN ('pending', 'authorized', 'paused') ORDER BY criado_em ASC LIMIT 200`,
+  });
+  for (const v of vivas.rows) {
+    try {
+      resultado.assinaturas++;
+      await processarEvento({ type: 'subscription_preapproval', dataId: v.preapproval_id });
+      const cobrancas = await mercadopago.listarCobrancasDaAssinatura(v.preapproval_id);
+      for (const parcela of cobrancas) {
+        const pagamento = parcela.payment || {};
+        if (pagamento.status !== 'approved' || !pagamento.id) continue;
+        const assinatura = await buscarPorPreapproval(v.preapproval_id); // recarrega: o contador muda a cada baixa
+        if (!assinatura || assinatura.status === 'completed') break;
+        const valor = parcela.transaction_amount != null ? Math.round(Number(parcela.transaction_amount) * 100) : assinatura.valor_centavos;
+        const r = await baixarParcela({ assinatura, paymentId: pagamento.id, valorCentavos: valor, metodo: 'credit_card' });
+        if (r.baixada) { resultado.baixas++; resultado.alunosAtualizados.push(r.alunoId); }
+      }
+    } catch (err) {
+      console.error('[assinaturas] falha ao reconciliar', v.id, err.message);
+    }
+  }
+  return resultado;
+}
+
 async function buscarPorPreapproval(preapprovalId) {
   const r = await db.execute({ sql: 'SELECT * FROM assinaturas_mp WHERE preapproval_id = ?', args: [String(preapprovalId)] });
   return r.rows[0] || null;
@@ -899,5 +933,5 @@ module.exports = {
   habilitado, criarAssinatura, listar, cancelar, processarEvento, processarPagamentoAprovado,
   ofertaPublica, disponibilidadeParaAluno, obterOuCriarParaAluno, obterOuCriarParaNovoCadastro, baseUrlDaRequisicao, urlOferta,
   obterOferta, salvarOferta, calcularDescontoCentavos, OFERTA_PADRAO,
-  obterPlanosCadastro, salvarPlanosCadastro, listarPlanosCadastroPublicos, expirarCheckoutsAbandonados,
+  obterPlanosCadastro, salvarPlanosCadastro, listarPlanosCadastroPublicos, expirarCheckoutsAbandonados, reconciliarAssinaturas,
 };

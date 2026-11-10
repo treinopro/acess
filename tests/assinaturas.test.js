@@ -31,6 +31,7 @@ require.cache[mpPath] = {
     consultarAssinatura: async (id) => estadoMp.assinaturas[id],
     cancelarAssinatura: async (id) => { chamadas.push(['cancelar', id]); estadoMp.assinaturas[id].status = 'cancelled'; return estadoMp.assinaturas[id]; },
     consultarPagamentoAutorizado: async (id) => estadoMp.parcelas[id],
+    listarCobrancasDaAssinatura: async (id) => (estadoMp.cobrancas?.[id] || []),
     consultarPagamento: async (id) => estadoMp.pagamentos?.[id],
     criarPreferencia: async () => ({}), criarPagamentoPix: async () => ({}), criarOrderPix: async () => ({}), consultarOrder: async () => ({}),
   },
@@ -555,4 +556,39 @@ test('checkout abandonado: expira após 48h, cancela no MP e restaura a cobranç
   const c = (await db.execute({ sql: `SELECT valor_centavos, status FROM cobrancas WHERE id='c-abandona'` })).rows[0];
   assert.strictEqual(c.valor_centavos, 9900);
   assert.strictEqual(c.status, 'pendente');
+});
+
+
+test('reconciliação sem webhook: ativa a matrícula, dá baixa na 1ª cobrança e não duplica', async () => {
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('recon', 'Aluno Recon', 'recon@teste.com', '33300099977')` });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-recon', 'recon', 'p1', '2026-11-10', 'pendente')` });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-recon', 'recon', 'm-recon', 9900, 'pendente', 'mercadopago', 'Matrícula', '2026-11-10')` });
+  await assinaturas.salvarPlanosCadastro([{ id: 'mensal_livre', nome: 'Mensal', valor_centavos: 7000, limite_cobrancas: null, ativo: true }]);
+  await assinaturas.obterOuCriarParaNovoCadastro({ alunoId: 'recon', matriculaId: 'm-recon', baseUrl: 'https://academia.test', modalidade: 'mensal_livre' });
+  const { preapproval_id: pre } = (await db.execute({ sql: `SELECT preapproval_id FROM assinaturas_mp WHERE matricula_id='m-recon'` })).rows[0];
+
+  // O aluno cadastrou o cartão e o MP cobrou — mas NENHUM webhook chegou.
+  estadoMp.assinaturas[pre].status = 'authorized';
+  estadoMp.cobrancas = { ...(estadoMp.cobrancas || {}), [pre]: [{ id: 'AP-R1', preapproval_id: pre, transaction_amount: 70, debit_date: '2026-11-10', payment: { id: 9001, status: 'approved' } }] };
+
+  let r = await assinaturas.reconciliarAssinaturas();
+  assert.strictEqual(r.baixas, 1);
+  assert.deepStrictEqual(r.alunosAtualizados, ['recon']);
+
+  const m = (await db.execute({ sql: `SELECT status FROM matriculas WHERE id='m-recon'` })).rows[0];
+  assert.strictEqual(m.status, 'ativa');
+  const c = (await db.execute({ sql: `SELECT status, valor_centavos FROM cobrancas WHERE id='c-recon'` })).rows[0];
+  assert.strictEqual(c.status, 'pago');
+  assert.strictEqual(c.valor_centavos, 7000);
+  const a = (await db.execute({ sql: `SELECT status, cobrancas_processadas FROM assinaturas_mp WHERE matricula_id='m-recon'` })).rows[0];
+  assert.strictEqual(a.status, 'authorized');
+  assert.strictEqual(a.cobrancas_processadas, 1);
+
+  // Segunda execução (e/ou webhook atrasado): nada muda.
+  r = await assinaturas.reconciliarAssinaturas();
+  assert.strictEqual(r.baixas, 0);
+  const a2 = (await db.execute({ sql: `SELECT cobrancas_processadas FROM assinaturas_mp WHERE matricula_id='m-recon'` })).rows[0];
+  assert.strictEqual(a2.cobrancas_processadas, 1);
+  const abertas = (await db.execute({ sql: `SELECT COUNT(*) n FROM cobrancas WHERE matricula_id='m-recon' AND status='pendente'` })).rows[0];
+  assert.strictEqual(abertas.n, 1); // só a do próximo mês
 });

@@ -32,6 +32,7 @@ const { rodar: rodarAvisoVencimento } = require('./jobs/avisoVencimento');
 const { rodar: rodarAvisoRenovacaoAvaliacao } = require('./jobs/avisoRenovacaoAvaliacao');
 const { rodar: rodarReconciliarPagamentosPix } = require('./jobs/reconciliarPagamentosPix');
 const { rodar: rodarExpirarCheckoutsRecorrencia } = require('./jobs/expirarCheckoutsRecorrencia');
+const { rodar: rodarReconciliarAssinaturas } = require('./jobs/reconciliarAssinaturas');
 const { atualizarCobrancasVencidas } = require('./services/cobrancas.service');
 const agenteGateway = require('./services/agenteGateway.service');
 const dbResiliente = require('./services/dbResiliente.service');
@@ -358,6 +359,13 @@ server.listen(PORT, () => {
     setInterval(() => {
       rodarReconciliarPagamentosPix().catch((err) => console.error('[reconciliarPagamentosPix] erro na execução agendada:', err));
     }, 10 * 60 * 1000);
+  }
+
+  // Reconciliação das assinaturas (rede de segurança do webhook): a cada 15 min.
+  if (EXECUTAR_JOBS_AGENDADOS) {
+    setInterval(() => {
+      rodarReconciliarAssinaturas().catch((err) => console.error('[reconciliarAssinaturas] erro:', err));
+    }, 15 * 60 * 1000);
   }
 
   // Checkouts de recorrência abandonados (cartão nunca cadastrado): a cada hora.

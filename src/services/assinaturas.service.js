@@ -638,7 +638,7 @@ async function prepararCobrancaInicial({ matricula, valorCentavos, modalidade })
     });
   } else {
     const ultima = await db.execute({
-      sql: `SELECT vencimento FROM cobrancas WHERE matricula_id = ? ORDER BY vencimento DESC, criado_em DESC LIMIT 1`,
+      sql: `SELECT vencimento FROM cobrancas WHERE matricula_id = ? AND status = 'pago' ORDER BY vencimento DESC, criado_em DESC LIMIT 1`,
       args: [matricula.id],
     });
     vencimento = ultima.rows[0]?.vencimento

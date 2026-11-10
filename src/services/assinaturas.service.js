@@ -406,11 +406,31 @@ async function registrarProximaCobranca(assinatura, cobrancaAtual) {
     return;
   }
   const descricao = a.modalidade === '12_meses' ? 'Recorrência 12 meses - R$ 65,00' : 'Recorrência mensal - R$ 70,00';
+  // Cancela somente competências futuras além da próxima. Reutiliza a linha
+  // já pré-gerada para a próxima competência, respeitando o índice único.
   await db.execute({
-    sql: `INSERT OR IGNORE INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento)
-          VALUES (?, ?, ?, ?, 'pendente', 'recorrencia', ?, ?)`,
-    args: [uuid(), a.aluno_id, a.matricula_id, a.valor_centavos, descricao, proximoVencimento],
+    sql: `UPDATE cobrancas SET status = 'cancelado'
+          WHERE matricula_id = ? AND status IN ('pendente','atrasado') AND vencimento > ?`,
+    args: [a.matricula_id, proximoVencimento],
   });
+  const proximaExistente = await db.execute({
+    sql: `SELECT id, status FROM cobrancas WHERE matricula_id = ? AND vencimento = ? LIMIT 1`,
+    args: [a.matricula_id, proximoVencimento],
+  });
+  if (proximaExistente.rows[0]) {
+    if (proximaExistente.rows[0].status !== 'pago') {
+      await db.execute({
+        sql: `UPDATE cobrancas SET aluno_id = ?, valor_centavos = ?, status = 'pendente', provedor = 'recorrencia', descricao = ?, pago_em = NULL, metodo_pagamento = NULL WHERE id = ?`,
+        args: [a.aluno_id, a.valor_centavos, descricao, proximaExistente.rows[0].id],
+      });
+    }
+  } else {
+    await db.execute({
+      sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento)
+            VALUES (?, ?, ?, ?, 'pendente', 'recorrencia', ?, ?)`,
+      args: [uuid(), a.aluno_id, a.matricula_id, a.valor_centavos, descricao, proximoVencimento],
+    });
+  }
 }
 
 async function buscarPorPreapproval(preapprovalId) {

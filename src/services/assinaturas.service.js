@@ -224,6 +224,8 @@ async function salvarPlanosCadastro(planos) {
 }
 
 async function listarPlanosCadastroPublicos() {
+  // Recurso desligado (MERCADOPAGO_ASSINATURAS != 1): não oferece nada ao aluno.
+  if (!habilitado()) return [];
   return (await obterPlanosCadastro()).filter(p => p.ativo).map(p => {
     const preco = precoDaOferta(p.valor_centavos, p.desconto);
     return { id: p.id, nome: p.nome, valor_centavos: p.valor_centavos, valor_final_centavos: preco.valor_centavos,

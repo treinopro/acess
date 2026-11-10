@@ -592,3 +592,16 @@ test('reconciliação sem webhook: ativa a matrícula, dá baixa na 1ª cobranç
   const abertas = (await db.execute({ sql: `SELECT COUNT(*) n FROM cobrancas WHERE matricula_id='m-recon' AND status='pendente'` })).rows[0];
   assert.strictEqual(abertas.n, 1); // só a do próximo mês
 });
+
+test('recurso desligado: não oferece modalidades no cadastro', async () => {
+  const antes = process.env.MERCADOPAGO_ASSINATURAS;
+  try {
+    process.env.MERCADOPAGO_ASSINATURAS = '0';
+    assert.deepStrictEqual(await assinaturas.listarPlanosCadastroPublicos(), []);
+    delete process.env.MERCADOPAGO_ASSINATURAS;
+    assert.deepStrictEqual(await assinaturas.listarPlanosCadastroPublicos(), []);
+  } finally {
+    process.env.MERCADOPAGO_ASSINATURAS = antes;
+  }
+  assert.ok((await assinaturas.listarPlanosCadastroPublicos()).length >= 1);
+});

@@ -2087,6 +2087,8 @@ async function carregarOfertaRecorrenciaNovoAluno(){
   ${cards||'<p>No momento não há modalidades de recorrência disponíveis.</p>'}
   <button type="button" data-escolher-pix class="botao-grande primario" style="width:100%;margin-top:12px">Continuar com Pix do plano escolhido</button>
   <small>Se sair agora, seu cadastro ficará salvo como pendente, sem cobrança nem ativação.</small><div class="erro-msg" data-erro-recorrencia></div></div>`;
+ // Sem modalidades (recurso desligado ou todas inativas): segue direto para o Pix.
+ if(!opcoes.length)setTimeout(()=>container.querySelector('[data-escolher-pix]')?.click(),0);
  container.querySelectorAll('[data-modalidade]').forEach(btn=>btn.addEventListener('click',async()=>{
   const modalidade=btn.dataset.modalidade,botoes=Array.from(container.querySelectorAll('button'));botoes.forEach(b=>b.disabled=true);btn.textContent='Abrindo Mercado Pago…';
   try{const r=await api('/api/portal/cadastro/recorrencia',{method:'POST',body:JSON.stringify({cpf:cadastroPortalCpfAtual,senha:cadastroPortalSenhaAtual,matricula_id:cadastroPortalMatriculaId,modalidade})});if(!r.oferta_url)throw new Error('O Mercado Pago não retornou o endereço da oferta.');window.location.href=r.oferta_url;}

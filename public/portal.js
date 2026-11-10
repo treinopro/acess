@@ -2013,6 +2013,7 @@ function resetCadastroPortal() {
   document.getElementById('portal-cadastro-indicado-cpf').value = '';
   document.getElementById('portal-cadastro-erro').textContent = '';
   document.getElementById('portal-cadastro-senha-caixa').textContent = '';
+  document.getElementById('portal-cadastro-senha-pendente').textContent = '';
   document.getElementById('painel-cadastro-portal-form').classList.remove('oculto');
   document.getElementById('painel-cadastro-portal-pagamento').classList.add('oculto');
   document.getElementById('cadastro-pix-conteudo').classList.add('oculto');

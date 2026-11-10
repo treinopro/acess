@@ -349,7 +349,9 @@ async function baixarParcela({ assinatura, paymentId, valorCentavos, metodo }) {
   } else {
     console.warn(`[assinaturas] parcela ${paymentId} de ${pago} centavos não bate com a conta ${conta.id} (${conta.valor_centavos}) — NÃO baixada, conferir manualmente.`);
   }
-  await atualizarStatus(assinatura.preapproval_id, 'authorized');
+  if (!(assinatura.limite_cobrancas && Number(assinatura.cobrancas_processadas || 0) + 1 >= Number(assinatura.limite_cobrancas))) {
+    await atualizarStatus(assinatura.preapproval_id, 'authorized');
+  }
   return { baixada: baixa === 'baixada', cobrancaId: conta?.id || null, alunoId: assinatura.aluno_id };
 }
 
@@ -548,8 +550,9 @@ async function matriculaElegivel(alunoId) {
     sql: `SELECT m.id, m.data_inicio, p.nome AS plano_nome, p.valor_centavos
           FROM matriculas m JOIN planos p ON p.id = m.plano_id
           WHERE m.aluno_id = ? AND m.status = 'ativa'
+            AND p.tipo IN (${TIPOS_RECORRENTES.map(() => '?').join(', ')})
           ORDER BY m.data_inicio DESC LIMIT 1`,
-    args: [alunoId],
+    args: [alunoId, ...TIPOS_RECORRENTES],
   });
   return r.rows[0] || null;
 }

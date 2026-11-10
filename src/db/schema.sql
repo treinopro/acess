@@ -782,6 +782,10 @@ CREATE TABLE IF NOT EXISTS assinaturas_mp (
   valor_cheio_centavos INTEGER,    -- valor do plano sem desconto (NULL em assinaturas antigas)
   desconto_centavos INTEGER NOT NULL DEFAULT 0, -- desconto por ciclo travado na criação
   frequencia_meses INTEGER NOT NULL,
+  modalidade TEXT NOT NULL DEFAULT 'legado', -- 12_meses | mensal_livre | legado
+  limite_cobrancas INTEGER, -- NULL = assinatura contínua
+  cobrancas_processadas INTEGER NOT NULL DEFAULT 0,
+  data_primeira_cobranca TEXT,
   init_point TEXT,
   criado_em TEXT NOT NULL DEFAULT (datetime('now')),
   atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))

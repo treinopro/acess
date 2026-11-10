@@ -393,7 +393,7 @@ async function registrarProximaCobranca(assinatura, cobrancaAtual) {
   const limite = a.limite_cobrancas == null ? null : Number(a.limite_cobrancas);
   const hoje = new Date().toISOString().slice(0, 10);
   const baseVencimento = String(cobrancaAtual.vencimento || hoje).slice(0, 10);
-  const proximoVencimento = somarMesesISO(baseVencimento < hoje ? hoje : baseVencimento, 1);
+  let proximoVencimento = somarMesesISO(baseVencimento < hoje ? hoje : baseVencimento, 1);
   if (limite && quantidade >= limite) {
     await db.execute({
       sql: `UPDATE cobrancas SET status = 'cancelado' WHERE matricula_id = ? AND status IN ('pendente','atrasado') AND vencimento > ?`,
@@ -412,16 +412,25 @@ async function registrarProximaCobranca(assinatura, cobrancaAtual) {
     });
     return;
   }
+  let proximaExistente = await db.execute({
+    sql: `SELECT id, status FROM cobrancas WHERE matricula_id = ? AND vencimento = ? LIMIT 1`,
+    args: [a.matricula_id, proximoVencimento],
+  });
+  // Se a próxima competência já foi quitada manualmente, não cobre de novo:
+  // avança até a primeira competência ainda não paga.
+  while (proximaExistente.rows[0]?.status === 'pago') {
+    proximoVencimento = somarMesesISO(proximoVencimento, 1);
+    proximaExistente = await db.execute({
+      sql: `SELECT id, status FROM cobrancas WHERE matricula_id = ? AND vencimento = ? LIMIT 1`,
+      args: [a.matricula_id, proximoVencimento],
+    });
+  }
   const descricao = a.modalidade === '12_meses' ? 'Recorrência 12 meses - R$ 65,00' : 'Recorrência mensal - R$ 70,00';
   // Cancela somente competências futuras além da próxima. Reutiliza a linha
   // já pré-gerada para a próxima competência, respeitando o índice único.
   await db.execute({
     sql: `UPDATE cobrancas SET status = 'cancelado'
           WHERE matricula_id = ? AND status IN ('pendente','atrasado') AND vencimento > ?`,
-    args: [a.matricula_id, proximoVencimento],
-  });
-  const proximaExistente = await db.execute({
-    sql: `SELECT id, status FROM cobrancas WHERE matricula_id = ? AND vencimento = ? LIMIT 1`,
     args: [a.matricula_id, proximoVencimento],
   });
   if (proximaExistente.rows[0]) {

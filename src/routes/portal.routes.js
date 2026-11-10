@@ -873,9 +873,16 @@ router.post('/cadastro/pix', limitadorSenhaPortal, async (req,res,next) => {
   const pm=o.transactions?.payments?.[0]?.payment_method||{};res.json({cobranca_id:c.id,valor_centavos:c.valor_centavos,qr_code_pix:pm.qr_code||null,qr_code_pix_imagem:pm.qr_code_base64||null});
  }catch(e){next(e);}
 });
+router.get('/cadastro/recorrencia/planos', async (req, res, next) => {
+ try {
+  res.set('Cache-Control', 'no-store');
+  res.json({ opcoes: await assinaturas.listarPlanosCadastroPublicos() });
+ } catch (e) { next(e); }
+});
+
 router.post('/cadastro/recorrencia', limitadorSenhaPortal, async(req,res,next)=>{
  try{
-  const d=z.object({cpf:z.string().min(1),senha:z.string().min(1),matricula_id:z.string().min(1),modalidade:z.enum(['12_meses','mensal_livre'])}).parse(req.body);
+  const d=z.object({cpf:z.string().min(1),senha:z.string().min(1),matricula_id:z.string().min(1),modalidade:z.string().min(1).max(40)}).parse(req.body);
   const auth=await autenticarAlunoPortal(d.cpf,d.senha);if(auth.erro)return res.status(auth.status).json({erro:auth.erro});
   const m=await db.execute({sql:"SELECT id FROM matriculas WHERE id=? AND aluno_id=? AND status='pendente'",args:[d.matricula_id,auth.aluno.id]});
   if(!m.rows[0])return res.status(404).json({erro:'Matrícula pendente não encontrada.'});

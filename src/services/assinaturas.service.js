@@ -179,7 +179,7 @@ function precoDaOferta(valorCheioCentavos, oferta) {
 
 // ── Criar / listar / cancelar ───────────────────────────────────────────────
 
-async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPrimeiraCobranca = null, cobrancaInicialId = null, valorAnteriorCentavos = null, statusAnteriorCobranca = null, cobrancaInicialCriada = false }) {
+async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPrimeiraCobranca = null, cobrancaInicialId = null, valorAnteriorCentavos = null, statusAnteriorCobranca = null, cobrancaInicialCriada = false, permitirMatriculaPendente = false }) {
   if (!habilitado()) throw erro('Assinaturas do Mercado Pago estão desligadas (MERCADOPAGO_ASSINATURAS).', 503);
 
   const r = await db.execute({
@@ -193,7 +193,7 @@ async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPr
   });
   const m = r.rows[0];
   if (!m) throw erro('Matrícula não encontrada.', 404);
-  if (m.status !== 'ativa') throw erro('Só matrícula ativa pode ter assinatura.', 409);
+  if (m.status !== 'ativa' && !(permitirMatriculaPendente && modalidade && m.status === 'pendente')) throw erro('Só matrícula ativa pode ter assinatura.', 409);
   if (!modalidade && !TIPOS_RECORRENTES.includes(m.tipo)) throw erro('O plano desta matrícula não é recorrente.', 409);
   if (!m.email) throw erro('O aluno precisa ter e-mail cadastrado — o Mercado Pago exige.', 400);
 
@@ -398,7 +398,7 @@ async function registrarProximaCobranca(assinatura, cobrancaAtual) {
   // (renovacao_automatica fica desligada). Portanto, cada parcela aprovada
   // precisa estender a validade da matrícula até o próximo vencimento.
   await db.execute({
-    sql: 'UPDATE matriculas SET data_fim = ? WHERE id = ?',
+    sql: `UPDATE matriculas SET data_fim = ?, status = CASE WHEN status = 'pendente' THEN 'ativa' ELSE status END WHERE id = ?`,
     args: [proximoVencimento, a.matricula_id],
   });
   if (limite && quantidade >= limite) {
@@ -765,8 +765,22 @@ async function obterOuCriarParaAluno({ alunoId, baseUrl, modalidade }) {
   }
 }
 
+
+async function obterOuCriarParaNovoCadastro({alunoId,matriculaId,baseUrl,modalidade}){
+ if(!habilitado())throw erro('Pagamento recorrente indisponível no momento.',503);
+ if(!['12_meses','mensal_livre'].includes(modalidade))throw erro('Modalidade inválida.',400);
+ const m=await db.execute({sql:"SELECT id FROM matriculas WHERE id=? AND aluno_id=? AND status='pendente'",args:[matriculaId,alunoId]});
+ if(!m.rows[0])throw erro('Matrícula pendente não encontrada.',404);
+ const q=await db.execute({sql:"SELECT id,provedor_referencia FROM cobrancas WHERE matricula_id=? AND status='pendente' ORDER BY criado_em LIMIT 1",args:[matriculaId]});
+ const c=q.rows[0];if(!c||c.provedor_referencia)throw erro('O Pix já foi iniciado ou a cobrança não está disponível.',409);
+ const valor=modalidade==='12_meses'?6500:7000,hoje=new Date().toISOString().slice(0,10);
+ await db.execute({sql:"UPDATE cobrancas SET valor_centavos=?,provedor='recorrencia',descricao=?,vencimento=? WHERE id=? AND status='pendente'",args:[valor,modalidade==='12_meses'?'Recorrência 12 meses - R$ 65,00':'Recorrência mensal - R$ 70,00',hoje,c.id]});
+ try{const criada=await criarAssinatura({matriculaId,baseUrl,modalidade,dataPrimeiraCobranca:hoje,cobrancaInicialId:c.id,permitirMatriculaPendente:true});return{oferta_url:criada.oferta_url};}
+ catch(e){await db.execute({sql:"UPDATE cobrancas SET valor_centavos=(SELECT p.valor_centavos FROM matriculas m JOIN planos p ON p.id=m.plano_id WHERE m.id=?),provedor='mercadopago',descricao='Matrícula' WHERE id=? AND status='pendente'",args:[matriculaId,c.id]}).catch(()=>{});throw e;}
+}
+
 module.exports = {
   habilitado, criarAssinatura, listar, cancelar, processarEvento, processarPagamentoAprovado,
-  ofertaPublica, disponibilidadeParaAluno, obterOuCriarParaAluno, baseUrlDaRequisicao, urlOferta,
+  ofertaPublica, disponibilidadeParaAluno, obterOuCriarParaAluno, obterOuCriarParaNovoCadastro, baseUrlDaRequisicao, urlOferta,
   obterOferta, salvarOferta, calcularDescontoCentavos, OFERTA_PADRAO,
 };

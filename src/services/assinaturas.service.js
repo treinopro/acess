@@ -23,7 +23,7 @@
 const { v4: uuid } = require('uuid');
 const db = require('../db/client');
 const mercadopago = require('./payment/mercadopago.service');
-const { MESES_POR_TIPO, TIPOS_RECORRENTES } = require('./cobrancas.service');
+const { MESES_POR_TIPO, TIPOS_RECORRENTES, primeiroVencimento } = require('./cobrancas.service');
 
 const VALOR_MINIMO_CENTAVOS = 100; // nunca cobra menos de R$ 1,00 por ciclo (desconto absurdo = erro de digitação)
 
@@ -179,7 +179,7 @@ function precoDaOferta(valorCheioCentavos, oferta) {
 
 // ── Criar / listar / cancelar ───────────────────────────────────────────────
 
-async function criarAssinatura({ matriculaId, baseUrl }) {
+async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPrimeiraCobranca = null }) {
   if (!habilitado()) throw erro('Assinaturas do Mercado Pago estão desligadas (MERCADOPAGO_ASSINATURAS).', 503);
 
   const r = await db.execute({
@@ -194,7 +194,7 @@ async function criarAssinatura({ matriculaId, baseUrl }) {
   const m = r.rows[0];
   if (!m) throw erro('Matrícula não encontrada.', 404);
   if (m.status !== 'ativa') throw erro('Só matrícula ativa pode ter assinatura.', 409);
-  if (!TIPOS_RECORRENTES.includes(m.tipo)) throw erro('O plano desta matrícula não é recorrente.', 409);
+  if (!modalidade && !TIPOS_RECORRENTES.includes(m.tipo)) throw erro('O plano desta matrícula não é recorrente.', 409);
   if (!m.email) throw erro('O aluno precisa ter e-mail cadastrado — o Mercado Pago exige.', 400);
 
   const existente = await db.execute({
@@ -204,10 +204,17 @@ async function criarAssinatura({ matriculaId, baseUrl }) {
   if (existente.rows.length) throw erro('Esta matrícula já tem uma assinatura ativa ou aguardando o cartão.', 409);
 
   const oferta = await obterOferta();
-  const preco = precoDaOferta(Number(m.valor_centavos), oferta);
+  const planoRecorrencia = modalidade === '12_meses' || modalidade === 'mensal_livre';
+  if (modalidade && !planoRecorrencia) throw erro('Modalidade de recorrência inválida.', 400);
+  const valorCiclo = modalidade === '12_meses' ? 6500 : modalidade === 'mensal_livre' ? 7000 : Number(m.valor_centavos);
+  const preco = modalidade ? { valor_cheio_centavos: valorCiclo, desconto_centavos: 0, valor_centavos: valorCiclo } : precoDaOferta(Number(m.valor_centavos), oferta);
 
   const id = uuid();
-  const frequenciaMeses = MESES_POR_TIPO[m.tipo];
+  const frequenciaMeses = modalidade ? 1 : MESES_POR_TIPO[m.tipo];
+  const limiteCobrancas = modalidade === '12_meses' ? 12 : null;
+  const dataFimCobranca = modalidade === '12_meses' && dataPrimeiraCobranca
+    ? new Date(Date.UTC(Number(dataPrimeiraCobranca.slice(0,4)), Number(dataPrimeiraCobranca.slice(5,7))-1+11, Number(dataPrimeiraCobranca.slice(8,10)), 23, 59, 59)).toISOString()
+    : null;
   const mp = await mercadopago.criarAssinaturaPendente({
     razao: `${m.plano_nome} — ${m.aluno_nome}`,
     valorCentavos: preco.valor_centavos,
@@ -215,13 +222,15 @@ async function criarAssinatura({ matriculaId, baseUrl }) {
     emailPagador: m.email,
     referenciaExterna: id,
     urlRetorno: urlRetorno(baseUrl, id),
+    dataInicio: dataPrimeiraCobranca ? `${dataPrimeiraCobranca}T00:00:00.000-03:00` : null,
+    dataFim: dataFimCobranca,
   });
   if (!mp?.id) throw erro('Mercado Pago não devolveu o id da assinatura.', 502);
 
   await db.execute({
-    sql: `INSERT INTO assinaturas_mp (id, matricula_id, aluno_id, preapproval_id, status, valor_centavos, valor_cheio_centavos, desconto_centavos, frequencia_meses, init_point)
-          VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
-    args: [id, matriculaId, m.aluno_id, String(mp.id), preco.valor_centavos, preco.valor_cheio_centavos, preco.desconto_centavos, frequenciaMeses, mp.init_point || null],
+    sql: `INSERT INTO assinaturas_mp (id, matricula_id, aluno_id, preapproval_id, status, valor_centavos, valor_cheio_centavos, desconto_centavos, frequencia_meses, modalidade, limite_cobrancas, cobrancas_processadas, data_primeira_cobranca, init_point)
+          VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+    args: [id, matriculaId, m.aluno_id, String(mp.id), preco.valor_centavos, preco.valor_cheio_centavos, preco.desconto_centavos, frequenciaMeses, modalidade || 'legado', limiteCobrancas, dataPrimeiraCobranca, mp.init_point || null],
   });
 
   const oUrl = urlOferta(baseUrl, id);
@@ -260,7 +269,7 @@ async function cancelar({ assinaturaId }) {
 }
 
 async function atualizarStatus(preapprovalId, status) {
-  const permitido = ['pending', 'authorized', 'paused', 'cancelled'];
+  const permitido = ['pending', 'authorized', 'paused', 'cancelled', 'completed'];
   if (!permitido.includes(status)) return;
   await db.execute({
     sql: `UPDATE assinaturas_mp SET status = ?, atualizado_em = datetime('now') WHERE preapproval_id = ?`,

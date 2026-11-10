@@ -220,6 +220,34 @@ test('portal: card disponível, reaproveita a assinatura pendente e some depois 
   await assert.rejects(assinaturas.obterOuCriarParaAluno({ alunoId: 'p1x', baseUrl: base, modalidade: 'mensal_livre' }), /não está disponível/);
 });
 
+test('cadastro novo: recorrência deixa matrícula pendente até a primeira parcela aprovada', async () => {
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('novo-rec', 'Aluno Novo', 'novo@teste.com', '99988877766')` });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-novo-rec', 'novo-rec', 'p1', '2026-11-10', 'pendente')` });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-novo-rec', 'novo-rec', 'm-novo-rec', 9900, 'pendente', 'mercadopago', 'Matrícula - Mensal', '2026-11-10')` });
+
+  const criada = await assinaturas.obterOuCriarParaNovoCadastro({
+    alunoId: 'novo-rec', matriculaId: 'm-novo-rec', baseUrl: 'https://academia.test', modalidade: '12_meses',
+  });
+  assert.match(criada.oferta_url, /\/assinar\//);
+  let matricula = (await db.execute({ sql: `SELECT status FROM matriculas WHERE id='m-novo-rec'` })).rows[0];
+  assert.strictEqual(matricula.status, 'pendente');
+  let cobranca = (await db.execute({ sql: `SELECT valor_centavos, provedor, status FROM cobrancas WHERE id='c-novo-rec'` })).rows[0];
+  assert.strictEqual(cobranca.valor_centavos, 6500);
+  assert.strictEqual(cobranca.provedor, 'recorrencia');
+  assert.strictEqual(cobranca.status, 'pendente');
+
+  const [, payload] = chamadas.filter((c) => c[0] === 'criar').pop();
+  const preapprovalId = payload.referenciaExterna;
+  const assinatura = (await db.execute({ sql: `SELECT preapproval_id FROM assinaturas_mp WHERE id=?`, args: [preapprovalId] })).rows[0];
+  estadoMp.parcelas['AP-NOVO-1'] = { preapproval_id: assinatura.preapproval_id, transaction_amount: 65, payment: { id: 991, status: 'approved' } };
+  const baixa = await assinaturas.processarEvento({ type: 'subscription_authorized_payment', dataId: 'AP-NOVO-1' });
+  assert.deepStrictEqual(baixa, { alunoId: 'novo-rec' });
+  matricula = (await db.execute({ sql: `SELECT status, data_fim FROM matriculas WHERE id='m-novo-rec'` })).rows[0];
+  assert.strictEqual(matricula.status, 'ativa');
+  cobranca = (await db.execute({ sql: `SELECT status FROM cobrancas WHERE id='c-novo-rec'` })).rows[0];
+  assert.strictEqual(cobranca.status, 'pago');
+});
+
 test('portal: plano avulso e recurso desligado não mostram o card', async () => {
   await novoAlunoComMatricula('p2x', { plano: 'p2' });
   assert.strictEqual((await assinaturas.disponibilidadeParaAluno({ alunoId: 'p2x', baseUrl: 'https://academia.test' })).disponivel, false);

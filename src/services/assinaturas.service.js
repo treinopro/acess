@@ -638,8 +638,8 @@ async function prepararCobrancaInicial({ matricula, valorCentavos, modalidade })
     valorAnteriorCentavos = Number(abertas.rows[0].valor_centavos);
     statusAnteriorCobranca = abertas.rows[0].status;
     await db.execute({
-      sql: `UPDATE cobrancas SET valor_centavos = ?, descricao = ? WHERE id = ?`,
-      args: [valorCentavos, modalidade === '12_meses' ? 'Recorrência 12 meses - R$ 65,00' : 'Recorrência mensal - R$ 70,00', cobrancaId],
+      sql: 'UPDATE cobrancas SET valor_centavos = ? WHERE id = ?',
+      args: [valorCentavos, cobrancaId],
     });
   } else {
     const ultima = await db.execute({
@@ -720,12 +720,24 @@ async function obterOuCriarParaAluno({ alunoId, baseUrl, modalidade }) {
   if (pendente) await cancelar({ assinaturaId: pendente.id });
   const valor = modalidade === '12_meses' ? 6500 : 7000;
   const ciclo = await prepararCobrancaInicial({ matricula: { ...m, aluno_id: alunoId }, valorCentavos: valor, modalidade });
-  const criada = await criarAssinatura({
-    matriculaId: m.id, baseUrl, modalidade, dataPrimeiraCobranca: ciclo.vencimento,
-    cobrancaInicialId: ciclo.cobrancaId, valorAnteriorCentavos: ciclo.valorAnteriorCentavos,
-    statusAnteriorCobranca: ciclo.statusAnteriorCobranca, cobrancaInicialCriada: ciclo.cobrancaCriada,
-  });
-  return { oferta_url: criada.oferta_url };
+  try {
+    const criada = await criarAssinatura({
+      matriculaId: m.id, baseUrl, modalidade, dataPrimeiraCobranca: ciclo.vencimento,
+      cobrancaInicialId: ciclo.cobrancaId, valorAnteriorCentavos: ciclo.valorAnteriorCentavos,
+      statusAnteriorCobranca: ciclo.statusAnteriorCobranca, cobrancaInicialCriada: ciclo.cobrancaCriada,
+    });
+    return { oferta_url: criada.oferta_url };
+  } catch (err) {
+    if (ciclo.cobrancaCriada) {
+      await db.execute({ sql: `UPDATE cobrancas SET status = 'cancelado' WHERE id = ? AND status = 'pendente'`, args: [ciclo.cobrancaId] });
+    } else if (ciclo.valorAnteriorCentavos != null) {
+      await db.execute({
+        sql: `UPDATE cobrancas SET valor_centavos = ?, status = ? WHERE id = ? AND status IN ('pendente','atrasado')`,
+        args: [ciclo.valorAnteriorCentavos, ciclo.statusAnteriorCobranca || 'pendente', ciclo.cobrancaId],
+      });
+    }
+    throw err;
+  }
 }
 
 module.exports = {

@@ -922,6 +922,14 @@ router.get('/:id/perfil', async (req, res, next) => {
                 WHERE av.origem='academia' AND av.externo_id = ?
                 ORDER BY ax.data DESC, ax.created_at DESC`,
           args: [alunoId],
+        }).catch((err) => {
+          // Avaliações são armazenadas pelo AvaliaPro e podem não existir em
+          // instalações locais que não compartilham o banco desse módulo.
+          // Nesse caso, o perfil continua carregando sem o histórico de avaliações.
+          if (/no such table: (avaliacoes|avaliandos)/i.test(String(err.message || err))) {
+            return { rows: [] };
+          }
+          throw err;
         }),
         db.execute({
           sql: `SELECT m.*, p.nome as plano_nome, p.tipo as plano_tipo FROM matriculas m JOIN planos p ON p.id = m.plano_id

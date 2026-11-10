@@ -590,7 +590,8 @@ router.post('/cobrancas/parceladas', autenticar, async (req, res, next) => {
 // com um aviso no log em vez de derrubar o webhook — assim o pagamento
 // continua funcionando normalmente até o segredo ser configurado.
 function verificarAssinaturaMercadoPago(req) {
-  const secret = process.env.MERCADOPAGO_WEBHOOK_SECRET;
+  // Tira espaços/aspas/quebra de linha que costumam vir ao colar o segredo no painel do host.
+  const secret = String(process.env.MERCADOPAGO_WEBHOOK_SECRET || '').trim().replace(/^["']|["']$/g, '').trim();
   if (!secret) {
     return { valido: true, aviso: 'MERCADOPAGO_WEBHOOK_SECRET não configurado — assinatura do webhook NÃO está sendo verificada.' };
   }
@@ -599,13 +600,13 @@ function verificarAssinaturaMercadoPago(req) {
   const requestId = req.headers['x-request-id'];
   const dataId = req.query['data.id'] || req.body?.data?.id;
   if (!assinatura || !dataId) {
-    return { valido: false, aviso: 'Header x-signature ou data.id ausente.' };
+    return { valido: false, aviso: `Header x-signature ou data.id ausente (x-signature: ${assinatura ? 'sim' : 'não'}, data.id: ${dataId ? 'sim' : 'não'}).` };
   }
 
   const partes = {};
   for (const par of String(assinatura).split(',')) {
-    const [chave, valor] = par.split('=').map((s) => (s || '').trim());
-    if (chave) partes[chave] = valor;
+    const i = par.indexOf('=');
+    if (i > 0) partes[par.slice(0, i).trim()] = par.slice(i + 1).trim();
   }
   const { ts, v1: v1Recebido } = partes;
   if (!ts || !v1Recebido) {
@@ -614,13 +615,22 @@ function verificarAssinaturaMercadoPago(req) {
 
   // Mercado Pago pede o id em minúsculas quando ele é alfanumérico.
   const idParaManifest = /^[a-zA-Z0-9]+$/.test(String(dataId)) ? String(dataId).toLowerCase() : String(dataId);
-  const manifest = `id:${idParaManifest};${requestId ? `request-id:${requestId};` : ''}ts:${ts};`;
-  const hashCalculado = crypto.createHmac('sha256', secret).update(manifest).digest('hex');
+  // Proxies/CDN do host podem reescrever o x-request-id; por isso também se aceita
+  // o manifest sem ele (variação prevista na documentação do MP).
+  const manifests = [`id:${idParaManifest};${requestId ? `request-id:${requestId};` : ''}ts:${ts};`];
+  if (requestId) manifests.push(`id:${idParaManifest};ts:${ts};`);
 
-  const bufCalculado = Buffer.from(hashCalculado);
   const bufRecebido = Buffer.from(String(v1Recebido));
-  const valido = bufCalculado.length === bufRecebido.length && crypto.timingSafeEqual(bufCalculado, bufRecebido);
-  return { valido, aviso: valido ? null : 'Assinatura do webhook inválida — requisição rejeitada.' };
+  const valido = manifests.some((m) => {
+    const buf = Buffer.from(crypto.createHmac('sha256', secret).update(m).digest('hex'));
+    return buf.length === bufRecebido.length && crypto.timingSafeEqual(buf, bufRecebido);
+  });
+  if (valido) return { valido, aviso: null };
+  return {
+    valido,
+    aviso: `Assinatura do webhook inválida — requisição rejeitada. Diagnóstico: data.id="${dataId}", x-request-id ${requestId ? 'presente' : 'ausente'}, ts=${ts}, tamanho do segredo configurado=${secret.length}. `
+      + 'Causas comuns: segredo do Northflank diferente do painel do MP (o segredo muda entre credenciais de TESTE e de PRODUÇÃO e entre aplicações), ou simulação feita no app/modo errado.',
+  };
 }
 
 // Webhook do Mercado Pago (configurar a URL no painel do app / preferência)
@@ -841,4 +851,5 @@ router.post('/gerar-recorrentes', autenticar, apenasAdmin, async (req, res, next
   }
 });
 
+router.verificarAssinaturaMercadoPago = verificarAssinaturaMercadoPago; // exposto para teste
 module.exports = router;

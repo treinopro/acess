@@ -213,7 +213,6 @@ async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPr
   const frequenciaMeses = modalidade ? 1 : MESES_POR_TIPO[m.tipo];
   const limiteCobrancas = modalidade === '12_meses' ? 12 : null;
   const hojeCobranca = new Date().toISOString().slice(0, 10);
-  const inicioEfetivo = dataPrimeiraCobranca && dataPrimeiraCobranca > hojeCobranca ? dataPrimeiraCobranca : hojeCobranca;
   const dataInicioMP = dataPrimeiraCobranca && dataPrimeiraCobranca > hojeCobranca
     ? `${dataPrimeiraCobranca}T00:00:00.000-03:00`
     : null;

@@ -34,3 +34,10 @@ test('webhook MP: rejeita segredo errado e explica no log', () => {
   assert.strictEqual(r.valido, false);
   assert.match(r.aviso, /Diagnóstico/);
 });
+
+test('webhook MP: aceita quando o request id original chega em outro cabeçalho', () => {
+  process.env.MERCADOPAGO_WEBHOOK_SECRET = 'segredo123';
+  const r = req({ secret: 'segredo123', dataId: '555', requestId: 'id-original-do-mp' });
+  r.headers = { 'x-signature': r.headers['x-signature'], 'x-request-id': 'trocado-pelo-proxy', 'x-original-request-id': 'id-original-do-mp' };
+  assert.strictEqual(verificar(r).valido, true);
+});

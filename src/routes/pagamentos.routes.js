@@ -615,10 +615,15 @@ function verificarAssinaturaMercadoPago(req) {
 
   // Mercado Pago pede o id em minúsculas quando ele é alfanumérico.
   const idParaManifest = /^[a-zA-Z0-9]+$/.test(String(dataId)) ? String(dataId).toLowerCase() : String(dataId);
-  // Proxies/CDN do host podem reescrever o x-request-id; por isso também se aceita
-  // o manifest sem ele (variação prevista na documentação do MP).
-  const manifests = [`id:${idParaManifest};${requestId ? `request-id:${requestId};` : ''}ts:${ts};`];
-  if (requestId) manifests.push(`id:${idParaManifest};ts:${ts};`);
+  // Proxies/CDN do host podem reescrever o x-request-id (a assinatura do MP usa o ORIGINAL).
+  // Por isso testa todo cabeçalho que pareça um request id (ex.: x-request-id, x-original-request-id,
+  // x-amzn-trace-id não, só nomes com "request-id") e também o manifest sem ele.
+  const candidatos = new Set();
+  for (const [nome, valorHeader] of Object.entries(req.headers || {})) {
+    if (/request-?id/i.test(nome) && valorHeader) candidatos.add(String(valorHeader));
+  }
+  const manifests = [...candidatos].map((rid) => `id:${idParaManifest};request-id:${rid};ts:${ts};`);
+  manifests.push(`id:${idParaManifest};ts:${ts};`);
 
   const bufRecebido = Buffer.from(String(v1Recebido));
   const valido = manifests.some((m) => {
@@ -628,7 +633,7 @@ function verificarAssinaturaMercadoPago(req) {
   if (valido) return { valido, aviso: null };
   return {
     valido,
-    aviso: `Assinatura do webhook inválida — requisição rejeitada. Diagnóstico: data.id="${dataId}", x-request-id ${requestId ? 'presente' : 'ausente'}, ts=${ts}, segredo em uso no servidor: ${secret.slice(0, 4)}…${secret.slice(-4)} (${secret.length} caracteres). `
+    aviso: `Assinatura do webhook inválida — requisição rejeitada. Diagnóstico: data.id="${dataId}", x-request-id=${requestId || 'ausente'}, cabeçalhos recebidos=[${Object.keys(req.headers || {}).join(',')}], ts=${ts}, segredo em uso no servidor: ${secret.slice(0, 4)}…${secret.slice(-4)} (${secret.length} caracteres). `
       + 'Causas comuns: segredo do Northflank diferente do painel do MP (o segredo muda entre credenciais de TESTE e de PRODUÇÃO e entre aplicações), ou simulação feita no app/modo errado.',
   };
 }

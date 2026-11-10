@@ -217,7 +217,11 @@ async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPr
     ? `${dataPrimeiraCobranca}T00:00:00.000-03:00`
     : null;
   const mp = await mercadopago.criarAssinaturaPendente({
-    razao: `${m.plano_nome} — ${m.aluno_nome}`,
+    razao: modalidade === '12_meses'
+      ? `${m.plano_nome} — R$ 65,00 por mês durante 12 meses`
+      : modalidade === 'mensal_livre'
+        ? `${m.plano_nome} — R$ 70,00 por mês`
+        : `${m.plano_nome} — ${m.aluno_nome}`,
     valorCentavos: preco.valor_centavos,
     frequenciaMeses,
     emailPagador: m.email,
@@ -588,7 +592,7 @@ async function ofertaPublica(id) {
   ].filter(Boolean).slice(0, LIMITES.beneficios);
   const faqModalidade = o.modalidade === '12_meses'
     ? [
-      { p: 'Qual é o compromisso?', r: 'São 12 cobranças mensais de R$ 65,00, totalizando R$ 780,00. As condições de cancelamento antecipado seguem o contrato.' },
+      { p: 'Qual é o compromisso?', r: 'São 12 cobranças automáticas de R$ 65,00, uma por mês, durante 12 meses. As condições de cancelamento antecipado seguem o contrato.' },
       { p: 'A academia guarda os dados do cartão?', r: 'Não. O cartão é cadastrado diretamente no Mercado Pago.' },
       { p: 'E se o cartão for recusado?', r: 'O Mercado Pago poderá tentar processar novamente. A situação da cobrança será atualizada após a confirmação.' },
     ]
@@ -601,7 +605,7 @@ async function ofertaPublica(id) {
       : oferta.faq;
   return montarOferta(base, oferta, {
     subtitulo: o.modalidade === '12_meses'
-      ? 'Pagamento automático de R$ 65,00 por mês, durante 12 cobranças. Total contratado: R$ 780,00.'
+      ? 'Plano ' + o.plano_nome + ': pagamento automático de R$ 65,00 por mês, durante 12 meses.'
       : o.modalidade === 'mensal_livre'
         ? 'Pagamento automático de R$ 70,00 por mês, sem compromisso de permanência mínima.'
         : oferta.subtitulo,

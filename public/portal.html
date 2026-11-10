@@ -591,10 +591,13 @@ if ('serviceWorker' in navigator) {
 
     <div class="cartao oculto" id="painel-cadastro-portal-pagamento">
       <h3 id="portal-cadastro-valor"></h3>
-      <div id="qrcode-cadastro-portal" style="display:flex;justify-content:center;margin-bottom:12px"></div>
-      <div class="aviso-caixa">Escaneie com o app do seu banco (Pix) para pagar. A tela avança sozinha assim que o pagamento for confirmado.</div>
-      <button class="botao-grande secundario oculto" id="btn-copiar-pix-cadastro-portal">Copiar código Pix</button>
-      <div class="status-scan" id="portal-cadastro-status">Aguardando pagamento...</div>
+      <div id="oferta-recorrencia-novo-aluno"></div>
+      <div id="cadastro-pix-conteudo" class="oculto">
+        <div id="qrcode-cadastro-portal" style="display:flex;justify-content:center;margin-bottom:12px"></div>
+        <div class="aviso-caixa">Escaneie com o app do seu banco (Pix) para pagar. A tela avança sozinha assim que o pagamento for confirmado.</div>
+        <button class="botao-grande secundario oculto" id="btn-copiar-pix-cadastro-portal">Copiar código Pix</button>
+        <div class="status-scan" id="portal-cadastro-status">Aguardando pagamento...</div>
+      </div>
     </div>
 
     <div class="cartao oculto" id="painel-cadastro-portal-sucesso">
@@ -602,7 +605,6 @@ if ('serviceWorker' in navigator) {
       <div class="subtitulo" id="portal-cadastro-sucesso-msg" style="margin-bottom:8px"></div>
       <p style="font-size:15px;color:#94a3b8;margin-bottom:4px">Sua senha de acesso ao portal (guarde bem — vai precisar dela com seu CPF nas próximas visitas):</p>
       <div class="aviso-caixa" id="portal-cadastro-senha-caixa" style="font-size:26px;font-weight:700;text-align:center;letter-spacing:3px;margin-bottom:12px"></div>
-      <div id="oferta-recorrencia-novo-aluno"></div>
       <p>Quer que a catraca já reconheça seu rosto na próxima visita?</p>
       <button class="botao-grande secundario" id="btn-portal-cadastro-facial" style="margin:0 0 8px">Cadastrar reconhecimento facial agora</button>
       <button class="botao-grande primario" id="btn-portal-cadastro-concluir" style="margin:0">Concluir</button>

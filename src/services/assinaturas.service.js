@@ -179,7 +179,7 @@ function precoDaOferta(valorCheioCentavos, oferta) {
 
 // ── Criar / listar / cancelar ───────────────────────────────────────────────
 
-async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPrimeiraCobranca = null }) {
+async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPrimeiraCobranca = null, cobrancaInicialId = null, valorAnteriorCentavos = null, cobrancaInicialCriada = false }) {
   if (!habilitado()) throw erro('Assinaturas do Mercado Pago estão desligadas (MERCADOPAGO_ASSINATURAS).', 503);
 
   const r = await db.execute({
@@ -228,9 +228,9 @@ async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPr
   if (!mp?.id) throw erro('Mercado Pago não devolveu o id da assinatura.', 502);
 
   await db.execute({
-    sql: `INSERT INTO assinaturas_mp (id, matricula_id, aluno_id, preapproval_id, status, valor_centavos, valor_cheio_centavos, desconto_centavos, frequencia_meses, modalidade, limite_cobrancas, cobrancas_processadas, data_primeira_cobranca, init_point)
-          VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
-    args: [id, matriculaId, m.aluno_id, String(mp.id), preco.valor_centavos, preco.valor_cheio_centavos, preco.desconto_centavos, frequenciaMeses, modalidade || 'legado', limiteCobrancas, dataPrimeiraCobranca, mp.init_point || null],
+    sql: `INSERT INTO assinaturas_mp (id, matricula_id, aluno_id, preapproval_id, status, valor_centavos, valor_cheio_centavos, desconto_centavos, frequencia_meses, modalidade, limite_cobrancas, cobrancas_processadas, data_primeira_cobranca, cobranca_inicial_id, valor_anterior_centavos, cobranca_inicial_criada, init_point)
+          VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
+    args: [id, matriculaId, m.aluno_id, String(mp.id), preco.valor_centavos, preco.valor_cheio_centavos, preco.desconto_centavos, frequenciaMeses, modalidade || 'legado', limiteCobrancas, dataPrimeiraCobranca, cobrancaInicialId, valorAnteriorCentavos, cobrancaInicialCriada ? 1 : 0, mp.init_point || null],
   });
 
   const oUrl = urlOferta(baseUrl, id);
@@ -266,7 +266,16 @@ async function cancelar({ assinaturaId }) {
   await mercadopago.cancelarAssinatura(a.preapproval_id);
   await atualizarStatus(a.preapproval_id, 'cancelled');
   // Checkout pendente ainda não migrou a matrícula nem encerrou a modalidade atual.
-  if (a.status === 'pending') return { id: a.id, status: 'cancelled' };
+  if (a.status === 'pending') {
+    if (a.cobranca_inicial_id) {
+      if (Number(a.cobranca_inicial_criada) === 1) {
+        await db.execute({ sql: `UPDATE cobrancas SET status = 'cancelado' WHERE id = ? AND status IN ('pendente','atrasado')`, args: [a.cobranca_inicial_id] });
+      } else if (a.valor_anterior_centavos != null) {
+        await db.execute({ sql: 'UPDATE cobrancas SET valor_centavos = ? WHERE id = ? AND status IN (\'pendente\',\'atrasado\')', args: [a.valor_anterior_centavos, a.cobranca_inicial_id] });
+      }
+    }
+    return { id: a.id, status: 'cancelled' };
+  }
   const ultimaPaga = await db.execute({
     sql: `SELECT vencimento FROM cobrancas WHERE matricula_id = ? AND status = 'pago' ORDER BY vencimento DESC, pago_em DESC LIMIT 1`,
     args: [a.matricula_id],
@@ -585,7 +594,7 @@ function somarMesesISO(dataISO, meses) {
 // cobrança para a mesma competência.
 async function prepararCobrancaInicial({ matricula, valorCentavos, modalidade }) {
   const abertas = await db.execute({
-    sql: `SELECT id, vencimento FROM cobrancas
+    sql: `SELECT id, vencimento, valor_centavos FROM cobrancas
           WHERE matricula_id = ? AND status IN ('pendente', 'atrasado')
           ORDER BY vencimento ASC, criado_em ASC`,
     args: [matricula.id],
@@ -593,18 +602,16 @@ async function prepararCobrancaInicial({ matricula, valorCentavos, modalidade })
   const hoje = new Date().toISOString().slice(0, 10);
   let vencimento;
   let cobrancaId;
+  let valorAnteriorCentavos = null;
+  let cobrancaCriada = false;
   if (abertas.rows.length) {
     vencimento = String(abertas.rows[0].vencimento || hoje).slice(0, 10);
     cobrancaId = abertas.rows[0].id;
+    valorAnteriorCentavos = Number(abertas.rows[0].valor_centavos);
     await db.execute({
       sql: `UPDATE cobrancas SET valor_centavos = ?, descricao = ? WHERE id = ?`,
       args: [valorCentavos, modalidade === '12_meses' ? 'Recorrência 12 meses - R$ 65,00' : 'Recorrência mensal - R$ 70,00', cobrancaId],
     });
-    // Cancela contas futuras pré-geradas pela matrícula tradicional. A partir
-    // da migração, a sequência será conduzida pelas confirmações do Mercado Pago.
-    for (const futura of abertas.rows.slice(1)) {
-      await db.execute({ sql: `UPDATE cobrancas SET status = 'cancelado' WHERE id = ?`, args: [futura.id] });
-    }
   } else {
     const ultima = await db.execute({
       sql: `SELECT vencimento FROM cobrancas WHERE matricula_id = ? ORDER BY vencimento DESC, criado_em DESC LIMIT 1`,
@@ -614,6 +621,7 @@ async function prepararCobrancaInicial({ matricula, valorCentavos, modalidade })
       ? somarMesesISO(String(ultima.rows[0].vencimento), 1)
       : primeiroVencimento(matricula.data_inicio || hoje);
     cobrancaId = uuid();
+    cobrancaCriada = true;
     await db.execute({
       sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento)
             VALUES (?, ?, ?, ?, 'pendente', 'recorrencia', ?, ?)`,
@@ -621,7 +629,7 @@ async function prepararCobrancaInicial({ matricula, valorCentavos, modalidade })
         modalidade === '12_meses' ? 'Recorrência 12 meses - R$ 65,00' : 'Recorrência mensal - R$ 70,00', vencimento],
     });
   }
-  return { vencimento, cobrancaId };
+  return { vencimento, cobrancaId, valorAnteriorCentavos, cobrancaCriada };
 }
 
 async function assinaturaAbertaDaMatricula(matriculaId) {
@@ -671,6 +679,8 @@ async function obterOuCriarParaAluno({ alunoId, baseUrl, modalidade }) {
   const ciclo = await prepararCobrancaInicial({ matricula: { ...m, aluno_id: alunoId }, valorCentavos: valor, modalidade });
   const criada = await criarAssinatura({
     matriculaId: m.id, baseUrl, modalidade, dataPrimeiraCobranca: ciclo.vencimento,
+    cobrancaInicialId: ciclo.cobrancaId, valorAnteriorCentavos: ciclo.valorAnteriorCentavos,
+    cobrancaInicialCriada: ciclo.cobrancaCriada,
   });
   return { oferta_url: criada.oferta_url };
 }

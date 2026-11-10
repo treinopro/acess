@@ -2116,6 +2116,55 @@ document.getElementById('btn-portal-cadastro-continuar').addEventListener('click
   }
 });
 
+async function carregarOfertaRecorrenciaNovoAluno() {
+  const container = document.getElementById('oferta-recorrencia-novo-aluno');
+  if (!container || !cadastroPortalCpfAtual || !cadastroPortalSenhaAtual) return;
+  container.innerHTML = '';
+  try {
+    const d = await api(`/api/portal/assinatura?cpf=${encodeURIComponent(cadastroPortalCpfAtual)}&senha=${encodeURIComponent(cadastroPortalSenhaAtual)}`);
+    if (!d.disponivel || !Array.isArray(d.opcoes) || !d.opcoes.length) return;
+    container.innerHTML = `
+      <div class="cartao" style="text-align:left;border:1px solid #2563eb;margin-top:16px">
+        <div style="font-weight:800;color:#1d4ed8">⚡ CONDIÇÃO ESPECIAL DE PAGAMENTO AUTOMÁTICO</div>
+        <h3 style="margin:8px 0">Quer deixar suas mensalidades no automático?</h3>
+        <p>Você já garantiu sua matrícula. Se preferir, pode ativar a cobrança recorrente no cartão, sem precisar lembrar de pagar todo mês. É opcional: seu plano atual continua válido se não quiser.</p>
+        <div style="background:#eff6ff;border-radius:10px;padding:12px;margin:10px 0">
+          <strong>12 meses de compromisso</strong>
+          <div style="font-size:23px;font-weight:800;color:#166534">R$ 65,00/mês</div>
+          <small>12 cobranças • Total de R$ 780,00</small>
+          <button type="button" data-modalidade="12_meses" class="botao-grande primario" style="margin-top:8px">Quero 12 meses</button>
+        </div>
+        <div style="background:#eff6ff;border-radius:10px;padding:12px;margin:10px 0">
+          <strong>Mensal sem fidelidade</strong>
+          <div style="font-size:23px;font-weight:800;color:#1d4ed8">R$ 70,00/mês</div>
+          <small>Sem permanência mínima</small>
+          <button type="button" data-modalidade="mensal_livre" class="botao-grande secundario" style="margin-top:8px">Quero mensal livre</button>
+        </div>
+        <button type="button" data-dispensar-oferta class="link-voltar" style="width:100%">Continuar com meu plano atual</button>
+        <small>Ao escolher, você será direcionado ao Mercado Pago para cadastrar o cartão e revisar as condições. Nada muda se você não aceitar.</small>
+      </div>`;
+    container.querySelector('[data-dispensar-oferta]').addEventListener('click', () => { container.innerHTML = ''; });
+    container.querySelectorAll('[data-modalidade]').forEach((btn) => btn.addEventListener('click', async () => {
+      const modalidade = btn.dataset.modalidade;
+      const botoes = Array.from(container.querySelectorAll('[data-modalidade]'));
+      botoes.forEach((b) => { b.disabled = true; b.textContent = 'Abrindo…'; });
+      try {
+        const r = await api('/api/portal/assinatura', {
+          method: 'POST',
+          body: JSON.stringify({ cpf: cadastroPortalCpfAtual, senha: cadastroPortalSenhaAtual, modalidade }),
+        });
+        if (!r.oferta_url) throw new Error('O Mercado Pago não retornou o endereço da oferta.');
+        window.location.href = r.oferta_url;
+      } catch (err) {
+        botoes.forEach((b) => { b.disabled = false; b.textContent = b.dataset.modalidade === '12_meses' ? 'Quero 12 meses' : 'Quero mensal livre'; });
+        alert(err.message || 'Não foi possível abrir a oferta agora.');
+      }
+    }));
+  } catch {
+    // A oferta é opcional e nunca pode impedir a conclusão do cadastro.
+  }
+}
+
 function iniciarPollCadastroPortal(cobrancaId) {
   pararPollCadastroPortal();
   const statusEl = document.getElementById('portal-cadastro-status');
@@ -2128,6 +2177,7 @@ function iniciarPollCadastroPortal(cobrancaId) {
         document.getElementById('painel-cadastro-portal-sucesso').classList.remove('oculto');
         document.getElementById('portal-cadastro-sucesso-msg').textContent = `Pagamento confirmado! Bem-vindo(a), ${resp.aluno_nome || ''}. Sua matrícula já está ativa.`;
         document.getElementById('portal-cadastro-senha-caixa').textContent = cadastroPortalSenhaAtual || '';
+        carregarOfertaRecorrenciaNovoAluno();
       }
     } catch (err) {
       statusEl.textContent = `Erro ao consultar pagamento: ${err.message}`;

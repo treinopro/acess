@@ -740,6 +740,35 @@ router.put('/assinaturas/oferta-config', autenticar, apenasAdmin, async (req, re
   }
 });
 
+
+// Modalidades, preços e descontos dos novos cadastros. Os valores são lidos
+// do banco pelo portal e congelados na assinatura quando o aluno contrata.
+const planoCadastroSchema = z.object({
+  id: z.string().min(1).max(40).regex(/^[a-z0-9_-]+$/),
+  nome: z.string().trim().min(1).max(80),
+  valor_centavos: z.number().int().min(100).max(1000000),
+  limite_cobrancas: z.number().int().min(1).max(120).nullable(),
+  ativo: z.boolean(),
+  desconto: z.object({
+    ativo: z.boolean(),
+    tipo: z.enum(['percentual', 'valor']),
+    percentual: z.number().min(0).max(90),
+    valor_centavos: z.number().int().min(0).max(1000000),
+  }),
+});
+
+router.get('/assinaturas/planos-cadastro', autenticar, apenasAdmin, async (req, res, next) => {
+  try { res.json({ planos: await assinaturas.obterPlanosCadastro() }); }
+  catch (err) { next(err); }
+});
+
+router.put('/assinaturas/planos-cadastro', autenticar, apenasAdmin, async (req, res, next) => {
+  try {
+    const dados = z.object({ planos: z.array(planoCadastroSchema).min(1).max(12) }).parse(req.body);
+    res.json({ planos: await assinaturas.salvarPlanosCadastro(dados.planos) });
+  } catch (err) { next(err); }
+});
+
 // GET /api/pagamentos/assinaturas/oferta/:id — PÚBLICO (é o que a página /assinar/:id
 // consulta). Limitado por IP; o id é um UUID e a resposta não traz dados pessoais.
 const limitadorOferta = criarLimitador({

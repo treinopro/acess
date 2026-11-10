@@ -106,7 +106,7 @@ async function carregarCardAssinaturaHub() {
           <div style="background:#fff;color:#0f172a;border-radius:12px;padding:14px">
             <strong style="font-size:16px">12 meses de compromisso</strong>
             <div style="font-size:27px;font-weight:900;margin:4px 0;color:#166534">R$ 65,00/mês</div>
-            <div style="font-size:13px;color:#475569">12 cobranças • Total de R$ 780,00</div>
+            <div style="font-size:13px;color:#475569">12 parcelas de R$ 65,00 no cartão</div>
             <button type="button" data-modalidade="12_meses" style="width:100%;margin-top:12px;border:0;border-radius:9px;padding:12px;font-size:15px;font-weight:800;color:#fff;background:#15803d;cursor:pointer">Escolher plano de 12 meses</button>
           </div>
           <div style="background:#fff;color:#0f172a;border-radius:12px;padding:14px">
@@ -2074,7 +2074,7 @@ async function carregarOfertaRecorrenciaNovoAluno(){
   <div style="text-align:left"><div style="font-weight:800;color:#10b981">⚡ ESCOLHA COMO DESEJA PAGAR</div>
   <h3 style="margin:8px 0">Condição especial no cartão</h3>
   <p>Seu cadastro e sua matrícula foram registrados, mas ainda não ativados. Escolha uma opção:</p>
-  <div style="background:#0f172a;border-radius:10px;padding:12px;margin:10px 0"><strong>Compromisso de 12 meses</strong><div style="font-size:23px;font-weight:800;color:#10b981">R$ 65,00/mês</div><small>12 cobranças • Total de R$ 780,00</small><button type="button" data-modalidade="12_meses" class="botao-grande primario" style="margin-top:8px">Escolher 12 meses</button></div>
+  <div style="background:#0f172a;border-radius:10px;padding:12px;margin:10px 0"><strong>Compromisso de 12 meses</strong><div style="font-size:23px;font-weight:800;color:#10b981">R$ 65,00/mês</div><small>12 parcelas de R$ 65,00 no cartão</small><button type="button" data-modalidade="12_meses" class="botao-grande primario" style="margin-top:8px">Escolher 12 meses</button></div>
   <div style="background:#0f172a;border-radius:10px;padding:12px;margin:10px 0"><strong>Mensal sem fidelidade</strong><div style="font-size:23px;font-weight:800;color:#60a5fa">R$ 70,00/mês</div><small>Sem permanência mínima</small><button type="button" data-modalidade="mensal_livre" class="botao-grande secundario" style="margin-top:8px">Escolher mensal livre</button></div>
   <button type="button" data-escolher-pix class="botao-grande primario" style="width:100%;margin-top:12px">Continuar com Pix do plano escolhido</button>
   <small>Se sair agora, seu cadastro ficará salvo como pendente, sem cobrança nem ativação.</small><div class="erro-msg" data-erro-recorrencia></div></div>`;

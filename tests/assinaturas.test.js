@@ -409,7 +409,9 @@ test('pagamento recorrente estende a validade da matrícula até o próximo venc
   const primeira = (await db.execute({
     sql: `SELECT id, vencimento FROM cobrancas WHERE matricula_id = 'm-renova-validade' AND status = 'pendente'`,
   })).rows[0];
-  const [ano, mes, dia] = primeira.vencimento.split('-').map(Number);
+  const hoje = new Date().toISOString().slice(0, 10);
+  const baseVencimento = primeira.vencimento < hoje ? hoje : primeira.vencimento;
+  const [ano, mes, dia] = baseVencimento.split('-').map(Number);
   const alvo = new Date(Date.UTC(ano, mes, 1));
   const ultimo = new Date(Date.UTC(alvo.getUTCFullYear(), alvo.getUTCMonth() + 1, 0)).getUTCDate();
   const proximoEsperado = `${alvo.getUTCFullYear()}-${String(alvo.getUTCMonth() + 1).padStart(2, '0')}-${String(Math.min(dia, ultimo)).padStart(2, '0')}`;

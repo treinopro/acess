@@ -1995,6 +1995,8 @@ document.getElementById('btn-abrir-facial-hub').addEventListener('click', () => 
 let cadastroPortalCpfAtual = null;
 let cadastroPortalSenhaAtual = null; // senha do portal já gerada no cadastro (ver POST /api/portal/cadastro)
 let cadastroPortalPollTimer = null;
+let cadastroPortalCobrancaId = null;
+let cadastroPortalMatriculaId = null;
 
 function resetCadastroPortal() {
   pararPollCadastroPortal();
@@ -2037,152 +2039,62 @@ document.getElementById('btn-voltar-cadastro-portal').addEventListener('click', 
   mostrarPagina('pagina-inicio');
 });
 
+
 document.getElementById('btn-portal-cadastro-continuar').addEventListener('click', async () => {
-  const nome = document.getElementById('portal-cadastro-nome').value.trim();
-  const cpf = document.getElementById('portal-cadastro-cpf').value.trim();
-  const telefone = document.getElementById('portal-cadastro-telefone').value.trim();
-  const email = document.getElementById('portal-cadastro-email').value.trim();
-  const dataNascimento = document.getElementById('portal-cadastro-nascimento').value;
-  const planoId = document.getElementById('portal-cadastro-plano').value;
-  const indicadoPorCpf = document.getElementById('portal-cadastro-indicado-cpf').value.trim();
-  const erroEl = document.getElementById('portal-cadastro-erro');
-  erroEl.textContent = '';
-
-  if (!nome || !cpf || !telefone || !email || !dataNascimento || !planoId) {
-    erroEl.textContent = 'Preencha nome, CPF, telefone, e-mail, data de nascimento e escolha um plano.';
-    return;
-  }
-
-  try {
-    const resp = await api('/api/portal/cadastro', {
-      method: 'POST',
-      body: JSON.stringify({
-        nome, cpf, telefone, email, data_nascimento: dataNascimento, plano_id: planoId, indicado_por_cpf: indicadoPorCpf || null,
-      }),
-    });
-    cadastroPortalCpfAtual = cpf;
-
-    // Fluxo "visitante" (2026-07): sem Pix/matrícula — o próprio POST já
-    // devolve o cadastro concluído. Sem senha própria ainda (será gerada no
-    // primeiro login via "Já sou aluno", ver GET /api/portal/aluno).
-    if (resp.visitante) {
-      document.getElementById('painel-cadastro-portal-form').classList.add('oculto');
-      document.getElementById('painel-cadastro-portal-sucesso').classList.remove('oculto');
-      document.getElementById('portal-cadastro-sucesso-msg').textContent = `Cadastro de visitante concluído! Bem-vindo(a), ${resp.aluno_nome || ''}. Use "Já sou aluno" com seu CPF para acessar o portal e ver sua senha.`;
-      document.getElementById('portal-cadastro-senha-caixa').textContent = '';
-      return;
-    }
-
-    cadastroPortalSenhaAtual = resp.senha_acesso;
-    document.getElementById('painel-cadastro-portal-form').classList.add('oculto');
-    document.getElementById('painel-cadastro-portal-pagamento').classList.remove('oculto');
-    document.getElementById('portal-cadastro-valor').textContent = `Valor: ${formatarMoeda(resp.valor_centavos)}`;
-    document.getElementById('portal-cadastro-status').textContent = 'Aguardando pagamento...';
-
-    const alvo = document.getElementById('qrcode-cadastro-portal');
-    alvo.innerHTML = '';
-    const btnCopiar = document.getElementById('btn-copiar-pix-cadastro-portal');
-
-    if (resp.qr_code_pix_imagem) {
-      const img = document.createElement('img');
-      img.src = `data:image/png;base64,${resp.qr_code_pix_imagem}`;
-      img.style.width = '220px';
-      img.style.height = '220px';
-      img.style.borderRadius = '12px';
-      alvo.appendChild(img);
-    } else if (resp.qr_code_pix) {
-      // eslint-disable-next-line no-new
-      new QRCode(alvo, { text: resp.qr_code_pix, width: 220, height: 220, colorDark: '#0f172a', colorLight: '#ffffff' });
-    }
-
-    if (resp.qr_code_pix) {
-      btnCopiar.classList.remove('oculto');
-      btnCopiar.onclick = async () => {
-        try {
-          await navigator.clipboard.writeText(resp.qr_code_pix);
-          btnCopiar.textContent = 'Código copiado!';
-          setTimeout(() => { btnCopiar.textContent = 'Copiar código Pix'; }, 2000);
-        } catch {
-          alert(`Não foi possível copiar automaticamente. Código Pix:\n${resp.qr_code_pix}`);
-        }
-      };
-    } else {
-      btnCopiar.classList.add('oculto');
-    }
-
-    iniciarPollCadastroPortal(resp.cobranca_id);
-  } catch (err) {
-    erroEl.textContent = err.message;
-  }
+  const nome=document.getElementById('portal-cadastro-nome').value.trim(),cpf=document.getElementById('portal-cadastro-cpf').value.trim();
+  const telefone=document.getElementById('portal-cadastro-telefone').value.trim(),email=document.getElementById('portal-cadastro-email').value.trim();
+  const dataNascimento=document.getElementById('portal-cadastro-nascimento').value,planoId=document.getElementById('portal-cadastro-plano').value;
+  const indicadoPorCpf=document.getElementById('portal-cadastro-indicado-cpf').value.trim(),erroEl=document.getElementById('portal-cadastro-erro');
+  const btn=document.getElementById('btn-portal-cadastro-continuar');erroEl.textContent='';
+  if(!nome||!cpf||!telefone||!email||!dataNascimento||!planoId){erroEl.textContent='Preencha nome, CPF, telefone, e-mail, data de nascimento e escolha um plano.';return;}
+  btn.disabled=true;btn.textContent='Salvando cadastro…';
+  try{
+    const resp=await api('/api/portal/cadastro',{method:'POST',body:JSON.stringify({nome,cpf,telefone,email,data_nascimento:dataNascimento,plano_id:planoId,indicado_por_cpf:indicadoPorCpf||null})});
+    cadastroPortalCpfAtual=cpf;
+    if(resp.visitante){document.getElementById('painel-cadastro-portal-form').classList.add('oculto');document.getElementById('painel-cadastro-portal-sucesso').classList.remove('oculto');document.getElementById('portal-cadastro-sucesso-msg').textContent='Cadastro de visitante concluído! Bem-vindo(a), '+(resp.aluno_nome||'')+'. Use "Já sou aluno" com seu CPF para acessar o portal e ver sua senha.';document.getElementById('portal-cadastro-senha-caixa').textContent='';return;}
+    cadastroPortalSenhaAtual=resp.senha_acesso;cadastroPortalCobrancaId=resp.cobranca_id;cadastroPortalMatriculaId=resp.matricula_id;
+    document.getElementById('painel-cadastro-portal-form').classList.add('oculto');document.getElementById('painel-cadastro-portal-pagamento').classList.remove('oculto');
+    document.getElementById('portal-cadastro-valor').textContent='Plano escolhido: '+formatarMoeda(resp.valor_centavos);
+    document.getElementById('portal-cadastro-senha-caixa').textContent=cadastroPortalSenhaAtual||'';
+    document.getElementById('cadastro-pix-conteudo').classList.add('oculto');
+    carregarOfertaRecorrenciaNovoAluno();
+  }catch(err){erroEl.textContent=err.message;}finally{btn.disabled=false;btn.textContent='Continuar';}
 });
 
-async function carregarOfertaRecorrenciaNovoAluno() {
-  const container = document.getElementById('oferta-recorrencia-novo-aluno');
-  if (!container || !cadastroPortalCpfAtual || !cadastroPortalSenhaAtual) return;
-  container.innerHTML = '';
-  try {
-    const d = await api(`/api/portal/assinatura?cpf=${encodeURIComponent(cadastroPortalCpfAtual)}&senha=${encodeURIComponent(cadastroPortalSenhaAtual)}`);
-    if (!d.disponivel || !Array.isArray(d.opcoes) || !d.opcoes.length) return;
-    container.innerHTML = `
-      <div class="cartao" style="text-align:left;border:1px solid #2563eb;margin-top:16px">
-        <div style="font-weight:800;color:#1d4ed8">⚡ CONDIÇÃO ESPECIAL DE PAGAMENTO AUTOMÁTICO</div>
-        <h3 style="margin:8px 0">Quer deixar suas mensalidades no automático?</h3>
-        <p>Você já garantiu sua matrícula. Se preferir, pode ativar a cobrança recorrente no cartão, sem precisar lembrar de pagar todo mês. É opcional: seu plano atual continua válido se não quiser.</p>
-        <div style="background:#eff6ff;border-radius:10px;padding:12px;margin:10px 0">
-          <strong>12 meses de compromisso</strong>
-          <div style="font-size:23px;font-weight:800;color:#166534">R$ 65,00/mês</div>
-          <small>12 cobranças • Total de R$ 780,00</small>
-          <button type="button" data-modalidade="12_meses" class="botao-grande primario" style="margin-top:8px">Quero 12 meses</button>
-        </div>
-        <div style="background:#eff6ff;border-radius:10px;padding:12px;margin:10px 0">
-          <strong>Mensal sem fidelidade</strong>
-          <div style="font-size:23px;font-weight:800;color:#1d4ed8">R$ 70,00/mês</div>
-          <small>Sem permanência mínima</small>
-          <button type="button" data-modalidade="mensal_livre" class="botao-grande secundario" style="margin-top:8px">Quero mensal livre</button>
-        </div>
-        <button type="button" data-dispensar-oferta class="link-voltar" style="width:100%">Continuar com meu plano atual</button>
-        <small>Ao escolher, você será direcionado ao Mercado Pago para cadastrar o cartão e revisar as condições. Nada muda se você não aceitar.</small>
-      </div>`;
-    container.querySelector('[data-dispensar-oferta]').addEventListener('click', () => { container.innerHTML = ''; });
-    container.querySelectorAll('[data-modalidade]').forEach((btn) => btn.addEventListener('click', async () => {
-      const modalidade = btn.dataset.modalidade;
-      const botoes = Array.from(container.querySelectorAll('[data-modalidade]'));
-      botoes.forEach((b) => { b.disabled = true; b.textContent = 'Abrindo…'; });
-      try {
-        const r = await api('/api/portal/assinatura', {
-          method: 'POST',
-          body: JSON.stringify({ cpf: cadastroPortalCpfAtual, senha: cadastroPortalSenhaAtual, modalidade }),
-        });
-        if (!r.oferta_url) throw new Error('O Mercado Pago não retornou o endereço da oferta.');
-        window.location.href = r.oferta_url;
-      } catch (err) {
-        botoes.forEach((b) => { b.disabled = false; b.textContent = b.dataset.modalidade === '12_meses' ? 'Quero 12 meses' : 'Quero mensal livre'; });
-        alert(err.message || 'Não foi possível abrir a oferta agora.');
-      }
-    }));
-  } catch {
-    // A oferta é opcional e nunca pode impedir a conclusão do cadastro.
-  }
+async function carregarOfertaRecorrenciaNovoAluno(){
+ const container=document.getElementById('oferta-recorrencia-novo-aluno');if(!container)return;
+ container.innerHTML=`
+  <div style="text-align:left"><div style="font-weight:800;color:#10b981">⚡ ESCOLHA COMO DESEJA PAGAR</div>
+  <h3 style="margin:8px 0">Condição especial no cartão</h3>
+  <p>Seu cadastro e sua matrícula foram registrados, mas ainda não ativados. Escolha uma opção:</p>
+  <div style="background:#0f172a;border-radius:10px;padding:12px;margin:10px 0"><strong>Compromisso de 12 meses</strong><div style="font-size:23px;font-weight:800;color:#10b981">R$ 65,00/mês</div><small>12 cobranças • Total de R$ 780,00</small><button type="button" data-modalidade="12_meses" class="botao-grande primario" style="margin-top:8px">Escolher 12 meses</button></div>
+  <div style="background:#0f172a;border-radius:10px;padding:12px;margin:10px 0"><strong>Mensal sem fidelidade</strong><div style="font-size:23px;font-weight:800;color:#60a5fa">R$ 70,00/mês</div><small>Sem permanência mínima</small><button type="button" data-modalidade="mensal_livre" class="botao-grande secundario" style="margin-top:8px">Escolher mensal livre</button></div>
+  <button type="button" data-escolher-pix class="botao-grande primario" style="width:100%;margin-top:12px">Continuar com Pix do plano escolhido</button>
+  <small>Se sair agora, seu cadastro ficará salvo como pendente, sem cobrança nem ativação.</small><div class="erro-msg" data-erro-recorrencia></div></div>`;
+ container.querySelectorAll('[data-modalidade]').forEach(btn=>btn.addEventListener('click',async()=>{
+  const modalidade=btn.dataset.modalidade,botoes=Array.from(container.querySelectorAll('button'));botoes.forEach(b=>b.disabled=true);btn.textContent='Abrindo Mercado Pago…';
+  try{const r=await api('/api/portal/cadastro/recorrencia',{method:'POST',body:JSON.stringify({cpf:cadastroPortalCpfAtual,senha:cadastroPortalSenhaAtual,matricula_id:cadastroPortalMatriculaId,modalidade})});if(!r.oferta_url)throw new Error('O Mercado Pago não retornou o endereço da oferta.');window.location.href=r.oferta_url;}
+  catch(err){container.querySelector('[data-erro-recorrencia]').textContent=err.message||'Não foi possível abrir a recorrência.';botoes.forEach(b=>b.disabled=false);btn.textContent=modalidade==='12_meses'?'Escolher 12 meses':'Escolher mensal livre';}
+ }));
+ container.querySelector('[data-escolher-pix]').addEventListener('click',async ev=>{
+  const btn=ev.currentTarget;btn.disabled=true;btn.textContent='Gerando Pix…';
+  try{
+   const pix=await api('/api/portal/cadastro/pix',{method:'POST',body:JSON.stringify({cpf:cadastroPortalCpfAtual,senha:cadastroPortalSenhaAtual,cobranca_id:cadastroPortalCobrancaId})});
+   container.classList.add('oculto');document.getElementById('cadastro-pix-conteudo').classList.remove('oculto');
+   document.getElementById('portal-cadastro-valor').textContent='Valor: '+formatarMoeda(pix.valor_centavos);
+   document.getElementById('portal-cadastro-status').textContent='Aguardando pagamento…';
+   const alvo=document.getElementById('qrcode-cadastro-portal');alvo.innerHTML='';const copiar=document.getElementById('btn-copiar-pix-cadastro-portal');
+   if(pix.qr_code_pix_imagem){const img=document.createElement('img');img.src='data:image/png;base64,'+pix.qr_code_pix_imagem;img.style.width='220px';img.style.height='220px';img.style.borderRadius='12px';alvo.appendChild(img);}
+   else if(pix.qr_code_pix)new QRCode(alvo,{text:pix.qr_code_pix,width:220,height:220,colorDark:'#0f172a',colorLight:'#ffffff'});
+   if(pix.qr_code_pix){copiar.classList.remove('oculto');copiar.onclick=async()=>{try{await navigator.clipboard.writeText(pix.qr_code_pix);copiar.textContent='Código copiado!';setTimeout(()=>{copiar.textContent='Copiar código Pix';},2000);}catch{alert('Não foi possível copiar automaticamente. Código Pix:\n'+pix.qr_code_pix);}};}else copiar.classList.add('oculto');
+   iniciarPollCadastroPortal(pix.cobranca_id);
+  }catch(err){btn.disabled=false;btn.textContent='Continuar com Pix do plano escolhido';container.querySelector('[data-erro-recorrencia]').textContent=err.message||'Não foi possível gerar o Pix.';}
+ });
 }
 
-function iniciarPollCadastroPortal(cobrancaId) {
-  pararPollCadastroPortal();
-  const statusEl = document.getElementById('portal-cadastro-status');
-  cadastroPortalPollTimer = setInterval(async () => {
-    try {
-      const resp = await api(`/api/portal/cadastro/status/${cobrancaId}`);
-      if (resp.pago) {
-        pararPollCadastroPortal();
-        document.getElementById('painel-cadastro-portal-pagamento').classList.add('oculto');
-        document.getElementById('painel-cadastro-portal-sucesso').classList.remove('oculto');
-        document.getElementById('portal-cadastro-sucesso-msg').textContent = `Pagamento confirmado! Bem-vindo(a), ${resp.aluno_nome || ''}. Sua matrícula já está ativa.`;
-        document.getElementById('portal-cadastro-senha-caixa').textContent = cadastroPortalSenhaAtual || '';
-        carregarOfertaRecorrenciaNovoAluno();
-      }
-    } catch (err) {
-      statusEl.textContent = `Erro ao consultar pagamento: ${err.message}`;
-    }
-  }, 4000);
+function iniciarPollCadastroPortal(cobrancaId){
+ pararPollCadastroPortal();const statusEl=document.getElementById('portal-cadastro-status');
+ cadastroPortalPollTimer=setInterval(async()=>{try{const resp=await api('/api/portal/cadastro/status/'+cobrancaId);if(resp.pago){pararPollCadastroPortal();document.getElementById('painel-cadastro-portal-pagamento').classList.add('oculto');document.getElementById('painel-cadastro-portal-sucesso').classList.remove('oculto');document.getElementById('portal-cadastro-sucesso-msg').textContent='Pagamento confirmado! Bem-vindo(a), '+(resp.aluno_nome||'')+'. Sua matrícula já está ativa.';document.getElementById('portal-cadastro-senha-caixa').textContent=cadastroPortalSenhaAtual||'';}}catch(err){statusEl.textContent='Erro ao consultar pagamento: '+err.message;}},4000);
 }
 
 function pararPollCadastroPortal() {

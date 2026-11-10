@@ -633,7 +633,7 @@ function verificarAssinaturaMercadoPago(req) {
   if (valido) return { valido, aviso: null };
   return {
     valido,
-    aviso: `Assinatura do webhook inválida — requisição rejeitada. Diagnóstico: data.id="${dataId}", x-request-id=${requestId || 'ausente'}, cabeçalhos recebidos=[${Object.keys(req.headers || {}).join(',')}], ts=${ts}, segredo em uso no servidor: ${secret.slice(0, 4)}…${secret.slice(-4)} (${secret.length} caracteres). `
+    aviso: `Assinatura do webhook inválida — requisição rejeitada. Diagnóstico: data.id="${dataId}", x-request-id=${requestId || 'ausente'}, cabeçalhos recebidos=[${Object.keys(req.headers || {}).join(',')}], ts=${ts}, segredo em uso no servidor: ${secret.slice(0, 4)}…${secret.slice(-4)} (${secret.length} caracteres, sha256=${crypto.createHash('sha256').update(secret).digest('hex').slice(0, 12)}), v1 recebido=${v1Recebido}, textos testados=${JSON.stringify(manifests)}. `
       + 'Causas comuns: segredo do Northflank diferente do painel do MP (o segredo muda entre credenciais de TESTE e de PRODUÇÃO e entre aplicações), ou simulação feita no app/modo errado.',
   };
 }

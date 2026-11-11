@@ -32,7 +32,7 @@ test('webhook MP: rejeita segredo errado e explica no log', () => {
   process.env.MERCADOPAGO_WEBHOOK_SECRET = 'segredo123';
   const r = verificar(req({ secret: 'segredo123', segredoAssinatura: 'outro', dataId: '1', requestId: 'x' }));
   assert.strictEqual(r.valido, false);
-  assert.match(r.aviso, /Diagnóstico/);
+  assert.match(r.aviso, /DADOS PARA O SUPORTE/);
 });
 
 test('webhook MP: aceita quando o request id original chega em outro cabeçalho', () => {
@@ -59,5 +59,22 @@ test('webhook MP: aceita quando o x-signature traz mais de um v1 (qualquer um qu
   // nenhum v1 correto: rejeita e mostra o cabeçalho bruto
   const ruim = verificar({ ...ok, headers: { ...ok.headers, 'x-signature': `ts=${ts},v1=${'1'.repeat(64)}` } });
   assert.strictEqual(ruim.valido, false);
-  assert.match(ruim.aviso, /x-signature bruto=/);
+  assert.match(ruim.aviso, /x-signature="ts=/);
+});
+
+test('webhook MP: aceita vários segredos (um por aplicação) e rejeita se nenhum bater', () => {
+  const appA = 'segredoDaAplicacaoA', appB = 'segredoDaAplicacaoB';
+  process.env.MERCADOPAGO_WEBHOOK_SECRET = `${appA}, "${appB}"`; // vírgula + aspas colados no painel do host
+  assert.strictEqual(verificar(req({ secret: appB, dataId: '321', requestId: 'r1' })).valido, true);
+  assert.strictEqual(verificar(req({ secret: appA, dataId: '321', requestId: 'r1' })).valido, true);
+  process.env.MERCADOPAGO_WEBHOOK_SECRET = `${appA}\n${appB}`; // uma por linha
+  assert.strictEqual(verificar(req({ secret: appB, dataId: '322', requestId: 'r2' })).valido, true);
+  const r = req({ secret: 'outraAplicacao', dataId: '321', requestId: 'r1' });
+  r.originalUrl = '/api/pagamentos/webhook/mercadopago?data.id=321&type=payment';
+  r.body = { application_id: '688969576765420', user_id: '56069909', live_mode: true, type: 'payment' };
+  const ruim = verificar(r);
+  assert.strictEqual(ruim.valido, false);
+  assert.match(ruim.aviso, /application_id=688969576765420/);
+  assert.match(ruim.aviso, /Segredos configurados \(2\)/);
+  assert.ok(!ruim.aviso.includes(appA) && !ruim.aviso.includes(appB)); // nunca imprime o segredo inteiro
 });

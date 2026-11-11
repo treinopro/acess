@@ -597,9 +597,12 @@ router.post('/cobrancas/parceladas', autenticar, async (req, res, next) => {
 // com um aviso no log em vez de derrubar o webhook — assim o pagamento
 // continua funcionando normalmente até o segredo ser configurado.
 function verificarAssinaturaMercadoPago(req) {
-  // Tira espaços/aspas/quebra de linha que costumam vir ao colar o segredo no painel do host.
-  const secret = String(process.env.MERCADOPAGO_WEBHOOK_SECRET || '').trim().replace(/^["']|["']$/g, '').trim();
-  if (!secret) {
+  // A mesma URL pode estar cadastrada em MAIS DE UMA aplicação do Mercado Pago, e cada aplicação tem o seu próprio
+  // segredo. MERCADOPAGO_WEBHOOK_SECRET aceita vários, separados por vírgula, ponto e vírgula ou quebra de linha
+  // (um por aplicação, sempre os de PRODUÇÃO); o aviso vale se bater com qualquer um. Tira espaços/aspas ao colar.
+  const secrets = String(process.env.MERCADOPAGO_WEBHOOK_SECRET || '')
+    .split(/[\s,;]+/).map((x) => x.trim().replace(/^["']|["']$/g, '').trim()).filter(Boolean);
+  if (!secrets.length) {
     return { valido: true, aviso: 'MERCADOPAGO_WEBHOOK_SECRET não configurado — assinatura do webhook NÃO está sendo verificada.' };
   }
 
@@ -640,7 +643,7 @@ function verificarAssinaturaMercadoPago(req) {
     manifests.push(`id:${idParaManifest};ts:${t};`);
   }
 
-  const esperados = manifests.map((m) => crypto.createHmac('sha256', secret).update(m).digest('hex'));
+  const esperados = secrets.flatMap((secret) => manifests.map((m) => crypto.createHmac('sha256', secret).update(m).digest('hex')));
   const valido = v1s.some((v1) => {
     const bufRecebido = Buffer.from(String(v1));
     return esperados.some((hex) => {
@@ -649,10 +652,14 @@ function verificarAssinaturaMercadoPago(req) {
     });
   });
   if (valido) return { valido, aviso: null };
+  const resumoSegredos = secrets.map((x) => `${x.slice(0, 4)}…${x.slice(-4)}(sha256=${crypto.createHash('sha256').update(x).digest('hex').slice(0, 12)})`).join(' | ');
   return {
     valido,
-    aviso: `Assinatura do webhook inválida — requisição rejeitada. Diagnóstico: data.id="${dataId}", x-request-id=${requestId || 'ausente'}, cabeçalhos recebidos=[${Object.keys(req.headers || {}).join(',')}], ts=${ts}, segredo em uso no servidor: ${secret.slice(0, 4)}…${secret.slice(-4)} (${secret.length} caracteres, sha256=${crypto.createHash('sha256').update(secret).digest('hex').slice(0, 12)}), x-signature bruto="${assinatura}", textos testados=${JSON.stringify(manifests)}. `
-      + 'Causas comuns: segredo do Northflank diferente do painel do MP (o segredo muda entre credenciais de TESTE e de PRODUÇÃO e entre aplicações), ou simulação feita no app/modo errado.',
+    aviso: `Assinatura do webhook inválida — requisição rejeitada. DADOS PARA O SUPORTE: url="${req.originalUrl}", `
+      + `application_id=${req.body?.application_id ?? 'ausente'}, user_id=${req.body?.user_id ?? 'ausente'}, live_mode=${req.body?.live_mode ?? 'ausente'}, type=${req.body?.type ?? req.query?.type ?? 'ausente'}, `
+      + `x-request-id=${requestId || 'ausente'}, x-signature="${assinatura}". `
+      + `Segredos configurados (${secrets.length}): ${resumoSegredos}. Textos testados=${JSON.stringify(manifests)}. `
+      + 'Causas comuns: o segredo da aplicação que originou o pagamento não está na lista (cada aplicação tem o seu; use os de PRODUÇÃO), ou segredo de teste/produção trocado.',
   };
 }
 

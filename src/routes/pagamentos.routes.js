@@ -610,37 +610,48 @@ function verificarAssinaturaMercadoPago(req) {
     return { valido: false, aviso: `Header x-signature ou data.id ausente (x-signature: ${assinatura ? 'sim' : 'não'}, data.id: ${dataId ? 'sim' : 'não'}).` };
   }
 
-  const partes = {};
+  // O x-signature pode vir com mais de um ts/v1 (headers combinados por proxies, reenvios): aceita QUALQUER v1 que case.
+  const tss = [];
+  const v1s = [];
   for (const par of String(assinatura).split(',')) {
     const i = par.indexOf('=');
-    if (i > 0) partes[par.slice(0, i).trim()] = par.slice(i + 1).trim();
+    if (i <= 0) continue;
+    const chave = par.slice(0, i).trim();
+    const valor = par.slice(i + 1).trim();
+    if (chave === 'ts') tss.push(valor);
+    else if (chave === 'v1') v1s.push(valor);
   }
-  const { ts, v1: v1Recebido } = partes;
-  if (!ts || !v1Recebido) {
-    return { valido: false, aviso: 'Formato de x-signature inesperado (esperado "ts=...,v1=...").' };
+  if (!tss.length || !v1s.length) {
+    return { valido: false, aviso: `Formato de x-signature inesperado (esperado "ts=...,v1=..."). x-signature bruto="${assinatura}"` };
   }
+  const ts = tss[0];
 
   // Mercado Pago pede o id em minúsculas quando ele é alfanumérico.
   const idParaManifest = /^[a-zA-Z0-9]+$/.test(String(dataId)) ? String(dataId).toLowerCase() : String(dataId);
   // Proxies/CDN do host podem reescrever o x-request-id (a assinatura do MP usa o ORIGINAL).
-  // Por isso testa todo cabeçalho que pareça um request id (ex.: x-request-id, x-original-request-id,
-  // x-amzn-trace-id não, só nomes com "request-id") e também o manifest sem ele.
+  // Por isso testa todo cabeçalho que pareça um request id e também o manifest sem ele.
   const candidatos = new Set();
   for (const [nome, valorHeader] of Object.entries(req.headers || {})) {
     if (/request-?id/i.test(nome) && valorHeader) candidatos.add(String(valorHeader));
   }
-  const manifests = [...candidatos].map((rid) => `id:${idParaManifest};request-id:${rid};ts:${ts};`);
-  manifests.push(`id:${idParaManifest};ts:${ts};`);
+  const manifests = [];
+  for (const t of tss) {
+    for (const rid of candidatos) manifests.push(`id:${idParaManifest};request-id:${rid};ts:${t};`);
+    manifests.push(`id:${idParaManifest};ts:${t};`);
+  }
 
-  const bufRecebido = Buffer.from(String(v1Recebido));
-  const valido = manifests.some((m) => {
-    const buf = Buffer.from(crypto.createHmac('sha256', secret).update(m).digest('hex'));
-    return buf.length === bufRecebido.length && crypto.timingSafeEqual(buf, bufRecebido);
+  const esperados = manifests.map((m) => crypto.createHmac('sha256', secret).update(m).digest('hex'));
+  const valido = v1s.some((v1) => {
+    const bufRecebido = Buffer.from(String(v1));
+    return esperados.some((hex) => {
+      const buf = Buffer.from(hex);
+      return buf.length === bufRecebido.length && crypto.timingSafeEqual(buf, bufRecebido);
+    });
   });
   if (valido) return { valido, aviso: null };
   return {
     valido,
-    aviso: `Assinatura do webhook inválida — requisição rejeitada. Diagnóstico: data.id="${dataId}", x-request-id=${requestId || 'ausente'}, cabeçalhos recebidos=[${Object.keys(req.headers || {}).join(',')}], ts=${ts}, segredo em uso no servidor: ${secret.slice(0, 4)}…${secret.slice(-4)} (${secret.length} caracteres, sha256=${crypto.createHash('sha256').update(secret).digest('hex').slice(0, 12)}), v1 recebido=${v1Recebido}, textos testados=${JSON.stringify(manifests)}. `
+    aviso: `Assinatura do webhook inválida — requisição rejeitada. Diagnóstico: data.id="${dataId}", x-request-id=${requestId || 'ausente'}, cabeçalhos recebidos=[${Object.keys(req.headers || {}).join(',')}], ts=${ts}, segredo em uso no servidor: ${secret.slice(0, 4)}…${secret.slice(-4)} (${secret.length} caracteres, sha256=${crypto.createHash('sha256').update(secret).digest('hex').slice(0, 12)}), x-signature bruto="${assinatura}", textos testados=${JSON.stringify(manifests)}. `
       + 'Causas comuns: segredo do Northflank diferente do painel do MP (o segredo muda entre credenciais de TESTE e de PRODUÇÃO e entre aplicações), ou simulação feita no app/modo errado.',
   };
 }

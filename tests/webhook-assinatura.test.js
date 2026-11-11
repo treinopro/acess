@@ -41,3 +41,23 @@ test('webhook MP: aceita quando o request id original chega em outro cabeçalho'
   r.headers = { 'x-signature': r.headers['x-signature'], 'x-request-id': 'trocado-pelo-proxy', 'x-original-request-id': 'id-original-do-mp' };
   assert.strictEqual(verificar(r).valido, true);
 });
+
+test('webhook MP: aceita quando o x-signature traz mais de um v1 (qualquer um que case)', () => {
+  process.env.MERCADOPAGO_WEBHOOK_SECRET = 'segredo123';
+  const ok = req({ secret: 'segredo123', dataId: '777', requestId: 'rid-1' });
+  const v1ok = /v1=([0-9a-f]+)/.exec(ok.headers['x-signature'])[1];
+  const ts = /ts=(\d+)/.exec(ok.headers['x-signature'])[1];
+  // v1 correto primeiro e um inválido depois (o código antigo guardava só o último)
+  ok.headers['x-signature'] = `ts=${ts},v1=${v1ok},v1=${'0'.repeat(64)}`;
+  assert.strictEqual(verificar(ok).valido, true);
+  // v1 inválido primeiro e o correto depois
+  ok.headers['x-signature'] = `ts=${ts},v1=${'0'.repeat(64)},v1=${v1ok}`;
+  assert.strictEqual(verificar(ok).valido, true);
+  // ts duplicado (headers combinados por proxy)
+  ok.headers['x-signature'] = `ts=${ts},v1=${v1ok}, ts=${ts},v1=${v1ok}`;
+  assert.strictEqual(verificar(ok).valido, true);
+  // nenhum v1 correto: rejeita e mostra o cabeçalho bruto
+  const ruim = verificar({ ...ok, headers: { ...ok.headers, 'x-signature': `ts=${ts},v1=${'1'.repeat(64)}` } });
+  assert.strictEqual(ruim.valido, false);
+  assert.match(ruim.aviso, /x-signature bruto=/);
+});

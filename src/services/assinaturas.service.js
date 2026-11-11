@@ -778,9 +778,13 @@ async function reconciliarUmaAssinatura(preapprovalId) {
 async function reconciliarAssinaturas({ somentePendentes = false } = {}) {
   const resultado = { assinaturas: 0, baixas: 0, alunosAtualizados: [] };
   if (!habilitado()) return resultado;
-  const statusAlvo = somentePendentes ? "'pending'" : "'pending', 'authorized', 'paused'";
+  // Modo rápido (a cada 2 min): só quem aguarda o 1º pagamento — 'pending' ou 'authorized' sem nenhuma cobrança baixada,
+  // criada nos últimos 3 dias (assinaturas com 1ª cobrança futura ficam por conta do job geral).
+  const filtro = somentePendentes
+    ? "(status = 'pending' OR (status = 'authorized' AND COALESCE(cobrancas_processadas, 0) = 0 AND criado_em >= datetime('now', '-3 days')))"
+    : "status IN ('pending', 'authorized', 'paused')";
   const vivas = await db.execute({
-    sql: `SELECT id, preapproval_id FROM assinaturas_mp WHERE status IN (${statusAlvo}) ORDER BY criado_em ASC LIMIT 200`,
+    sql: `SELECT id, preapproval_id FROM assinaturas_mp WHERE ${filtro} ORDER BY criado_em ASC LIMIT 200`,
     args: [], // o cliente do Turso exige `args`, mesmo vazio
   });
   for (const v of vivas.rows) {
@@ -803,7 +807,10 @@ async function verificarOferta(id) {
   const a = await buscarPorId(id);
   if (!a) return null;
   let alunosAtualizados = [];
-  if (habilitado() && a.status === 'pending') {
+  // Aguardando o 1º pagamento: 'pending' OU já 'authorized' mas a 1ª cobrança ainda não foi baixada (o MP
+  // autoriza a assinatura alguns segundos ANTES de o pagamento aparecer como aprovado).
+  const aguardandoPrimeiroPagamento = a.status === 'pending' || (a.status === 'authorized' && Number(a.cobrancas_processadas || 0) === 0);
+  if (habilitado() && aguardandoPrimeiroPagamento) {
     const agora = Date.now();
     if (agora - (ultimaVerificacao.get(a.id) || 0) >= 3000) {
       ultimaVerificacao.set(a.id, agora);

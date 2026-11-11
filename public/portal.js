@@ -2190,34 +2190,44 @@ function tratarRetornoCartao() {
   mostrar('⏳', 'Confirmando seu pagamento…', 'Só um instante: estamos conferindo com o Mercado Pago. Isso costuma levar menos de 2 minutos.');
 
   const formatarData = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return m ? `${m[3]}/${m[2]}/${m[1]}` : ''; };
-  let tentativas = 0;
-  const timer = setInterval(async () => {
+  let tentativas = 0, terminou = false, rodando = false, ultimaResposta = 'sem resposta';
+  const verificarAgora = async () => {
+    if (terminou || rodando) return;
+    rodando = true;
     tentativas += 1;
     try {
       const o = await api('/api/pagamentos/assinaturas/oferta/' + encodeURIComponent(idAssinatura) + '/verificar', { method: 'POST' });
-      const contato = o.whatsapp_contato ? 'Dúvidas? Fale com a recepção.' : 'Dúvidas? Fale com a recepção da academia.';
+      ultimaResposta = `${o.status}, ${Number(o.cobrancas_processadas || 0)} cobrança(s) baixada(s)`;
+      const contato = 'Dúvidas? Fale com a recepção da academia.';
       if (['authorized', 'completed'].includes(o.status) && Number(o.cobrancas_processadas || 0) > 0) {
-        clearInterval(timer);
+        terminou = true; clearInterval(timer);
         return mostrar('✅', `Pagamento confirmado${o.aluno ? ', ' + o.aluno : ''}!`, 'Sua matrícula está ativa e seu acesso foi liberado. Pode treinar. As próximas mensalidades serão cobradas automaticamente no cartão, e para cancelar é só falar com a recepção.', contato);
       }
       if (o.status === 'authorized' && o.primeira_cobranca && String(o.primeira_cobranca).slice(0, 10) > new Date().toISOString().slice(0, 10)) {
-        clearInterval(timer);
+        terminou = true; clearInterval(timer);
         return mostrar('✅', 'Cartão cadastrado!', `Sua primeira cobrança no cartão será em ${formatarData(o.primeira_cobranca)}. Até lá, seu acesso segue como está.`, contato);
       }
       if (o.status === 'cancelled') {
-        clearInterval(timer);
+        terminou = true; clearInterval(timer);
         return mostrar('⚠️', 'O pagamento não foi concluído', 'O cartão foi recusado ou o cadastro foi cancelado, e nada foi cobrado. Volte ao portal para tentar outro cartão ou pagar com Pix.', contato);
       }
       if (o.status === 'paused') {
-        clearInterval(timer);
+        terminou = true; clearInterval(timer);
         return mostrar('⏸️', 'Assinatura pausada', 'Fale com a recepção para retomar.', contato);
       }
-    } catch (err) { /* tenta de novo no próximo ciclo */ }
-    if (tentativas >= 40) { // ~2 minutos de consulta ativa
-      clearInterval(timer);
-      mostrar('🕒', 'Recebemos seu cadastro no cartão', 'A confirmação do Mercado Pago ainda está chegando e pode levar até 5 minutos. Assim que confirmar, sua matrícula é ativada e seu acesso liberado automaticamente. Se passar desse tempo, fale com a recepção.', 'Pode fechar esta página.');
+    } catch (err) { ultimaResposta = 'erro: ' + (err.message || 'falha de conexão'); }
+    finally { rodando = false; }
+    if (tentativas >= 40 && !terminou) { // ~2 minutos de consulta ativa
+      terminou = true; clearInterval(timer);
+      mostrar('🕒', 'Recebemos seu cadastro no cartão', 'A confirmação do Mercado Pago ainda está chegando e pode levar até 5 minutos. Assim que confirmar, sua matrícula é ativada e seu acesso liberado automaticamente. Se passar desse tempo, fale com a recepção. Você também pode reabrir esta página para conferir.', `Última resposta: ${ultimaResposta}`);
     }
-  }, 3000);
+  };
+  const timer = setInterval(verificarAgora, 3000);
+  verificarAgora(); // já confere na abertura, sem esperar o primeiro ciclo de 3s
+  // Navegadores de celular congelam a página em segundo plano (ex.: voltando do Mercado Pago): ao reaparecer, confere de novo.
+  const reconferir = () => { if (!terminou) verificarAgora(); };
+  window.addEventListener('pageshow', reconferir);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reconferir(); });
   return true;
 }
 

@@ -889,3 +889,39 @@ test('aluno volta do Mercado Pago: verificarOferta confirma na hora (sem webhook
   const j = await assinaturas.reconciliarAssinaturas({ somentePendentes: true });
   assert.ok(!j.alunosAtualizados.includes('volta2'));
 });
+
+test('1º pagamento: assinatura já "authorized" mas sem cobrança baixada continua sendo verificada (página e job rápido)', async () => {
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('lag', 'Aluno Lag', 'lag@teste.com', '50500099944')` });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-lag', 'lag', 'p1', '2026-11-10', 'pendente')` });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-lag', 'lag', 'm-lag', 9900, 'pendente', 'mercadopago', 'Matrícula', '2026-11-10')` });
+  await assinaturas.salvarPlanosCadastro([{ id: 'mensal_livre', nome: 'Mensal', valor_centavos: 100, limite_cobrancas: null, ativo: true }]);
+  await assinaturas.obterOuCriarParaNovoCadastro({ alunoId: 'lag', matriculaId: 'm-lag', baseUrl: 'https://academia.test', modalidade: 'mensal_livre' });
+  const { id, preapproval_id: pre } = (await db.execute({ sql: `SELECT id, preapproval_id FROM assinaturas_mp WHERE matricula_id='m-lag'` })).rows[0];
+
+  // 1ª verificação: o MP já autorizou a assinatura, mas o pagamento ainda não aparece como aprovado.
+  estadoMp.assinaturas[pre].status = 'authorized';
+  let r = await assinaturas.verificarOferta(id);
+  assert.strictEqual(r.oferta.status, 'authorized');
+  assert.strictEqual(r.oferta.cobrancas_processadas, 0);
+
+  // Segundos depois o pagamento aparece: a verificação SEGUINTE precisa baixar (antes ela pulava por não estar "pending").
+  estadoMp.pagamentosRef = { ...(estadoMp.pagamentosRef || {}), [id]: [{ id: 7701, status: 'approved', transaction_amount: 1, payment_type_id: 'credit_card' }] };
+  await new Promise((resolve) => setTimeout(resolve, 3100));
+  r = await assinaturas.verificarOferta(id);
+  assert.strictEqual(r.oferta.cobrancas_processadas, 1);
+  assert.deepStrictEqual(r.alunosAtualizados, ['lag']);
+});
+
+test('job rápido (2 min) também pega assinatura autorizada sem 1ª cobrança baixada', async () => {
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('lag2', 'Aluno Lag2', 'lag2@teste.com', '50500099955')` });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-lag2', 'lag2', 'p1', '2026-11-10', 'pendente')` });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-lag2', 'lag2', 'm-lag2', 9900, 'pendente', 'mercadopago', 'Matrícula', '2026-11-10')` });
+  await assinaturas.salvarPlanosCadastro([{ id: 'mensal_livre', nome: 'Mensal', valor_centavos: 100, limite_cobrancas: null, ativo: true }]);
+  await assinaturas.obterOuCriarParaNovoCadastro({ alunoId: 'lag2', matriculaId: 'm-lag2', baseUrl: 'https://academia.test', modalidade: 'mensal_livre' });
+  const { id, preapproval_id: pre } = (await db.execute({ sql: `SELECT id, preapproval_id FROM assinaturas_mp WHERE matricula_id='m-lag2'` })).rows[0];
+  estadoMp.assinaturas[pre].status = 'authorized';
+  await db.execute({ sql: `UPDATE assinaturas_mp SET status='authorized' WHERE id=?`, args: [id] }); // já autorizada localmente, sem baixa
+  estadoMp.pagamentosRef = { ...(estadoMp.pagamentosRef || {}), [id]: [{ id: 7702, status: 'approved', transaction_amount: 1, payment_type_id: 'credit_card' }] };
+  const j = await assinaturas.reconciliarAssinaturas({ somentePendentes: true });
+  assert.ok(j.alunosAtualizados.includes('lag2'));
+});

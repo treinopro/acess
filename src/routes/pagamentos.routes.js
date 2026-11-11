@@ -6,7 +6,7 @@ const db = require('../db/client');
 const dbOffline = require('../db/clientOffline');
 const { autenticar, apenasAdmin } = require('../middleware/auth');
 const mercadopago = require('../services/payment/mercadopago.service');
-const { gerarCobrancasRecorrentes, ultimoDiaDoMes, resolverMatriculaDaConta } = require('../services/cobrancas.service');
+const { gerarCobrancasRecorrentes, ultimoDiaDoMes, resolverMatriculaDaConta, garantirVencidasAtualizadas } = require('../services/cobrancas.service');
 const assinaturas = require('../services/assinaturas.service');
 const { criarLimitador } = require('../middleware/rateLimit');
 const acessoTerminal = require('../services/acessoTerminal.service');
@@ -133,6 +133,7 @@ router.get('/cobrancas', autenticar, async (req, res, next) => {
       ordenar_por: ordenarPor, decrescente, incluir_inativos: incluirInativos,
       tipo_plano: tipoPlano,
     } = req.query;
+    await garantirVencidasAtualizadas();
     const condicoes = [];
     const args = [];
     if (alunoId) { condicoes.push('c.aluno_id = ?'); args.push(alunoId); }

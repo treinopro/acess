@@ -354,6 +354,7 @@ async function anexarRecorrencia(rows, campoMatricula = 'matricula_id') {
     subs = await db.execute({
       sql: `SELECT matricula_id, modalidade, status, limite_cobrancas, cobrancas_processadas
             FROM assinaturas_mp WHERE status IN ('pending', 'authorized', 'paused', 'completed') ORDER BY criado_em ASC`,
+      args: [], // o cliente do Turso exige `args`, mesmo vazio
     });
   } catch (err) {
     if (/no such table: assinaturas_mp/i.test(String(err.message))) return rows;
@@ -682,6 +683,7 @@ async function reconciliarAssinaturas() {
   if (!habilitado()) return resultado;
   const vivas = await db.execute({
     sql: `SELECT id, preapproval_id FROM assinaturas_mp WHERE status IN ('pending', 'authorized', 'paused') ORDER BY criado_em ASC LIMIT 200`,
+    args: [], // o cliente do Turso exige `args`, mesmo vazio
   });
   for (const v of vivas.rows) {
     try {

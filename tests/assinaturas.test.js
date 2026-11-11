@@ -732,3 +732,26 @@ test('painel: anexarRecorrencia marca matrículas/contas de recorrência e deixa
   assert.strictEqual(por['m-semsub'], null);
   assert.strictEqual(por['m-pixvolta'], null);
 });
+
+test('contas vencidas viram "atrasado" (corte em Brasília) e a lista garante isso sem esperar o job', async () => {
+  const cobr = require('../src/services/cobrancas.service');
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('venceu', 'Aluno Venceu', 'venceu@teste.com', '12300099911')` });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-venceu', 'venceu', 'p1', '2026-01-01', 'ativa')` });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-venceu-ontem', 'venceu', 'm-venceu', 7000, 'pendente', 'manual', 'Mensalidade', date('now', '-3 hours', '-1 day'))` });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-vence-hoje', 'venceu', 'm-venceu', 7000, 'pendente', 'manual', 'Mensalidade', date('now', '-3 hours'))` });
+  await cobr.garantirVencidasAtualizadas();
+  const st = Object.fromEntries((await db.execute({ sql: `SELECT id, status FROM cobrancas WHERE aluno_id='venceu'`, args: [] })).rows.map((r) => [r.id, r.status]));
+  assert.strictEqual(st['c-venceu-ontem'], 'atrasado');
+  assert.strictEqual(st['c-vence-hoje'], 'pendente'); // vence hoje (BRT): ainda não está atrasada
+});
+
+test('consultas do painel/jobs sempre passam args (o cliente do Turso exige)', () => {
+  const fs = require('fs');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'assinaturas.service.js'), 'utf8');
+  for (const m of src.matchAll(/db\.execute\(\{/g)) {
+    let i = m.index + m[0].length, depth = 1;
+    while (depth && i < src.length) { if (src[i] === '{') depth += 1; else if (src[i] === '}') depth -= 1; i += 1; }
+    const corpo = src.slice(m.index, i);
+    if (/sql:/.test(corpo)) assert.ok(/args/.test(corpo), 'db.execute sem args: ' + corpo.slice(0, 80));
+  }
+});

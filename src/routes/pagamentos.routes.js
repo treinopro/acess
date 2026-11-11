@@ -131,6 +131,7 @@ router.get('/cobrancas', autenticar, async (req, res, next) => {
       pagamento_de: pagamentoDe, pagamento_ate: pagamentoAte,
       tipo_pagamento: tipoPagamento,
       ordenar_por: ordenarPor, decrescente, incluir_inativos: incluirInativos,
+      tipo_plano: tipoPlano,
     } = req.query;
     const condicoes = [];
     const args = [];
@@ -186,7 +187,11 @@ router.get('/cobrancas', autenticar, async (req, res, next) => {
             ORDER BY ${colunaOrdenacao} ${direcao}`,
       args,
     });
-    res.json(await assinaturas.anexarRecorrencia(result.rows));
+    // Marca (e, se pedido, filtra) contas de recorrência no cartão x plano normal.
+    const linhas = await assinaturas.anexarRecorrencia(result.rows);
+    if (tipoPlano === 'recorrencia') return res.json(linhas.filter((c) => c.recorrencia));
+    if (tipoPlano === 'normal') return res.json(linhas.filter((c) => !c.recorrencia));
+    res.json(linhas);
   } catch (err) {
     next(err);
   }

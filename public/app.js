@@ -4491,6 +4491,8 @@ async function carregarContas() {
     const params = new URLSearchParams();
     if (alunoId) params.set('aluno_id', alunoId);
     if (status) params.set('status', status);
+    const tipoPlano = document.getElementById('filtro-conta-tipo').value;
+    if (tipoPlano) params.set('tipo_plano', tipoPlano);
     if (busca) params.set('busca', busca);
     if (mostrarInativos) params.set('incluir_inativos', 'true');
     if (periodoDe) params.set(campoData === 'pagamento' ? 'pagamento_de' : 'vencimento_de', periodoDe);
@@ -4558,7 +4560,7 @@ async function carregarContas() {
       const tr = el(`
         <tr${riscoCancelamento ? ' style="background:#fff7ed"' : ''}>
           <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${escapeHtml(c.aluno_nome)}</span></td>
-          <td>${escapeHtml(c.descricao) || '—'}</td>
+          <td>${escapeHtml(c.descricao) || '—'}<br>${etiquetaRecorrencia(c.recorrencia)}</td>
           <td>${formatarMoeda(c.valor_centavos)}</td>
           <td>${c.vencimento ? formatarDataOuDataHora(c.vencimento) : '—'}</td>
           <td><span class="badge ${escapeHtml(c.status)}">${escapeHtml(c.status)}</span></td>
@@ -4601,6 +4603,7 @@ function atualizarLabelPeriodoContas() {
 
 document.getElementById('filtro-conta-aluno').addEventListener('change', carregarContas);
 document.getElementById('filtro-conta-status').addEventListener('change', carregarContas);
+document.getElementById('filtro-conta-tipo').addEventListener('change', carregarContas);
 document.getElementById('mostrar-inativos-contas').addEventListener('change', carregarContas);
 document.getElementById('conta-filtro-data-campo').addEventListener('change', (ev) => {
   localStorage.setItem('contaFiltroDataCampo', ev.target.value);
@@ -5682,6 +5685,8 @@ async function buscarRelatorioFinanceiro() {
     if (alunoId) params.set('aluno_id', alunoId);
     if (status) params.set('status', status);
     if (tipoPagamento) params.set('tipo_pagamento', tipoPagamento);
+    const tipoPlanoRel = document.getElementById('rel-fin-tipo-plano').value;
+    if (tipoPlanoRel) params.set('tipo_plano', tipoPlanoRel);
     if (ordenarPor) params.set('ordenar_por', ordenarPor);
     if (decrescente) params.set('decrescente', 'true');
     if (mostrarInativos) params.set('incluir_inativos', 'true');
@@ -5693,6 +5698,7 @@ async function buscarRelatorioFinanceiro() {
     if (alunoId) descricaoFiltros.push(`Aluno: ${document.getElementById('rel-fin-aluno').selectedOptions[0]?.textContent || ''}`);
     if (status) descricaoFiltros.push(`Status: ${status}`);
     if (tipoPagamento) descricaoFiltros.push(`Tipo de pagamento: ${document.getElementById('rel-fin-tipo-pagamento').selectedOptions[0]?.textContent || ''}`);
+    if (tipoPlanoRel) descricaoFiltros.push(`Tipo de plano: ${document.getElementById('rel-fin-tipo-plano').selectedOptions[0]?.textContent || ''}`);
     ultimoRelatorioFinanceiroFiltros = descricaoFiltros.join(' | ') || 'Todos os lançamentos';
 
     const tbody = document.getElementById('rel-fin-lista');
@@ -5707,7 +5713,7 @@ async function buscarRelatorioFinanceiro() {
       const trFin = el(`
         <tr>
           <td><span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${escapeHtml(c.aluno_nome)}</span></td>
-          <td>${escapeHtml(c.descricao) || '—'}</td>
+          <td>${escapeHtml(c.descricao) || '—'}<br>${etiquetaRecorrencia(c.recorrencia)}</td>
           <td>${formatarMoeda(c.valor_centavos)}</td>
           <td>${c.vencimento ? formatarDataOuDataHora(c.vencimento) : '—'}</td>
           <td><span class="badge ${escapeHtml(c.status)}">${escapeHtml(c.status)}</span></td>
@@ -5727,7 +5733,7 @@ document.getElementById('btn-rel-fin-buscar').addEventListener('click', buscarRe
 document.getElementById('rel-fin-mostrar-inativos').addEventListener('change', buscarRelatorioFinanceiro);
 
 document.getElementById('btn-rel-fin-imprimir').addEventListener('click', () => {
-  const colunas = ['Aluno', 'CPF', 'Descrição', 'Plano', 'Valor', 'Vencimento', 'Status', 'Data Pago', 'Valor Pago', 'Forma Pagamento'];
+  const colunas = ['Aluno', 'CPF', 'Descrição', 'Plano', 'Valor', 'Vencimento', 'Status', 'Data Pago', 'Valor Pago', 'Forma Pagamento', 'Tipo de plano'];
   let totalValor = 0;
   let totalPago = 0;
   const linhas = ultimoRelatorioFinanceiro.map((c) => {
@@ -5741,6 +5747,7 @@ document.getElementById('btn-rel-fin-imprimir').addEventListener('click', () => 
       c.vencimento ? formatarDataOuDataHora(c.vencimento) : '—', escapeHtml(c.status),
       formatarDataOuDataHora(dataPago), valorPago > 0 ? formatarMoeda(valorPago) : '—',
       escapeHtml(c.metodo_pagamento) || '—',
+      c.recorrencia ? `Recorrência: ${escapeHtml(c.recorrencia.nome)} (${escapeHtml(c.recorrencia.status)})` : 'Normal',
     ];
   });
   imprimirRelatorioTabela({

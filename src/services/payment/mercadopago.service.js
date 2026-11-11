@@ -5,6 +5,10 @@
 
 const BASE_URL = 'https://api.mercadopago.com';
 
+// Toda chamada ao MP tem limite de tempo: sem isso, uma resposta que nunca chega deixaria a requisição (e a tela do aluno) pendurada.
+const fetch = (url, opts = {}) => globalThis.fetch(url, { signal: AbortSignal.timeout(15000), ...opts });
+
+
 function getToken() {
   const token = process.env.MERCADOPAGO_ACCESS_TOKEN;
   if (!token) throw new Error('MERCADOPAGO_ACCESS_TOKEN não configurado no .env');

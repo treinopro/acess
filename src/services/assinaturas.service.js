@@ -728,10 +728,10 @@ async function expirarCheckoutsAbandonados({ horas = 48 } = {}) {
 // Procura o pagamento por DOIS caminhos (lista de cobranças da assinatura e busca de pagamentos pelo
 // external_reference) — a baixa é idempotente por payment_id, então achar nos dois não duplica.
 // Devolve também o que o MP respondeu (para o painel mostrar quando nada for baixado).
-async function reconciliarUmaAssinatura(preapprovalId) {
+async function reconciliarUmaAssinatura(preapprovalId, { leve = false } = {}) {
   const r = { baixas: 0, alunosAtualizados: [], status_mp: null, cobrancas_vistas: [], pagamentos_vistos: [] };
   await processarEvento({ type: 'subscription_preapproval', dataId: preapprovalId });
-  try { r.status_mp = (await mercadopago.consultarAssinatura(preapprovalId))?.status || null; } catch { /* informativo */ }
+  if (!leve) { try { r.status_mp = (await mercadopago.consultarAssinatura(preapprovalId))?.status || null; } catch { /* informativo */ } }
 
   const aplicar = async (paymentId, valorCentavos, metodo) => {
     const assinatura = await buscarPorPreapproval(preapprovalId); // recarrega: o contador muda a cada baixa
@@ -814,8 +814,10 @@ async function verificarOferta(id) {
     const agora = Date.now();
     if (agora - (ultimaVerificacao.get(a.id) || 0) >= 3000) {
       ultimaVerificacao.set(a.id, agora);
-      try { alunosAtualizados = (await reconciliarUmaAssinatura(a.preapproval_id)).alunosAtualizados; }
+      const inicio = Date.now();
+      try { alunosAtualizados = (await reconciliarUmaAssinatura(a.preapproval_id, { leve: true })).alunosAtualizados; }
       catch (err) { console.error('[assinaturas] verificação ao voltar do MP falhou:', err.message); }
+      console.log(`[assinaturas] verificação ao voltar do MP: ${a.id} status=${a.status} baixas=${alunosAtualizados.length} em ${Date.now() - inicio}ms`);
       if (ultimaVerificacao.size > 500) ultimaVerificacao.clear();
     }
   }

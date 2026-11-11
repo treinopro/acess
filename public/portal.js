@@ -2196,7 +2196,12 @@ function tratarRetornoCartao() {
     rodando = true;
     tentativas += 1;
     try {
-      const o = await api('/api/pagamentos/assinaturas/oferta/' + encodeURIComponent(idAssinatura) + '/verificar', { method: 'POST' });
+      // Limite de 12s por consulta: se uma não responder, não trava as próximas.
+      const ctrl = new AbortController(); // (AbortSignal.timeout não existe em iPhones mais antigos)
+      const limite = setTimeout(() => ctrl.abort(), 12000);
+      let o;
+      try { o = await api('/api/pagamentos/assinaturas/oferta/' + encodeURIComponent(idAssinatura) + '/verificar', { method: 'POST', signal: ctrl.signal }); }
+      finally { clearTimeout(limite); }
       ultimaResposta = `${o.status}, ${Number(o.cobrancas_processadas || 0)} cobrança(s) baixada(s)`;
       const contato = 'Dúvidas? Fale com a recepção da academia.';
       if (['authorized', 'completed'].includes(o.status) && Number(o.cobrancas_processadas || 0) > 0) {

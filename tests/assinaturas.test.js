@@ -827,3 +827,15 @@ test('sincronizarAgora: se a lista de cobranças da assinatura vier vazia, acha 
   r = await assinaturas.sincronizarAgora({ assinaturaId: id }); // de novo: nada muda
   assert.strictEqual(r.baixas, 0);
 });
+
+test('excluir conta que foi paga por assinatura: o banco recusa até soltar o vínculo; depois exclui', async () => {
+  // c-recon foi baixada por assinatura (teste da reconciliação) e tem registro em assinaturas_mp_pagamentos.
+  await assert.rejects(() => db.execute({ sql: 'DELETE FROM cobrancas WHERE id = ?', args: ['c-recon'] }), /FOREIGN KEY/i);
+  await assinaturas.desvincularCobranca('c-recon');
+  await db.execute({ sql: 'DELETE FROM cobrancas WHERE id = ?', args: ['c-recon'] });
+  const ainda = (await db.execute({ sql: `SELECT COUNT(*) n FROM cobrancas WHERE id='c-recon'`, args: [] })).rows[0].n;
+  assert.strictEqual(Number(ainda), 0);
+  // O registro do pagamento continua (não reprocessa o mesmo pagamento depois).
+  const reg = (await db.execute({ sql: `SELECT COUNT(*) n FROM assinaturas_mp_pagamentos WHERE payment_id='9001'`, args: [] })).rows[0].n;
+  assert.strictEqual(Number(reg), 1);
+});

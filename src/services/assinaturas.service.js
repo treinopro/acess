@@ -421,6 +421,18 @@ async function anexarRecorrencia(rows, campoMatricula = 'matricula_id') {
   return rows;
 }
 
+// Antes de excluir uma conta que já teve pagamento de assinatura: solta o vínculo do registro do pagamento
+// (que referencia a conta) para o banco aceitar a exclusão. O registro do pagamento é mantido (idempotência).
+async function desvincularCobranca(cobrancaId) {
+  try {
+    await db.execute({ sql: 'UPDATE assinaturas_mp_pagamentos SET cobranca_id = NULL WHERE cobranca_id = ?', args: [cobrancaId] });
+    await db.execute({ sql: 'UPDATE assinaturas_mp SET cobranca_inicial_id = NULL WHERE cobranca_inicial_id = ?', args: [cobrancaId] });
+  } catch (err) {
+    if (/no such table: assinaturas_mp/i.test(String(err.message))) return; // recurso nunca migrado
+    throw err;
+  }
+}
+
 // O aluno escolheu pagar em Pix: cancela a tentativa de cartão que estava pendente (sem cobrar nada).
 async function cancelarPendentesDasMatriculas(matriculaIds) {
   if (!habilitado() || !matriculaIds?.length) return 0;
@@ -1120,5 +1132,5 @@ module.exports = {
   habilitado, criarAssinatura, listar, cancelar, processarEvento, processarPagamentoAprovado,
   ofertaPublica, disponibilidadeParaAluno, obterOuCriarParaAluno, obterOuCriarParaNovoCadastro, baseUrlDaRequisicao, urlOferta,
   obterOferta, salvarOferta, calcularDescontoCentavos, OFERTA_PADRAO,
-  obterPlanosCadastro, salvarPlanosCadastro, listarPlanosCadastroPublicos, buscarPlanoCadastro, expirarCheckoutsAbandonados, reconciliarAssinaturas, sincronizarAgora, cronogramaCobrancaAutomatica, cancelarPendentesDasMatriculas, anexarRecorrencia,
+  obterPlanosCadastro, salvarPlanosCadastro, listarPlanosCadastroPublicos, buscarPlanoCadastro, expirarCheckoutsAbandonados, reconciliarAssinaturas, sincronizarAgora, cronogramaCobrancaAutomatica, cancelarPendentesDasMatriculas, anexarRecorrencia, desvincularCobranca,
 };

@@ -235,6 +235,7 @@ router.put('/cobrancas/:id', autenticar, async (req, res, next) => {
 // DELETE /api/pagamentos/cobrancas/:id
 router.delete('/cobrancas/:id', autenticar, async (req, res, next) => {
   try {
+    await assinaturas.desvincularCobranca(req.params.id); // conta paga por assinatura: solta o vínculo do pagamento
     await db.execute({ sql: 'DELETE FROM cobrancas WHERE id = ?', args: [req.params.id] });
     res.json({ ok: true });
   } catch (err) {

@@ -78,3 +78,33 @@ test('webhook MP: aceita vários segredos (um por aplicação) e rejeita se nenh
   assert.match(ruim.aviso, /Segredos configurados \(2\)/);
   assert.ok(!ruim.aviso.includes(appA) && !ruim.aviso.includes(appB)); // nunca imprime o segredo inteiro
 });
+
+test('webhook MP (rota): estrito por padrão responde 401; com MERCADOPAGO_WEBHOOK_ESTRITO=0 aceita e segue', async () => {
+  const express = require('express');
+  const http = require('http');
+  const app = express();
+  app.use('/api/pagamentos', router);
+  app.use((err, req, res, next) => res.status(500).json({ erro: err.message }));
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, resolve));
+  const porta = server.address().port;
+  const chamar = () => new Promise((resolve, reject) => {
+    const corpo = JSON.stringify({ type: 'ping', data: { id: '123456' } }); // tipo sem consulta externa
+    const r = http.request({ port: porta, path: '/api/pagamentos/webhook/mercadopago?data.id=123456&type=ping', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(corpo), 'x-signature': 'ts=1,v1=' + '0'.repeat(64), 'x-request-id': 'abc' } },
+    (res) => { res.resume(); res.on('end', () => resolve(res.statusCode)); });
+    r.on('error', reject); r.end(corpo);
+  });
+  try {
+    process.env.MERCADOPAGO_WEBHOOK_SECRET = 'segredo123';
+    delete process.env.MERCADOPAGO_WEBHOOK_ESTRITO;
+    assert.strictEqual(await chamar(), 401);
+    process.env.MERCADOPAGO_WEBHOOK_ESTRITO = '1';
+    assert.strictEqual(await chamar(), 401);
+    process.env.MERCADOPAGO_WEBHOOK_ESTRITO = '0';
+    assert.strictEqual(await chamar(), 200);
+  } finally {
+    delete process.env.MERCADOPAGO_WEBHOOK_ESTRITO;
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

@@ -669,8 +669,17 @@ router.post('/webhook/mercadopago', limitadorWebhook, express.json(), async (req
   try {
     const { valido, aviso } = verificarAssinaturaMercadoPago(req);
     if (!valido) {
-      console.warn('[webhook/mercadopago] rejeitado:', aviso);
-      return res.sendStatus(401);
+      // Modo tolerante (MERCADOPAGO_WEBHOOK_ESTRITO=0), aprovado pelo dono: a assinatura x-signature do Mercado Pago
+      // falha nas contas dele mesmo com o segredo certo (mesmo sintoma em todas as aplicações testadas e no Encaixaí).
+      // Aqui só registra o alerta e segue. Isso é seguro porque NENHUMA baixa confia no corpo do aviso: o servidor
+      // sempre reconsulta o pagamento/assinatura na API do MP (com o Access Token) e só baixa o que ela confirma.
+      // O padrão continua estrito (401) quando a variável não está definida.
+      if (process.env.MERCADOPAGO_WEBHOOK_ESTRITO === '0') {
+        console.warn('[webhook/mercadopago] ASSINATURA INVÁLIDA, processando mesmo assim (MERCADOPAGO_WEBHOOK_ESTRITO=0; a baixa é conferida na API do MP):', aviso);
+      } else {
+        console.warn('[webhook/mercadopago] rejeitado:', aviso);
+        return res.sendStatus(401);
+      }
     }
     if (aviso) console.warn('[webhook/mercadopago]', aviso);
 

@@ -318,7 +318,7 @@ async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPr
   const limiteCobrancas = planoCadastro ? planoCadastro.limite_cobrancas : null;
   const hojeCobranca = new Date().toISOString().slice(0, 10);
   const dataInicioMP = dataPrimeiraCobranca && dataPrimeiraCobranca > hojeCobranca
-    ? `${dataPrimeiraCobranca}T00:00:00.000-03:00`
+    ? `${dataPrimeiraCobranca}T12:00:00.000-03:00` // meio-dia de Brasília: o dia não "escorrega" para o anterior se o MP converter o fuso
     : null;
   console.log('[assinaturas] criando assinatura no MP:', { modalidade: modalidade || 'legado', valor_centavos: preco.valor_centavos, primeira_cobranca_pedida: dataPrimeiraCobranca, start_date_enviado: dataInicioMP || 'nenhum (cobra ao cadastrar o cartão)' });
   const mp = await mercadopago.criarAssinaturaPendente({

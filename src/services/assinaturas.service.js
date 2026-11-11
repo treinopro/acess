@@ -344,6 +344,26 @@ async function restaurarCobrancaInicial(a) {
   });
 }
 
+// O aluno escolheu pagar em Pix: cancela a tentativa de cartão que estava pendente (sem cobrar nada).
+async function cancelarPendentesDasMatriculas(matriculaIds) {
+  if (!habilitado() || !matriculaIds?.length) return 0;
+  let n = 0;
+  for (const matriculaId of new Set(matriculaIds.filter(Boolean))) {
+    let r;
+    try {
+      r = await db.execute({ sql: `SELECT id FROM assinaturas_mp WHERE matricula_id = ? AND status = 'pending'`, args: [matriculaId] });
+    } catch (err) {
+      if (/no such table: assinaturas_mp/i.test(String(err.message))) return 0;
+      throw err;
+    }
+    for (const a of r.rows) {
+      try { await cancelar({ assinaturaId: a.id }); n++; }
+      catch (err) { console.error('[assinaturas] não foi possível cancelar checkout pendente', a.id, err.message); }
+    }
+  }
+  return n;
+}
+
 // Recorrência encerrada com a matrícula seguindo: volta a valer a regra normal
 // (renovação automática do sistema, vencimentos dia 10/20, pagamento Pix/balcão).
 // Apaga só as contas em aberto criadas pela assinatura (provedor 'assinatura_mp');
@@ -452,6 +472,13 @@ async function baixarParcela({ assinatura, paymentId, valorCentavos, metodo }) {
   if (baixa === 'baixada') {
     if (novoValorConta !== null) {
       await db.execute({ sql: 'UPDATE cobrancas SET valor_centavos = ? WHERE id = ?', args: [novoValorConta, conta.id] });
+    }
+    // Novo cadastro no cartão: a 1ª conta passa a vencer no dia da adesão (e as seguintes no mesmo dia),
+    // sem seguir o 10/20 — isso só volta a valer se a recorrência for cancelada.
+    if (assinatura.modalidade && assinatura.modalidade !== 'legado' && !assinatura.data_primeira_cobranca && conta.id === assinatura.cobranca_inicial_id) {
+      const hojeAdesao = new Date().toISOString().slice(0, 10);
+      await db.execute({ sql: 'UPDATE cobrancas SET vencimento = ? WHERE id = ?', args: [hojeAdesao, conta.id] });
+      conta.vencimento = hojeAdesao; // a próxima conta (registrarProximaCobranca) parte da data da adesão
     }
     await db.execute({
       sql: `UPDATE cobrancas SET status = 'pago', metodo_pagamento = ?, pago_em = datetime('now') WHERE id = ?`,
@@ -859,10 +886,8 @@ async function prepararCobrancaInicial({ matricula, valorCentavos, modalidade })
     cobrancaId = abertas.rows[0].id;
     valorAnteriorCentavos = Number(abertas.rows[0].valor_centavos);
     statusAnteriorCobranca = abertas.rows[0].status;
-    await db.execute({
-      sql: 'UPDATE cobrancas SET valor_centavos = ? WHERE id = ?',
-      args: [valorCentavos, cobrancaId],
-    });
+    // O valor da conta só muda quando o cartão for aprovado (ver baixarParcela): até lá, quem
+    // preferir pagar em Pix continua vendo e pagando o valor original do plano.
   } else {
     const ultima = await db.execute({
       sql: `SELECT vencimento FROM cobrancas WHERE matricula_id = ? AND status = 'pago' ORDER BY vencimento DESC, criado_em DESC LIMIT 1`,
@@ -881,8 +906,8 @@ async function prepararCobrancaInicial({ matricula, valorCentavos, modalidade })
       valorAnteriorCentavos = Number(existenteNaCompetencia.rows[0].valor_centavos);
       statusAnteriorCobranca = existenteNaCompetencia.rows[0].status;
       await db.execute({
-        sql: `UPDATE cobrancas SET valor_centavos = ?, status = 'pendente', descricao = ? WHERE id = ?`,
-        args: [valorCentavos, descricao, cobrancaId],
+        sql: `UPDATE cobrancas SET status = 'pendente', descricao = ? WHERE id = ?`,
+        args: [descricao, cobrancaId],
       });
     } else {
       cobrancaId = uuid();
@@ -890,7 +915,7 @@ async function prepararCobrancaInicial({ matricula, valorCentavos, modalidade })
       await db.execute({
         sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento)
               VALUES (?, ?, ?, ?, 'pendente', 'recorrencia', ?, ?)`,
-        args: [cobrancaId, matricula.aluno_id, matricula.id, valorCentavos, descricao, vencimento],
+        args: [cobrancaId, matricula.aluno_id, matricula.id, Number(matricula.valor_centavos) || valorCentavos, descricao, vencimento],
       });
     }
   }
@@ -975,16 +1000,16 @@ async function obterOuCriarParaNovoCadastro({alunoId,matriculaId,baseUrl,modalid
  if(pend.rows[0]){if(pend.rows[0].modalidade===modalidade&&pend.rows[0].status==='pending')return{oferta_url:urlOferta(baseUrl,pend.rows[0].id)};throw erro('Já existe uma assinatura aguardando confirmação para esta matrícula.',409);}
  const planoCadastro = await buscarPlanoCadastro(modalidade);
  const preco = precoDaOferta(Number(planoCadastro.valor_centavos), planoCadastro.desconto); const valor=preco.valor_centavos,hoje=new Date().toISOString().slice(0,10);
- // Novo cadastro no cartão: cobra NA HORA (sem start_date) e o ciclo segue a data da adesão; a conta
- // passa a vencer hoje. O vencimento original (10/20) fica guardado para o caso de cancelar.
- await db.execute({sql:"UPDATE cobrancas SET valor_centavos=?, vencimento=? WHERE id=? AND status='pendente'",args:[valor,hoje,c.id]});
+ // Novo cadastro no cartão: o MP cobra NA HORA em que o cartão é cadastrado (sem start_date). A conta NÃO muda aqui:
+ // valor e vencimento só passam para os da modalidade quando a cobrança for aprovada (baixarParcela). Até lá,
+ // quem desistir do cartão e pagar em Pix vê e paga o valor original.
  try{const criada=await criarAssinatura({matriculaId,baseUrl,modalidade,dataPrimeiraCobranca:null,cobrancaInicialId:c.id,valorAnteriorCentavos:Number(c.valor_centavos),statusAnteriorCobranca:'pendente',vencimentoAnterior:c.vencimento||null,permitirMatriculaPendente:true});return{oferta_url:criada.oferta_url};}
- catch(e){await db.execute({sql:'UPDATE cobrancas SET valor_centavos=?, vencimento=? WHERE id=? AND status=\'pendente\'',args:[c.valor_centavos,c.vencimento,c.id]}).catch(()=>{});throw e;}
+ catch(e){throw e;}
 }
 
 module.exports = {
   habilitado, criarAssinatura, listar, cancelar, processarEvento, processarPagamentoAprovado,
   ofertaPublica, disponibilidadeParaAluno, obterOuCriarParaAluno, obterOuCriarParaNovoCadastro, baseUrlDaRequisicao, urlOferta,
   obterOferta, salvarOferta, calcularDescontoCentavos, OFERTA_PADRAO,
-  obterPlanosCadastro, salvarPlanosCadastro, listarPlanosCadastroPublicos, expirarCheckoutsAbandonados, reconciliarAssinaturas, sincronizarAgora, cronogramaCobrancaAutomatica,
+  obterPlanosCadastro, salvarPlanosCadastro, listarPlanosCadastroPublicos, expirarCheckoutsAbandonados, reconciliarAssinaturas, sincronizarAgora, cronogramaCobrancaAutomatica, cancelarPendentesDasMatriculas,
 };

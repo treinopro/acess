@@ -11,6 +11,7 @@ const { v4: uuid } = require('uuid');
 const db = require('./../db/client');
 const mercadopago = require('./payment/mercadopago.service');
 const acessoTerminal = require('./acessoTerminal.service');
+const assinaturas = require('./assinaturas.service');
 
 /** Lista as contas em aberto (pendente/atrasado) de um aluno pelo CPF. */
 async function consultarContasAbertas(cpf) {
@@ -47,6 +48,9 @@ async function criarPagamentoAgregado({ cpf, cobrancaIds, liberarAcesso }) {
   if (contas.rows.length !== cobrancaIds.length) {
     throw Object.assign(new Error('Uma ou mais contas selecionadas já não estão mais em aberto. Atualize a lista e tente de novo.'), { status: 409 });
   }
+
+  // Escolheu Pix: cancela tentativa de cartão (assinatura pendente) das matrículas dessas contas.
+  await assinaturas.cancelarPendentesDasMatriculas(contas.rows.map((c) => c.matricula_id)).catch((err) => console.error('[pagamentoContas] não foi possível cancelar checkout de cartão pendente:', err.message));
 
   const valorTotalCentavos = contas.rows.reduce((soma, c) => soma + Number(c.valor_centavos), 0);
   const pagamentoId = uuid();

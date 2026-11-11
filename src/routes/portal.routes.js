@@ -865,6 +865,8 @@ router.post('/cadastro/pix', limitadorSenhaPortal, async (req,res,next) => {
   const auth=await autenticarAlunoPortal(d.cpf,d.senha); if(auth.erro)return res.status(auth.status).json({erro:auth.erro});
   const q=await db.execute({sql:`SELECT c.*,p.nome AS plano_nome FROM cobrancas c JOIN matriculas m ON m.id=c.matricula_id JOIN planos p ON p.id=m.plano_id WHERE c.id=? AND c.aluno_id=? AND m.status='pendente'`,args:[d.cobranca_id,auth.aluno.id]});
   const c=q.rows[0]; if(!c||c.status!=='pendente')return res.status(404).json({erro:'Matrícula pendente não encontrada.'});
+  // Escolheu Pix: cancela a tentativa de cartão que estava pendente (se houver) antes de seguir.
+  await assinaturas.cancelarPendentesDasMatriculas([c.matricula_id]).catch(()=>{});
   // Só consulta assinaturas com o recurso ligado; se a tabela ainda não existir (migração pendente), o Pix segue normalmente.
   let assinaturaPendente={rows:[]};
   if(assinaturas.habilitado()){try{assinaturaPendente=await db.execute({sql:"SELECT id FROM assinaturas_mp WHERE matricula_id=? AND status IN ('pending','authorized','paused') LIMIT 1",args:[c.matricula_id]});}catch(e){if(!/no such table: assinaturas_mp/i.test(String(e.message||e)))throw e;}}

@@ -6,8 +6,8 @@
 const assinaturas = require('../services/assinaturas.service');
 const acessoTerminal = require('../services/acessoTerminal.service');
 
-async function rodar() {
-  const r = await assinaturas.reconciliarAssinaturas();
+async function rodar({ somentePendentes = false } = {}) {
+  const r = await assinaturas.reconciliarAssinaturas({ somentePendentes });
   for (const alunoId of new Set(r.alunosAtualizados)) acessoTerminal.notificarAgenteAtualizacaoAluno(alunoId);
   if (r.baixas) console.log('[reconciliarAssinaturas]', { assinaturas: r.assinaturas, baixas: r.baixas });
   return r;

@@ -816,6 +816,25 @@ router.get('/assinaturas/oferta/:id', limitadorOferta, async (req, res, next) =>
   }
 });
 
+// POST /api/pagamentos/assinaturas/oferta/:id/verificar — PÚBLICO. A página /assinar/:id chama isto em loop
+// quando o aluno volta do Mercado Pago: confirma o pagamento na hora (sem depender do webhook).
+const limitadorVerificar = criarLimitador({
+  janelaMs: 5 * 60 * 1000,
+  maximo: 400, // vários alunos podem estar no mesmo Wi-Fi da academia
+  mensagem: 'Muitas requisições. Aguarde alguns minutos.',
+});
+router.post('/assinaturas/oferta/:id/verificar', limitadorVerificar, async (req, res, next) => {
+  try {
+    const r = await assinaturas.verificarOferta(req.params.id);
+    if (!r?.oferta) return res.status(404).json({ erro: 'Oferta não encontrada.' });
+    for (const alunoId of new Set(r.alunosAtualizados)) acessoTerminal.notificarAgenteAtualizacaoAluno(alunoId); // libera a catraca já
+    res.set('Cache-Control', 'no-store');
+    res.json(r.oferta);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/pagamentos/assinaturas?matricula_id=...
 router.get('/assinaturas', autenticar, async (req, res, next) => {
   try {

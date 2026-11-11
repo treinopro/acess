@@ -861,3 +861,31 @@ test('cancelar: se o MP diz que a assinatura já estava cancelada, o sistema con
   const c = (await db.execute({ sql: `SELECT valor_centavos, status FROM cobrancas WHERE id='c-jacancel'`, args: [] })).rows[0];
   assert.deepStrictEqual({ ...c }, { valor_centavos: 9900, status: 'pendente' });
 });
+
+test('aluno volta do Mercado Pago: verificarOferta confirma na hora (sem webhook/job) e o job rápido só olha pendentes', async () => {
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('volta2', 'Aluno Volta2', 'v2@teste.com', '60600099955')` });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-volta2', 'volta2', 'p1', '2026-11-10', 'pendente')` });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-volta2', 'volta2', 'm-volta2', 9900, 'pendente', 'mercadopago', 'Matrícula', '2026-11-10')` });
+  await assinaturas.salvarPlanosCadastro([{ id: 'mensal_livre', nome: 'Mensal', valor_centavos: 100, limite_cobrancas: null, ativo: true }]);
+  await assinaturas.obterOuCriarParaNovoCadastro({ alunoId: 'volta2', matriculaId: 'm-volta2', baseUrl: 'https://academia.test', modalidade: 'mensal_livre' });
+  const { id, preapproval_id: pre } = (await db.execute({ sql: `SELECT id, preapproval_id FROM assinaturas_mp WHERE matricula_id='m-volta2'` })).rows[0];
+
+  // Antes de pagar: continua pendente e nada é baixado.
+  let r = await assinaturas.verificarOferta(id);
+  assert.strictEqual(r.oferta.status, 'pending');
+  assert.deepStrictEqual(r.alunosAtualizados, []);
+
+  // O aluno paga no MP; o webhook NÃO chega. Ao voltar para a página, a verificação confirma sozinha.
+  estadoMp.assinaturas[pre].status = 'authorized';
+  estadoMp.pagamentosRef = { ...(estadoMp.pagamentosRef || {}), [id]: [{ id: 6601, status: 'approved', transaction_amount: 1, payment_type_id: 'credit_card' }] };
+  await new Promise((resolve) => setTimeout(resolve, 3100)); // respeita o intervalo mínimo de 3s por assinatura
+  r = await assinaturas.verificarOferta(id);
+  assert.strictEqual(r.oferta.status, 'authorized');
+  assert.deepStrictEqual(r.alunosAtualizados, ['volta2']);
+  const m = (await db.execute({ sql: `SELECT status FROM matriculas WHERE id='m-volta2'` })).rows[0];
+  assert.strictEqual(m.status, 'ativa');
+
+  // Job rápido: só considera assinaturas pendentes (esta já está autorizada).
+  const j = await assinaturas.reconciliarAssinaturas({ somentePendentes: true });
+  assert.ok(!j.alunosAtualizados.includes('volta2'));
+});

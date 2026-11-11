@@ -361,6 +361,14 @@ server.listen(PORT, () => {
     }, 10 * 60 * 1000);
   }
 
+  // Primeiro pagamento no cartão: quem acabou de pagar quer entrar na academia, então as assinaturas
+  // AGUARDANDO o 1º pagamento são conferidas a cada 2 min (poucas por vez, consulta leve).
+  if (EXECUTAR_JOBS_AGENDADOS) {
+    setInterval(() => {
+      rodarReconciliarAssinaturas({ somentePendentes: true }).catch((err) => console.error('[reconciliarAssinaturas] erro (pendentes):', err));
+    }, 2 * 60 * 1000);
+  }
+
   // Reconciliação das assinaturas (rede de segurança do webhook): a cada 15 min.
   if (EXECUTAR_JOBS_AGENDADOS) {
     setInterval(() => {

@@ -271,16 +271,26 @@
       });
   }
 
+  // Pede ao servidor para CONFIRMAR no Mercado Pago agora (não depende do aviso automático).
+  function verificar() {
+    return fetch('/api/pagamentos/assinaturas/oferta/' + encodeURIComponent(id) + '/verificar', { method: 'POST', cache: 'no-store' })
+      .then(function (r) {
+        if (r.status === 404) return null;
+        if (!r.ok) throw new Error('falha');
+        return r.json();
+      });
+  }
+
   function confirmarAtivacao(o, tentativa) {
     // Voltou do Mercado Pago: o aviso (webhook) pode levar alguns segundos.
     estado('⏳', 'Confirmando seu cadastro…', 'Só um instante, estamos finalizando.');
     var timer = setInterval(function () {
       tentativa += 1;
-      buscar().then(function (n) {
+      verificar().then(function (n) {
         if (n && n.status === 'authorized') { clearInterval(timer); ativo(n); }
-        else if (tentativa >= 20) { clearInterval(timer); estado('✅', 'Recebemos seu cadastro!', 'A confirmação pode levar alguns minutos. Se tiver dúvida, fale com a recepção.', o.whatsapp_contato); }
+        else if (tentativa >= 40) { clearInterval(timer); estado('✅', 'Recebemos seu cadastro!', 'A confirmação pode levar alguns minutos. Se tiver dúvida, fale com a recepção.', o.whatsapp_contato); }
       }).catch(function () { /* tenta de novo */ });
-    }, 4500);
+    }, 3000);
   }
 
   function ativo(o) {

@@ -774,11 +774,12 @@ async function reconciliarUmaAssinatura(preapprovalId) {
  * (INSERT OR IGNORE por payment_id), então rodar junto com o webhook não duplica.
  * Devolve { assinaturas, baixas, alunosAtualizados[] }.
  */
-async function reconciliarAssinaturas() {
+async function reconciliarAssinaturas({ somentePendentes = false } = {}) {
   const resultado = { assinaturas: 0, baixas: 0, alunosAtualizados: [] };
   if (!habilitado()) return resultado;
+  const statusAlvo = somentePendentes ? "'pending'" : "'pending', 'authorized', 'paused'";
   const vivas = await db.execute({
-    sql: `SELECT id, preapproval_id FROM assinaturas_mp WHERE status IN ('pending', 'authorized', 'paused') ORDER BY criado_em ASC LIMIT 200`,
+    sql: `SELECT id, preapproval_id FROM assinaturas_mp WHERE status IN (${statusAlvo}) ORDER BY criado_em ASC LIMIT 200`,
     args: [], // o cliente do Turso exige `args`, mesmo vazio
   });
   for (const v of vivas.rows) {
@@ -792,6 +793,25 @@ async function reconciliarAssinaturas() {
     }
   }
   return resultado;
+}
+
+// Chamada pela página pública /assinar/:id quando o aluno volta do Mercado Pago: confirma NA HORA no MP (sem esperar
+// o webhook nem o job) e devolve a oferta atualizada. Limita a 1 consulta ao MP a cada 3s por assinatura.
+const ultimaVerificacao = new Map();
+async function verificarOferta(id) {
+  const a = await buscarPorId(id);
+  if (!a) return null;
+  let alunosAtualizados = [];
+  if (habilitado() && a.status === 'pending') {
+    const agora = Date.now();
+    if (agora - (ultimaVerificacao.get(a.id) || 0) >= 3000) {
+      ultimaVerificacao.set(a.id, agora);
+      try { alunosAtualizados = (await reconciliarUmaAssinatura(a.preapproval_id)).alunosAtualizados; }
+      catch (err) { console.error('[assinaturas] verificação ao voltar do MP falhou:', err.message); }
+      if (ultimaVerificacao.size > 500) ultimaVerificacao.clear();
+    }
+  }
+  return { oferta: await ofertaPublica(id), alunosAtualizados };
 }
 
 // Botão "Atualizar status" do painel: sincroniza uma assinatura agora.
@@ -1146,5 +1166,5 @@ module.exports = {
   habilitado, criarAssinatura, listar, cancelar, processarEvento, processarPagamentoAprovado,
   ofertaPublica, disponibilidadeParaAluno, obterOuCriarParaAluno, obterOuCriarParaNovoCadastro, baseUrlDaRequisicao, urlOferta,
   obterOferta, salvarOferta, calcularDescontoCentavos, OFERTA_PADRAO,
-  obterPlanosCadastro, salvarPlanosCadastro, listarPlanosCadastroPublicos, buscarPlanoCadastro, expirarCheckoutsAbandonados, reconciliarAssinaturas, sincronizarAgora, cronogramaCobrancaAutomatica, cancelarPendentesDasMatriculas, anexarRecorrencia, desvincularCobranca,
+  obterPlanosCadastro, salvarPlanosCadastro, listarPlanosCadastroPublicos, buscarPlanoCadastro, expirarCheckoutsAbandonados, reconciliarAssinaturas, sincronizarAgora, cronogramaCobrancaAutomatica, cancelarPendentesDasMatriculas, anexarRecorrencia, desvincularCobranca, verificarOferta,
 };

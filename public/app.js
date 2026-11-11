@@ -1118,8 +1118,19 @@ function linhaPlanoRecorrenciaCadastro(p = {}) {
         <label style="display:flex;gap:6px;align-items:center"><input class="prc-desc-ativo" type="checkbox" ${d.ativo ? 'checked' : ''} style="width:auto" /> Aplicar desconto</label>
         <button type="button" class="btn-secundario perigo prc-remover">Remover modalidade</button>
       </div>
+      <div style="margin-top:12px;border-top:1px dashed #d0d5dd;padding-top:10px">
+        <label style="display:flex;gap:6px;align-items:center"><input class="prc-restrito" type="checkbox" ${p.restrito ? 'checked' : ''} style="width:auto" /> Visível só para pessoas selecionadas (modo teste — os demais alunos não enxergam)</label>
+        <div class="prc-restricao" style="${p.restrito ? '' : 'display:none;'}margin-top:8px">
+          <label>CPFs liberados (um por linha)</label>
+          <textarea class="prc-cpfs" rows="3" placeholder="000.000.000-00">${escapeHtml((p.cpfs_permitidos || []).join('\n'))}</textarea>
+          <label style="margin-top:6px">Categorias liberadas</label>
+          <div style="display:flex;gap:14px;flex-wrap:wrap">${['professor', 'colaborador', 'bolsista', 'visitante', 'aluno'].map((c) => `<label style="display:flex;gap:4px;align-items:center"><input class="prc-cat" type="checkbox" value="${c}" ${(p.categorias_permitidas || []).includes(c) ? 'checked' : ''} style="width:auto" /> ${c}</label>`).join('')}</div>
+          <small style="color:#667085">Sem nenhum CPF/categoria marcado, ninguém além do painel vê esta modalidade (rascunho).</small>
+        </div>
+      </div>
     </div>`);
   linha.querySelector('.prc-remover').addEventListener('click', () => linha.remove());
+  linha.querySelector('.prc-restrito').addEventListener('change', (ev) => { linha.querySelector('.prc-restricao').style.display = ev.target.checked ? '' : 'none'; });
   return linha;
 }
 
@@ -1157,6 +1168,9 @@ document.getElementById('form-planos-recorrencia-cadastro').addEventListener('su
     const descValor = Number(linha.querySelector('.prc-desc-valor').value) || 0;
     return { id, nome, valor_centavos: Math.round(valor * 100), limite_cobrancas: limiteTexto ? Number(limiteTexto) : null,
       ativo: linha.querySelector('.prc-ativo').checked,
+      restrito: linha.querySelector('.prc-restrito').checked,
+      cpfs_permitidos: linha.querySelector('.prc-cpfs').value.split(/[\s,;]+/).map((x) => x.replace(/\D/g, '')).filter((x) => x.length === 11),
+      categorias_permitidas: [...linha.querySelectorAll('.prc-cat:checked')].map((x) => x.value),
       desconto: { ativo: linha.querySelector('.prc-desc-ativo').checked && descValor > 0, tipo,
         percentual: tipo === 'percentual' ? descValor : 0, valor_centavos: tipo === 'valor' ? Math.round(descValor * 100) : 0 } };
   });

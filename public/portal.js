@@ -95,7 +95,7 @@ async function carregarCardAssinaturaHub() {
   try {
     const d = await api(`/api/portal/assinatura?cpf=${encodeURIComponent(cpfHubAtual)}&senha=${encodeURIComponent(senhaHubAtual)}`);
     if (!d.disponivel) return;
-    const resposta = await api('/api/portal/cadastro/recorrencia/planos');
+    const resposta = await api('/api/portal/cadastro/recorrencia/planos?cpf=' + encodeURIComponent(String(cpfHubAtual || '').replace(/\D/g, '')));
     const opcoes = Array.isArray(resposta.opcoes) ? resposta.opcoes : [];
     if (!opcoes.length) return;
     const cards = opcoes.map((p, i) => {
@@ -2089,7 +2089,7 @@ function blocoExplicativoRecorrencia(){
 async function carregarOfertaRecorrenciaNovoAluno(){
  const container=document.getElementById('oferta-recorrencia-novo-aluno');if(!container)return;
  let opcoes=[];
- try{const dados=await api('/api/portal/cadastro/recorrencia/planos');opcoes=Array.isArray(dados.opcoes)?dados.opcoes:[];}catch(e){/* Pix continua disponível mesmo se a lista não carregar. */}
+ try{const dados=await api('/api/portal/cadastro/recorrencia/planos?cpf='+encodeURIComponent(String(cadastroPortalCpfAtual||'').replace(/\D/g,'')));opcoes=Array.isArray(dados.opcoes)?dados.opcoes:[];}catch(e){/* Pix continua disponível mesmo se a lista não carregar. */}
  const cards=opcoes.map((p,i)=>{
   const mensal=formatarMoeda(p.valor_final_centavos);
   const detalhe=p.limite_cobrancas?String(p.limite_cobrancas)+' cobranças mensais de '+mensal+' (uma por mês, durante '+p.limite_cobrancas+' meses)':'Cobrança automática todo mês, por tempo indeterminado • Sem permanência mínima';

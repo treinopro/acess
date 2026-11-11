@@ -755,3 +755,30 @@ test('consultas do painel/jobs sempre passam args (o cliente do Turso exige)', (
     if (/sql:/.test(corpo)) assert.ok(/args/.test(corpo), 'db.execute sem args: ' + corpo.slice(0, 80));
   }
 });
+
+test('modalidade restrita: só CPFs/categorias liberados enxergam e contratam; painel enxerga tudo', async () => {
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf, categoria) VALUES ('prof1', 'Professor', 'prof@teste.com', '11111111111', 'professor')` });
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf, categoria) VALUES ('teste-cpf', 'Aluno Teste', 'tcpf@teste.com', '222.222.222-22', 'aluno')` });
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf, categoria) VALUES ('comum', 'Aluno Comum', 'comum@teste.com', '33333333333', 'aluno')` });
+  await assinaturas.salvarPlanosCadastro([
+    { id: 'publica', nome: 'Pública', valor_centavos: 7000, limite_cobrancas: null, ativo: true },
+    { id: 'so_teste', nome: 'Só teste', valor_centavos: 100, limite_cobrancas: null, ativo: true, restrito: true,
+      cpfs_permitidos: ['222.222.222-22', 'lixo'], categorias_permitidas: ['professor', 'inexistente'] },
+  ]);
+  const ids = async (arg) => (await assinaturas.listarPlanosCadastroPublicos(arg)).map((p) => p.id).sort();
+  assert.deepStrictEqual(await ids({}), ['publica']);                              // anônimo
+  assert.deepStrictEqual(await ids({ cpf: '33333333333' }), ['publica']);          // aluno comum
+  assert.deepStrictEqual(await ids({ cpf: '222.222.222-22' }), ['publica', 'so_teste']); // CPF liberado (formatado)
+  assert.deepStrictEqual(await ids({ cpf: '11111111111' }), ['publica', 'so_teste']);    // categoria professor
+  assert.deepStrictEqual(await ids({ alunoId: 'prof1' }), ['publica', 'so_teste']);
+
+  // O que foi salvo é normalizado.
+  const salvo = (await assinaturas.obterPlanosCadastro()).find((p) => p.id === 'so_teste');
+  assert.deepStrictEqual(salvo.cpfs_permitidos, ['22222222222']);
+  assert.deepStrictEqual(salvo.categorias_permitidas, ['professor']);
+
+  // Contratar: o servidor bloqueia quem não pode, mesmo sabendo o id; o painel (admin) pode.
+  await assert.rejects(() => assinaturas.buscarPlanoCadastro('so_teste', { alunoId: 'comum' }), /não está disponível/);
+  assert.strictEqual((await assinaturas.buscarPlanoCadastro('so_teste', { alunoId: 'prof1' })).id, 'so_teste');
+  assert.strictEqual((await assinaturas.buscarPlanoCadastro('so_teste', { alunoId: 'comum', admin: true })).id, 'so_teste');
+});

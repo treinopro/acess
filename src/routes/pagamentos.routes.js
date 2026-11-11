@@ -711,7 +711,7 @@ router.post('/assinaturas', autenticar, apenasAdmin, async (req, res, next) => {
       // Modalidade escolhida no painel (mesmas condições que o aluno vê no portal).
       const m = (await db.execute({ sql: 'SELECT aluno_id FROM matriculas WHERE id = ?', args: [matricula_id] })).rows[0];
       if (!m) return res.status(404).json({ erro: 'Matrícula não encontrada.' });
-      return res.status(201).json(await assinaturas.obterOuCriarParaAluno({ alunoId: m.aluno_id, baseUrl, modalidade }));
+      return res.status(201).json(await assinaturas.obterOuCriarParaAluno({ alunoId: m.aluno_id, baseUrl, modalidade, admin: true }));
     }
     res.status(201).json(await assinaturas.criarAssinatura({ matriculaId: matricula_id, baseUrl }));
   } catch (err) {
@@ -774,6 +774,9 @@ const planoCadastroSchema = z.object({
   valor_centavos: z.number().int().min(100).max(1000000),
   limite_cobrancas: z.number().int().min(1).max(120).nullable(),
   ativo: z.boolean(),
+  restrito: z.boolean().optional(),
+  cpfs_permitidos: z.array(z.string().max(20)).max(50).optional(),
+  categorias_permitidas: z.array(z.enum(['aluno', 'professor', 'visitante', 'colaborador', 'bolsista'])).max(5).optional(),
   desconto: z.object({
     ativo: z.boolean(),
     tipo: z.enum(['percentual', 'valor']),

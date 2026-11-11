@@ -182,6 +182,7 @@ function precoDaOferta(valorCheioCentavos, descontoOuOferta) {
 
 // Modalidades oferecidas somente no cadastro de novos alunos. Os valores ficam
 // no banco; ao contratar, valor, desconto e limite são copiados para a assinatura.
+const CATEGORIAS_ALUNO = ['aluno', 'professor', 'visitante', 'colaborador', 'bolsista'];
 const PLANOS_CADASTRO_PADRAO = [
   { id: '12_meses', nome: 'Compromisso de 12 meses', valor_centavos: 6500, limite_cobrancas: 12, ativo: true, desconto: { ativo: false, tipo: 'percentual', percentual: 0, valor_centavos: 0 } },
   { id: 'mensal_livre', nome: 'Mensal sem fidelidade', valor_centavos: 7000, limite_cobrancas: null, ativo: true, desconto: { ativo: false, tipo: 'percentual', percentual: 0, valor_centavos: 0 } },
@@ -202,7 +203,12 @@ function normalizarPlanosCadastro(bruto) {
     const valorDesconto = Math.max(0, Math.round(Number(d.valor_centavos) || 0));
     if (!id || !nome || valor < VALOR_MINIMO_CENTAVOS || ids.has(id)) return null;
     ids.add(id);
+    // Visibilidade: restrita = só os CPFs listados enxergam/contratam (ex.: aluno de teste). Lista vazia = ninguém
+    // além do painel enxerga (rascunho).
+    const cpfs = [...new Set((Array.isArray(p?.cpfs_permitidos) ? p.cpfs_permitidos : []).map((x) => String(x).replace(/\D/g, '')).filter((x) => x.length === 11))].slice(0, 50);
     return { id, nome, valor_centavos: valor, limite_cobrancas: limite, ativo: p?.ativo !== false,
+      restrito: p?.restrito === true, cpfs_permitidos: cpfs,
+      categorias_permitidas: [...new Set((Array.isArray(p?.categorias_permitidas) ? p.categorias_permitidas : []).map((x) => String(x).toLowerCase()).filter((x) => CATEGORIAS_ALUNO.includes(x)))],
       desconto: { ativo: d.ativo === true && (tipo === 'percentual' ? percentual > 0 : valorDesconto > 0), tipo, percentual, valor_centavos: valorDesconto } };
   }).filter(Boolean).slice(0, 12);
 }
@@ -223,19 +229,49 @@ async function salvarPlanosCadastro(planos) {
   return normalizados;
 }
 
-async function listarPlanosCadastroPublicos() {
+// Uma modalidade restrita só é visível/contratável por quem tem o CPF na lista OU pertence a uma das
+// categorias liberadas (ex.: só "professor"). O painel (admin=true) enxerga todas.
+function modalidadeVisivelPara(p, { cpf = null, categoria = null, admin = false } = {}) {
+  if (!p.ativo && !admin) return false;
+  if (admin || !p.restrito) return true;
+  const digitos = String(cpf || '').replace(/\D/g, '');
+  if (digitos.length === 11 && (p.cpfs_permitidos || []).includes(digitos)) return true;
+  return !!categoria && (p.categorias_permitidas || []).includes(String(categoria).toLowerCase());
+}
+
+// CPF e categoria do aluno, por id ou por CPF (só dígitos). Sem aluno → valores nulos.
+async function identidadeDoAluno({ alunoId = null, cpf = null } = {}) {
+  try {
+    if (alunoId) {
+      const r = await db.execute({ sql: 'SELECT cpf, categoria FROM alunos WHERE id = ?', args: [alunoId] });
+      return { cpf: r.rows[0]?.cpf || null, categoria: r.rows[0]?.categoria || null };
+    }
+    const digitos = String(cpf || '').replace(/\D/g, '');
+    if (digitos.length !== 11) return { cpf: null, categoria: null };
+    const r = await db.execute({
+      sql: "SELECT cpf, categoria FROM alunos WHERE replace(replace(replace(cpf, '.', ''), '-', ''), ' ', '') = ? LIMIT 1",
+      args: [digitos],
+    });
+    return { cpf: digitos, categoria: r.rows[0]?.categoria || null };
+  } catch { return { cpf: null, categoria: null }; }
+}
+
+async function listarPlanosCadastroPublicos({ cpf = null, alunoId = null } = {}) {
   // Recurso desligado (MERCADOPAGO_ASSINATURAS != 1): não oferece nada ao aluno.
   if (!habilitado()) return [];
-  return (await obterPlanosCadastro()).filter(p => p.ativo).map(p => {
+  const planos = await obterPlanosCadastro();
+  const identidade = planos.some((p) => p.ativo && p.restrito) ? await identidadeDoAluno({ alunoId, cpf }) : { cpf, categoria: null };
+  return planos.filter((p) => p.ativo && modalidadeVisivelPara(p, identidade)).map(p => {
     const preco = precoDaOferta(p.valor_centavos, p.desconto);
     return { id: p.id, nome: p.nome, valor_centavos: p.valor_centavos, valor_final_centavos: preco.valor_centavos,
       desconto_centavos: preco.desconto_centavos, limite_cobrancas: p.limite_cobrancas };
   });
 }
 
-async function buscarPlanoCadastro(id) {
-  const p = (await obterPlanosCadastro()).find(x => x.id === id && x.ativo);
-  if (!p) throw erro('Esta modalidade de recorrência não está disponível. Atualize a página e escolha outra opção.', 404);
+async function buscarPlanoCadastro(id, { alunoId = null, cpf = null, admin = false } = {}) {
+  const p = (await obterPlanosCadastro()).find(x => x.id === id && (x.ativo || admin));
+  const identidade = p && p.restrito && !admin ? await identidadeDoAluno({ alunoId, cpf }) : { cpf, categoria: null };
+  if (!p || !modalidadeVisivelPara(p, { ...identidade, admin })) throw erro('Esta modalidade de recorrência não está disponível. Atualize a página e escolha outra opção.', 404);
   return p;
 }
 
@@ -272,7 +308,7 @@ async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPr
   const oferta = await obterOferta();
   // Só o fluxo de NOVO cadastro usa a tabela configurável. A oferta de migração
   // para alunos existentes mantém as condições antigas e independentes.
-  const planoCadastro = modalidade ? await buscarPlanoCadastro(modalidade) : null;
+  const planoCadastro = modalidade ? await buscarPlanoCadastro(modalidade, { admin: true }) : null; // quem chama já validou a visibilidade
   const preco = planoCadastro
     ? precoDaOferta(Number(planoCadastro.valor_centavos), planoCadastro.desconto)
     : precoDaOferta(Number(m.valor_centavos), oferta);
@@ -979,7 +1015,7 @@ async function disponibilidadeParaAluno({ alunoId, baseUrl }) {
   return {
     disponivel: true,
     plano_atual: m.plano_nome,
-    opcoes: (await listarPlanosCadastroPublicos()).map((p) => ({
+    opcoes: (await listarPlanosCadastroPublicos({ alunoId })).map((p) => ({
       modalidade: p.id, titulo: p.nome, valor_centavos: p.valor_final_centavos, limite_cobrancas: p.limite_cobrancas,
       total_centavos: p.limite_cobrancas ? p.valor_final_centavos * p.limite_cobrancas : null,
       descricao: p.limite_cobrancas ? `${p.limite_cobrancas} cobranças mensais de ${formatarValorParaDescricao(p.valor_final_centavos)}.` : `${formatarValorParaDescricao(p.valor_final_centavos)} por mês, sem permanência mínima.`,
@@ -990,7 +1026,7 @@ async function disponibilidadeParaAluno({ alunoId, baseUrl }) {
 
 // Reaproveita assinatura pendente da mesma modalidade. Uma assinatura ativa impede
 // criar outra, para não manter duas cobranças automáticas simultâneas.
-async function obterOuCriarParaAluno({ alunoId, baseUrl, modalidade }) {
+async function obterOuCriarParaAluno({ alunoId, baseUrl, modalidade, admin = false }) {
   if (typeof modalidade !== 'string' || !modalidade.trim()) throw erro('Escolha uma das modalidades disponíveis.', 400);
   const disp = await disponibilidadeParaAluno({ alunoId, baseUrl });
   if (!disp.disponivel) throw erro('Pagamento automático não está disponível para este aluno.', 409);
@@ -999,8 +1035,8 @@ async function obterOuCriarParaAluno({ alunoId, baseUrl, modalidade }) {
   if (pendente && pendente.modalidade === modalidade) {
     return { id: pendente.id, status: 'pending', oferta_url: urlOferta(baseUrl, pendente.id) };
   }
+  const planoCadastro = await buscarPlanoCadastro(modalidade, { alunoId, admin }); // valida antes de cancelar a pendente
   if (pendente) await cancelar({ assinaturaId: pendente.id });
-  const planoCadastro = await buscarPlanoCadastro(modalidade);
   const precoCadastro = precoDaOferta(Number(planoCadastro.valor_centavos), planoCadastro.desconto);
   const ciclo = await prepararCobrancaInicial({ matricula: { ...m, aluno_id: alunoId }, valorCentavos: precoCadastro.valor_centavos, modalidade });
   try {
@@ -1032,7 +1068,8 @@ async function obterOuCriarParaNovoCadastro({alunoId,matriculaId,baseUrl,modalid
  const c=q.rows[0];if(!c||c.provedor_referencia)throw erro('O Pix já foi iniciado ou a cobrança não está disponível.',409);
  const pend=await db.execute({sql:"SELECT id,modalidade,status FROM assinaturas_mp WHERE matricula_id=? AND status IN ('pending','authorized','paused') ORDER BY criado_em DESC LIMIT 1",args:[matriculaId]});
  if(pend.rows[0]){if(pend.rows[0].modalidade===modalidade&&pend.rows[0].status==='pending')return{oferta_url:urlOferta(baseUrl,pend.rows[0].id)};throw erro('Já existe uma assinatura aguardando confirmação para esta matrícula.',409);}
- const planoCadastro = await buscarPlanoCadastro(modalidade);
+
+ const planoCadastro = await buscarPlanoCadastro(modalidade, { alunoId });
  const preco = precoDaOferta(Number(planoCadastro.valor_centavos), planoCadastro.desconto); const valor=preco.valor_centavos,hoje=new Date().toISOString().slice(0,10);
  // Novo cadastro no cartão: o MP cobra NA HORA em que o cartão é cadastrado (sem start_date). A conta NÃO muda aqui:
  // valor e vencimento só passam para os da modalidade quando a cobrança for aprovada (baixarParcela). Até lá,
@@ -1045,5 +1082,5 @@ module.exports = {
   habilitado, criarAssinatura, listar, cancelar, processarEvento, processarPagamentoAprovado,
   ofertaPublica, disponibilidadeParaAluno, obterOuCriarParaAluno, obterOuCriarParaNovoCadastro, baseUrlDaRequisicao, urlOferta,
   obterOferta, salvarOferta, calcularDescontoCentavos, OFERTA_PADRAO,
-  obterPlanosCadastro, salvarPlanosCadastro, listarPlanosCadastroPublicos, expirarCheckoutsAbandonados, reconciliarAssinaturas, sincronizarAgora, cronogramaCobrancaAutomatica, cancelarPendentesDasMatriculas, anexarRecorrencia,
+  obterPlanosCadastro, salvarPlanosCadastro, listarPlanosCadastroPublicos, buscarPlanoCadastro, expirarCheckoutsAbandonados, reconciliarAssinaturas, sincronizarAgora, cronogramaCobrancaAutomatica, cancelarPendentesDasMatriculas, anexarRecorrencia,
 };

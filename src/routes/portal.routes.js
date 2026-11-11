@@ -881,7 +881,8 @@ router.post('/cadastro/pix', limitadorSenhaPortal, async (req,res,next) => {
 router.get('/cadastro/recorrencia/planos', async (req, res, next) => {
  try {
   res.set('Cache-Control', 'no-store');
-  res.json({ opcoes: await assinaturas.listarPlanosCadastroPublicos() });
+  // O CPF (só dígitos) libera modalidades restritas a alunos específicos (ex.: teste); sem ele, só as públicas.
+  res.json({ opcoes: await assinaturas.listarPlanosCadastroPublicos({ cpf: req.query.cpf }) });
  } catch (e) { next(e); }
 });
 

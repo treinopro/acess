@@ -782,3 +782,22 @@ test('modalidade restrita: só CPFs/categorias liberados enxergam e contratam; p
   assert.strictEqual((await assinaturas.buscarPlanoCadastro('so_teste', { alunoId: 'prof1' })).id, 'so_teste');
   assert.strictEqual((await assinaturas.buscarPlanoCadastro('so_teste', { alunoId: 'comum', admin: true })).id, 'so_teste');
 });
+
+test('aluno existente sem nenhuma conta paga: cobra na adesão (sem start_date), mesmo com conta em aberto vencendo no futuro', async () => {
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('semPago', 'Aluno Sem Pago', 'sempago@teste.com', '99900099911')` });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-sempago', 'semPago', 'p1', date('now'), 'ativa')` });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-sempago', 'semPago', 'm-sempago', 9900, 'pendente', 'manual', 'Mensalidade', '2099-12-10')` });
+  await assinaturas.salvarPlanosCadastro([{ id: 'mensal_livre', nome: 'Mensal', valor_centavos: 7000, limite_cobrancas: null, ativo: true }]);
+  await assinaturas.obterOuCriarParaAluno({ alunoId: 'semPago', baseUrl: 'https://academia.test', modalidade: 'mensal_livre' });
+  const [, payload] = chamadas.filter((c) => c[0] === 'criar').pop();
+  assert.strictEqual(payload.dataInicio, null); // sem "dias grátis": o MP cobra quando o cartão for cadastrado
+});
+
+test('aluno existente que já pagou o ciclo atual: primeira cobrança do cartão fica no próximo vencimento', async () => {
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('jaPagou', 'Aluno Ja Pagou', 'japagou@teste.com', '99900099922')` });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-japagou', 'jaPagou', 'p1', date('now', '-20 days'), 'ativa')` });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-japagou', 'jaPagou', 'm-japagou', 9900, 'pago', 'manual', 'Mensalidade', date('now', '-1 day'))` });
+  await assinaturas.obterOuCriarParaAluno({ alunoId: 'jaPagou', baseUrl: 'https://academia.test', modalidade: 'mensal_livre' });
+  const [, payload] = chamadas.filter((c) => c[0] === 'criar').pop();
+  assert.ok(payload.dataInicio, 'esperava start_date no próximo vencimento');
+});

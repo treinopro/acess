@@ -1039,9 +1039,13 @@ async function obterOuCriarParaAluno({ alunoId, baseUrl, modalidade, admin = fal
   if (pendente) await cancelar({ assinaturaId: pendente.id });
   const precoCadastro = precoDaOferta(Number(planoCadastro.valor_centavos), planoCadastro.desconto);
   const ciclo = await prepararCobrancaInicial({ matricula: { ...m, aluno_id: alunoId }, valorCentavos: precoCadastro.valor_centavos, modalidade });
+  // Matrícula SEM nenhuma conta paga (aluno criado do zero, ainda não pagou o plano): cobra NA ADESÃO, como no
+  // cadastro novo. Só adia a 1ª cobrança para o próximo vencimento quando já existe pagamento nessa matrícula
+  // (o ciclo atual já foi pago e o aluno não deve pagar duas vezes).
+  const jaPagou = (await db.execute({ sql: `SELECT 1 FROM cobrancas WHERE matricula_id = ? AND status = 'pago' LIMIT 1`, args: [m.id] })).rows.length > 0;
   try {
     const criada = await criarAssinatura({
-      matriculaId: m.id, baseUrl, modalidade, dataPrimeiraCobranca: ciclo.vencimento,
+      matriculaId: m.id, baseUrl, modalidade, dataPrimeiraCobranca: jaPagou ? ciclo.vencimento : null,
       cobrancaInicialId: ciclo.cobrancaId, valorAnteriorCentavos: ciclo.valorAnteriorCentavos,
       statusAnteriorCobranca: ciclo.statusAnteriorCobranca, cobrancaInicialCriada: ciclo.cobrancaCriada,
     });

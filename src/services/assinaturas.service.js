@@ -357,7 +357,7 @@ async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPr
 async function listar({ matriculaId }) {
   const r = await db.execute({
     sql: `SELECT id, matricula_id, aluno_id, preapproval_id, status, valor_centavos, valor_cheio_centavos, desconto_centavos,
-                 frequencia_meses, init_point, criado_em, atualizado_em
+                 frequencia_meses, modalidade, limite_cobrancas, cobrancas_processadas, init_point, criado_em, atualizado_em
           FROM assinaturas_mp WHERE matricula_id = ? ORDER BY criado_em DESC`,
     args: [matriculaId],
   });

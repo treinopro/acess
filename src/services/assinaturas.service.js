@@ -344,6 +344,38 @@ async function restaurarCobrancaInicial(a) {
   });
 }
 
+// Marca (em `row.recorrencia`) as linhas que pertencem a uma matrícula com assinatura no cartão,
+// para o painel distinguir "recorrência" de "plano normal". `campoMatricula` = nome da coluna do id.
+// Se a tabela ainda não existe (migração pendente) ou o recurso falha, devolve as linhas sem marca.
+async function anexarRecorrencia(rows, campoMatricula = 'matricula_id') {
+  if (!rows?.length) return rows;
+  let subs;
+  try {
+    subs = await db.execute({
+      sql: `SELECT matricula_id, modalidade, status, limite_cobrancas, cobrancas_processadas
+            FROM assinaturas_mp WHERE status IN ('pending', 'authorized', 'paused', 'completed') ORDER BY criado_em ASC`,
+    });
+  } catch (err) {
+    if (/no such table: assinaturas_mp/i.test(String(err.message))) return rows;
+    throw err;
+  }
+  if (!subs.rows.length) return rows;
+  const nomes = {};
+  try { for (const p of await obterPlanosCadastro()) nomes[p.id] = p.nome; } catch { /* sem nomes: usa o id */ }
+  const porMatricula = new Map(); // a mais recente vence (ORDER BY criado_em ASC)
+  for (const x of subs.rows) {
+    porMatricula.set(x.matricula_id, {
+      modalidade: x.modalidade,
+      nome: x.modalidade === 'legado' ? 'Cartão automático' : (nomes[x.modalidade] || x.modalidade),
+      status: x.status,
+      limite_cobrancas: x.limite_cobrancas == null ? null : Number(x.limite_cobrancas),
+      cobrancas_processadas: Number(x.cobrancas_processadas || 0),
+    });
+  }
+  for (const row of rows) row.recorrencia = porMatricula.get(row[campoMatricula]) || null;
+  return rows;
+}
+
 // O aluno escolheu pagar em Pix: cancela a tentativa de cartão que estava pendente (sem cobrar nada).
 async function cancelarPendentesDasMatriculas(matriculaIds) {
   if (!habilitado() || !matriculaIds?.length) return 0;
@@ -1011,5 +1043,5 @@ module.exports = {
   habilitado, criarAssinatura, listar, cancelar, processarEvento, processarPagamentoAprovado,
   ofertaPublica, disponibilidadeParaAluno, obterOuCriarParaAluno, obterOuCriarParaNovoCadastro, baseUrlDaRequisicao, urlOferta,
   obterOferta, salvarOferta, calcularDescontoCentavos, OFERTA_PADRAO,
-  obterPlanosCadastro, salvarPlanosCadastro, listarPlanosCadastroPublicos, expirarCheckoutsAbandonados, reconciliarAssinaturas, sincronizarAgora, cronogramaCobrancaAutomatica, cancelarPendentesDasMatriculas,
+  obterPlanosCadastro, salvarPlanosCadastro, listarPlanosCadastroPublicos, expirarCheckoutsAbandonados, reconciliarAssinaturas, sincronizarAgora, cronogramaCobrancaAutomatica, cancelarPendentesDasMatriculas, anexarRecorrencia,
 };

@@ -2028,7 +2028,7 @@ async function carregarPerfilAluno() {
     matriculas.forEach((m) => {
       const tr = el(`
         <tr>
-          <td>${escapeHtml(m.plano_nome)}</td>
+          <td>${escapeHtml(m.plano_nome)}<br>${etiquetaRecorrencia(m.recorrencia, { detalhe: true })}</td>
           <td>${formatarDataOuDataHora(m.data_inicio)}</td>
           <td>${m.data_fim ? formatarDataOuDataHora(m.data_fim) : '—'}</td>
           <td><span class="badge ${escapeHtml(m.status)}">${escapeHtml(m.status)}</span></td>
@@ -2666,7 +2666,7 @@ async function carregarFinanceiroPerfil() {
       const dataPago = c.data_pago_calc || (c.status === 'pago' ? c.pago_em : null);
       const tr = el(`
         <tr>
-          <td>${escapeHtml(c.descricao) || '—'}</td>
+          <td>${escapeHtml(c.descricao) || '—'}<br>${etiquetaRecorrencia(c.recorrencia)}</td>
           <td>${formatarMoeda(c.valor_centavos)}</td>
           <td>${c.vencimento ? formatarDataOuDataHora(c.vencimento) : '—'}</td>
           <td><span class="badge ${escapeHtml(c.status)}">${escapeHtml(c.status)}</span></td>
@@ -3570,6 +3570,16 @@ const ROTULO_STATUS_ASSINATURA = {
   paused: 'Pausada',
   cancelled: 'Cancelada',
 };
+
+// Etiqueta que separa recorrência no cartão do plano normal (Pix/balcão, vencimento 10/20).
+function etiquetaRecorrencia(rec, { detalhe = false } = {}) {
+  if (!rec) return '<small style="color:#667085">Plano normal (Pix/balcão, vence dia 10/20)</small>';
+  const rotuloStatus = { pending: 'aguardando cartão', authorized: 'ativa', paused: 'pausada', completed: 'concluída' }[rec.status] || rec.status;
+  const cor = rec.status === 'authorized' ? '#065f46' : '#92400e';
+  const fundo = rec.status === 'authorized' ? '#d1fae5' : '#fef3c7';
+  const parcelas = detalhe && rec.limite_cobrancas ? ` · ${rec.cobrancas_processadas}/${rec.limite_cobrancas} cobranças` : '';
+  return `<small style="display:inline-block;background:${fundo};color:${cor};border-radius:999px;padding:2px 8px;font-weight:600">💳 Recorrência: ${escapeHtml(rec.nome)} (${escapeHtml(rotuloStatus)})${parcelas}</small>`;
+}
 
 async function abrirDialogoAssinatura(matricula, aluno) {
   // Modalidades ativas cadastradas em Configurações (mesmas condições do portal do aluno).

@@ -718,3 +718,17 @@ test('aluno que escolhe Pix depois de iniciar o cartão: tentativa pendente é c
   c = (await db.execute({ sql: `SELECT valor_centavos, status FROM cobrancas WHERE id='c-pixvolta'` })).rows[0];
   assert.deepStrictEqual({ ...c }, { valor_centavos: 9900, status: 'pendente' });
 });
+
+test('painel: anexarRecorrencia marca matrículas/contas de recorrência e deixa as normais sem marca', async () => {
+  const marcadas = await assinaturas.anexarRecorrencia([
+    { id: 'm-recon', matricula_id: 'm-recon' },   // assinatura ativa (teste da reconciliação)
+    { id: 'm-semsub', matricula_id: 'm-semsub' }, // sem assinatura
+    { id: 'm-pixvolta', matricula_id: 'm-pixvolta' }, // assinatura cancelada → volta a ser normal
+  ]);
+  const por = Object.fromEntries(marcadas.map((r) => [r.id, r.recorrencia]));
+  assert.ok(por['m-recon']);
+  assert.strictEqual(typeof por['m-recon'].nome, 'string');
+  assert.ok(['authorized', 'pending'].includes(por['m-recon'].status));
+  assert.strictEqual(por['m-semsub'], null);
+  assert.strictEqual(por['m-pixvolta'], null);
+});

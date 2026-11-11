@@ -8,6 +8,7 @@ const { normalizarCpf } = require('../utils/cpf');
 const acessoTerminal = require('../services/acessoTerminal.service');
 const faceGaleria = require('../services/faceGaleria.service');
 const catracaGateway = require('../services/catracaGateway.service');
+const assinaturas = require('../services/assinaturas.service');
 const dbResiliente = require('../services/dbResiliente.service');
 const filaCadastroOffline = require('../services/filaCadastroOffline.service');
 const emailBoasVindas = require('../services/emailBoasVindas.service');
@@ -986,6 +987,11 @@ router.get('/:id/perfil', async (req, res, next) => {
     const resultado = await dbResiliente.comFallback('buscarPerfilAluno', buscarOnline, buscarOffline, { timeoutMs: TIMEOUT_PAINEL_MS });
     if (modoOffline) res.setHeader('X-Dados-Offline', '1');
     if (!resultado) return res.status(404).json({ erro: 'Aluno não encontrado.' });
+    // Marca matrículas/contas que são de recorrência no cartão (o painel distingue do plano normal).
+    if (!modoOffline) {
+      await assinaturas.anexarRecorrencia(resultado.matriculas, 'id').catch(() => {});
+      await assinaturas.anexarRecorrencia(resultado.cobrancas, 'matricula_id').catch(() => {});
+    }
     res.json({ ...resultado, modo_offline: modoOffline });
   } catch (err) {
     next(err);

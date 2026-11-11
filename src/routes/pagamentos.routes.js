@@ -186,7 +186,7 @@ router.get('/cobrancas', autenticar, async (req, res, next) => {
             ORDER BY ${colunaOrdenacao} ${direcao}`,
       args,
     });
-    res.json(result.rows);
+    res.json(await assinaturas.anexarRecorrencia(result.rows));
   } catch (err) {
     next(err);
   }

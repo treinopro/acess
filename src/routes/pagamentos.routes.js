@@ -831,7 +831,7 @@ router.post('/assinaturas/:id/sincronizar', autenticar, apenasAdmin, async (req,
   try {
     const r = await assinaturas.sincronizarAgora({ assinaturaId: req.params.id });
     for (const alunoId of new Set(r.alunosAtualizados)) acessoTerminal.notificarAgenteAtualizacaoAluno(alunoId);
-    res.json({ status: r.status, baixas: r.baixas });
+    res.json({ status: r.status, baixas: r.baixas, status_mp: r.status_mp, cobrancas_vistas: r.cobrancas_vistas, pagamentos_vistos: r.pagamentos_vistos });
   } catch (err) {
     next(err);
   }

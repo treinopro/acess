@@ -32,6 +32,7 @@ require.cache[mpPath] = {
     cancelarAssinatura: async (id) => { chamadas.push(['cancelar', id]); estadoMp.assinaturas[id].status = 'cancelled'; return estadoMp.assinaturas[id]; },
     consultarPagamentoAutorizado: async (id) => estadoMp.parcelas[id],
     listarCobrancasDaAssinatura: async (id) => (estadoMp.cobrancas?.[id] || []),
+    buscarPagamentosPorReferencia: async (ref) => (estadoMp.pagamentosRef?.[ref] || []),
     consultarPagamento: async (id) => estadoMp.pagamentos?.[id],
     criarPreferencia: async () => ({}), criarPagamentoPix: async () => ({}), criarOrderPix: async () => ({}), consultarOrder: async () => ({}),
   },
@@ -800,4 +801,29 @@ test('aluno existente que já pagou o ciclo atual: primeira cobrança do cartão
   await assinaturas.obterOuCriarParaAluno({ alunoId: 'jaPagou', baseUrl: 'https://academia.test', modalidade: 'mensal_livre' });
   const [, payload] = chamadas.filter((c) => c[0] === 'criar').pop();
   assert.ok(payload.dataInicio, 'esperava start_date no próximo vencimento');
+});
+
+
+test('sincronizarAgora: se a lista de cobranças da assinatura vier vazia, acha o pagamento pela referência e dá baixa uma só vez', async () => {
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('ref1', 'Aluno Ref', 'ref@teste.com', '10100099900')` });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-ref1', 'ref1', 'p1', '2026-11-10', 'pendente')` });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-ref1', 'ref1', 'm-ref1', 9900, 'pendente', 'mercadopago', 'Matrícula', '2026-11-10')` });
+  await assinaturas.salvarPlanosCadastro([{ id: 'mensal_livre', nome: 'Mensal', valor_centavos: 100, limite_cobrancas: null, ativo: true }]);
+  await assinaturas.obterOuCriarParaNovoCadastro({ alunoId: 'ref1', matriculaId: 'm-ref1', baseUrl: 'https://academia.test', modalidade: 'mensal_livre' });
+  const { id, preapproval_id: pre } = (await db.execute({ sql: `SELECT id, preapproval_id FROM assinaturas_mp WHERE matricula_id='m-ref1'` })).rows[0];
+  estadoMp.assinaturas[pre].status = 'authorized';
+  estadoMp.cobrancas = { ...(estadoMp.cobrancas || {}), [pre]: [] }; // a lista da assinatura veio vazia
+  estadoMp.pagamentosRef = { ...(estadoMp.pagamentosRef || {}), [id]: [{ id: 5551, status: 'approved', transaction_amount: 1, payment_type_id: 'credit_card' }] };
+
+  let r = await assinaturas.sincronizarAgora({ assinaturaId: id });
+  assert.strictEqual(r.baixas, 1);
+  assert.strictEqual(r.status_mp, 'authorized');
+  assert.strictEqual(r.pagamentos_vistos.length, 1);
+  const c = (await db.execute({ sql: `SELECT status, valor_centavos FROM cobrancas WHERE id='c-ref1'` })).rows[0];
+  assert.deepStrictEqual({ ...c }, { status: 'pago', valor_centavos: 100 }); // conta passa ao valor da modalidade
+  const m = (await db.execute({ sql: `SELECT status FROM matriculas WHERE id='m-ref1'` })).rows[0];
+  assert.strictEqual(m.status, 'ativa');
+
+  r = await assinaturas.sincronizarAgora({ assinaturaId: id }); // de novo: nada muda
+  assert.strictEqual(r.baixas, 0);
 });

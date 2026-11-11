@@ -230,6 +230,17 @@ async function listarCobrancasDaAssinatura(preapprovalId) {
   return lista.sort((a, b) => String(a.debit_date || a.date_created || '').localeCompare(String(b.debit_date || b.date_created || '')));
 }
 
+// Pagamentos gerados por uma assinatura trazem o external_reference dela (= id local da assinatura).
+// Segunda forma de achar o pagamento aprovado, caso a lista de cobranças da assinatura não o traga.
+async function buscarPagamentosPorReferencia(externalReference) {
+  const resp = await fetch(`${BASE_URL}/v1/payments/search?external_reference=${encodeURIComponent(externalReference)}&sort=date_created&criteria=desc&limit=30`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  });
+  if (!resp.ok) throw new Error(`Erro ao buscar pagamentos da assinatura no Mercado Pago (${resp.status})`);
+  const dados = await resp.json();
+  return Array.isArray(dados?.results) ? dados.results : [];
+}
+
 module.exports = {
   criarPreferencia,
   criarPagamentoPix,
@@ -241,4 +252,5 @@ module.exports = {
   cancelarAssinatura,
   consultarPagamentoAutorizado,
   listarCobrancasDaAssinatura,
+  buscarPagamentosPorReferencia,
 };

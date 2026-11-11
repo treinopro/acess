@@ -691,20 +691,46 @@ async function expirarCheckoutsAbandonados({ horas = 48 } = {}) {
 }
 
 // Sincroniza UMA assinatura com o MP: status + cobranças aprovadas ainda não processadas.
-// Lança erro se o MP não responder (para o painel mostrar o motivo).
+// Procura o pagamento por DOIS caminhos (lista de cobranças da assinatura e busca de pagamentos pelo
+// external_reference) — a baixa é idempotente por payment_id, então achar nos dois não duplica.
+// Devolve também o que o MP respondeu (para o painel mostrar quando nada for baixado).
 async function reconciliarUmaAssinatura(preapprovalId) {
-  const r = { baixas: 0, alunosAtualizados: [] };
+  const r = { baixas: 0, alunosAtualizados: [], status_mp: null, cobrancas_vistas: [], pagamentos_vistos: [] };
   await processarEvento({ type: 'subscription_preapproval', dataId: preapprovalId });
-  const cobrancas = await mercadopago.listarCobrancasDaAssinatura(preapprovalId);
-  for (const parcela of cobrancas) {
-    const pagamento = parcela.payment || {};
-    if (pagamento.status !== 'approved' || !pagamento.id) continue;
+  try { r.status_mp = (await mercadopago.consultarAssinatura(preapprovalId))?.status || null; } catch { /* informativo */ }
+
+  const aplicar = async (paymentId, valorCentavos, metodo) => {
     const assinatura = await buscarPorPreapproval(preapprovalId); // recarrega: o contador muda a cada baixa
-    if (!assinatura || assinatura.status === 'completed') break;
-    const valor = parcela.transaction_amount != null ? Math.round(Number(parcela.transaction_amount) * 100) : assinatura.valor_centavos;
-    const b = await baixarParcela({ assinatura, paymentId: pagamento.id, valorCentavos: valor, metodo: 'credit_card' });
+    if (!assinatura || assinatura.status === 'completed') return;
+    const b = await baixarParcela({ assinatura, paymentId, valorCentavos: valorCentavos ?? assinatura.valor_centavos, metodo });
     if (b.baixada) { r.baixas++; r.alunosAtualizados.push(b.alunoId); }
-  }
+  };
+
+  let erroCobrancas = null;
+  try {
+    const cobrancas = await mercadopago.listarCobrancasDaAssinatura(preapprovalId);
+    r.cobrancas_vistas = cobrancas.map((c) => ({ status: c.status || null, debit_date: c.debit_date || null, pagamento: c.payment?.status || null, valor: c.transaction_amount ?? null }));
+    for (const parcela of cobrancas) {
+      const pagamento = parcela.payment || {};
+      if (pagamento.status !== 'approved' || !pagamento.id) continue;
+      await aplicar(pagamento.id, parcela.transaction_amount != null ? Math.round(Number(parcela.transaction_amount) * 100) : null, 'credit_card');
+    }
+  } catch (err) { erroCobrancas = err; console.error('[assinaturas] lista de cobranças falhou:', err.message); }
+
+  const local = await buscarPorPreapproval(preapprovalId);
+  if (local) {
+    try {
+      const pagamentos = await mercadopago.buscarPagamentosPorReferencia(local.id);
+      r.pagamentos_vistos = pagamentos.map((p) => ({ id: p.id, status: p.status || null, valor: p.transaction_amount ?? null }));
+      for (const pg of pagamentos) {
+        if (pg.status !== 'approved' || !pg.id) continue;
+        await aplicar(pg.id, pg.transaction_amount != null ? Math.round(Number(pg.transaction_amount) * 100) : null, pg.payment_type_id || 'credit_card');
+      }
+    } catch (err) {
+      console.error('[assinaturas] busca de pagamentos por referência falhou:', err.message);
+      if (erroCobrancas) throw erroCobrancas; // as duas formas falharam: mostra o erro no painel
+    }
+  } else if (erroCobrancas) throw erroCobrancas;
   return r;
 }
 
@@ -742,7 +768,7 @@ async function sincronizarAgora({ assinaturaId }) {
   if (!a) throw erro('Assinatura não encontrada.', 404);
   const r = await reconciliarUmaAssinatura(a.preapproval_id);
   const atual = await buscarPorId(assinaturaId);
-  return { status: atual.status, baixas: r.baixas, alunosAtualizados: r.alunosAtualizados };
+  return { status: atual.status, baixas: r.baixas, alunosAtualizados: r.alunosAtualizados, status_mp: r.status_mp, cobrancas_vistas: r.cobrancas_vistas, pagamentos_vistos: r.pagamentos_vistos };
 }
 
 async function buscarPorPreapproval(preapprovalId) {

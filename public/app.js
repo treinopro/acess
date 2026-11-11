@@ -3648,8 +3648,10 @@ const sincronizar = dlg.querySelector('[data-acao="sincronizar"]');
       sincronizar.disabled = true; sincronizar.textContent = 'Consultando…';
       try {
         const r = await api(`/api/pagamentos/assinaturas/${assinatura.id}/sincronizar`, { method: 'POST' });
-        mostrarToast(r.baixas ? `Pagamento confirmado: ${r.baixas} cobrança(s) baixada(s).` : `Status no Mercado Pago: ${ROTULO_STATUS_ASSINATURA[r.status] || r.status}. Nenhum pagamento novo.`);
-        if (r.baixas) { fechar(); if (typeof recarregarPerfilAtual === 'function') recarregarPerfilAtual(); }
+        const vistas = (r.cobrancas_vistas || []).map((c) => `${c.status || '?'}/${c.pagamento || 'sem pagamento'}`).join(', ') || 'nenhuma';
+        const pags = (r.pagamentos_vistos || []).map((p) => `${p.status || '?'}${p.valor != null ? ' R$' + p.valor : ''}`).join(', ') || 'nenhum';
+        mostrarToast(r.baixas ? `Pagamento confirmado: ${r.baixas} cobrança(s) baixada(s).` : `Mercado Pago: assinatura ${r.status_mp || r.status}. Cobranças: ${vistas}. Pagamentos: ${pags}. Nenhuma baixa nova.`);
+        if (r.baixas) { fechar(); carregarPerfilAluno(); }
       } catch (err) { mostrarToast(err.message, true); }
       sincronizar.disabled = false; sincronizar.textContent = 'Atualizar status';
     });

@@ -1114,7 +1114,7 @@ function linhaPlanoRecorrenciaCadastro(p = {}) {
         <div><label>Desconto</label><div style="display:flex;gap:8px"><select class="prc-desc-tipo"><option value="percentual" ${d.tipo !== 'valor' ? 'selected' : ''}>%</option><option value="valor" ${d.tipo === 'valor' ? 'selected' : ''}>R$</option></select><input class="prc-desc-valor" type="number" min="0" step="0.01" value="${descontoValor}" placeholder="0" /></div></div>
       </div>
       <div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin-top:10px">
-        <label style="display:flex;gap:6px;align-items:center"><input class="prc-ativo" type="checkbox" ${p.ativo === false ? '' : 'checked'} style="width:auto" /> Disponível para novos alunos</label>
+        <label style="display:flex;gap:6px;align-items:center"><input class="prc-ativo" type="checkbox" ${p.ativo === false ? '' : 'checked'} style="width:auto" /> Ativa (se desmarcar, ninguém enxerga — nem os liberados abaixo)</label>
         <label style="display:flex;gap:6px;align-items:center"><input class="prc-desc-ativo" type="checkbox" ${d.ativo ? 'checked' : ''} style="width:auto" /> Aplicar desconto</label>
         <button type="button" class="btn-secundario perigo prc-remover">Remover modalidade</button>
       </div>
@@ -3626,8 +3626,8 @@ async function abrirDialogoAssinatura(matricula, aluno) {
           <a class="btn-linha" style="text-decoration:none" target="_blank" rel="noopener" href="${escapeHtml(ofertaUrl)}">Ver como o aluno vê</a>
         </div>` : ''}
       ${ativa && assinatura.status === 'pending' && modalidadesAdmin.length ? '<div style="margin-top:12px;border-top:1px dashed #d0d5dd;padding-top:10px"><label>Trocar a modalidade (cancela este link e gera outro):</label><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px"><select data-campo="modalidade" style="max-width:260px">' + modalidadesAdmin.map((m) => '<option value="' + escapeHtml(m.id) + '"' + (m.id === assinatura.modalidade ? ' selected' : '') + '>' + escapeHtml(m.rotulo) + '</option>').join('') + '</select><button type="button" class="btn-assinar-cartao" data-acao="gerar">Gerar novo link</button></div></div>' : ''}
-      <div style="display:flex;gap:8px;justify-content:space-between;margin-top:16px">
-        ${ativa ? '<span style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn-linha perigo" data-acao="cancelar">Cancelar assinatura</button><button type="button" class="btn-linha" data-acao="sincronizar">Atualizar status</button></span>' : (modalidadesAdmin.length ? '<select data-campo="modalidade" style="max-width:260px">' + modalidadesAdmin.map((m) => '<option value="' + escapeHtml(m.id) + '">' + escapeHtml(m.rotulo) + '</option>').join('') + '</select>' : '') + '<button type="button" class="btn-assinar-cartao" data-acao="gerar">Gerar link de assinatura</button>'}
+      <div style="display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap;margin-top:16px">
+        ${ativa ? '<span style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn-linha perigo" data-acao="cancelar">Cancelar assinatura</button><button type="button" class="btn-linha" data-acao="sincronizar">Atualizar status</button></span>' : (modalidadesAdmin.length ? '<select data-campo="modalidade" style="flex:1 1 100%;max-width:100%">' + modalidadesAdmin.map((m) => '<option value="' + escapeHtml(m.id) + '">' + escapeHtml(m.rotulo) + '</option>').join('') + '</select>' : '') + '<button type="button" class="btn-assinar-cartao" data-acao="gerar">Gerar link de assinatura</button>'}
         <button type="button" class="btn-linha" data-acao="fechar">Fechar</button>
       </div>`;
     dlg.querySelector('[data-acao="fechar"]').addEventListener('click', fechar);

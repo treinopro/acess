@@ -365,6 +365,13 @@ async function listar({ matriculaId }) {
   return r.rows;
 }
 
+// Descrição das contas geradas pela assinatura: usa o NOME da modalidade (e não o código interno).
+async function descricaoDaRecorrencia(modalidade) {
+  let nome = String(modalidade || 'mensal');
+  try { nome = (await obterPlanosCadastro()).find((p) => p.id === modalidade)?.nome || nome; } catch { /* usa o código */ }
+  return 'Recorrência - ' + nome;
+}
+
 // Devolve a cobrança do cadastro ao estado de antes do checkout (valor, status e
 // vencimento originais — regra normal 10/20). Usado em cancelamento, recusa e expiração.
 async function restaurarCobrancaInicial(a) {
@@ -631,7 +638,7 @@ async function registrarProximaCobranca(assinatura, cobrancaAtual) {
       args: [a.matricula_id, proximoVencimento],
     });
   }
-  const descricao = 'Recorrência - ' + String(a.modalidade || 'mensal');
+  const descricao = await descricaoDaRecorrencia(a.modalidade);
   // Cancela somente competências futuras além da próxima. Reutiliza a linha
   // já pré-gerada para a próxima competência, respeitando o índice único.
   await db.execute({
@@ -997,7 +1004,7 @@ async function prepararCobrancaInicial({ matricula, valorCentavos, modalidade })
       sql: `SELECT id, valor_centavos, status FROM cobrancas WHERE matricula_id = ? AND vencimento = ? AND provedor = 'recorrencia' LIMIT 1`,
       args: [matricula.id, vencimento],
     });
-    const descricao = 'Recorrência - ' + String(modalidade || 'mensal');
+    const descricao = await descricaoDaRecorrencia(modalidade);
     if (existenteNaCompetencia.rows[0]) {
       cobrancaId = existenteNaCompetencia.rows[0].id;
       valorAnteriorCentavos = Number(existenteNaCompetencia.rows[0].valor_centavos);

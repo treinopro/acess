@@ -465,13 +465,27 @@ async function reverterParaPlanoNormal(a) {
   await db.execute({ sql: `UPDATE matriculas SET renovacao_automatica = 1 WHERE id = ? AND status = 'ativa'`, args: [a.matricula_id] });
 }
 
+// Cancela no MP de forma idempotente: se o MP diz que a assinatura JÁ está cancelada (ex.: ele mesmo a cancelou
+// depois de um pagamento recusado), isso é o resultado desejado — segue limpando o lado do sistema.
+async function cancelarNoMp(preapprovalId) {
+  try {
+    return await mercadopago.cancelarAssinatura(preapprovalId);
+  } catch (err) {
+    if (/cancelled preapproval|already cancel|can not modify a cancel/i.test(String(err?.message || ''))) {
+      console.warn('[assinaturas] já estava cancelada no Mercado Pago:', preapprovalId);
+      return { status: 'cancelled' };
+    }
+    throw err;
+  }
+}
+
 async function cancelar({ assinaturaId, encerrarMatricula = false }) {
   if (!habilitado()) throw erro('Assinaturas do Mercado Pago estão desligadas (MERCADOPAGO_ASSINATURAS).', 503);
   const r = await db.execute({ sql: 'SELECT * FROM assinaturas_mp WHERE id = ?', args: [assinaturaId] });
   const a = r.rows[0];
   if (!a) throw erro('Assinatura não encontrada.', 404);
   if (a.status === 'cancelled' || a.status === 'completed') return { id: a.id, status: a.status };
-  await mercadopago.cancelarAssinatura(a.preapproval_id);
+  await cancelarNoMp(a.preapproval_id);
   await atualizarStatus(a.preapproval_id, 'cancelled');
   // Checkout pendente ainda não migrou a matrícula nem encerrou a modalidade atual.
   if (a.status === 'pending') {

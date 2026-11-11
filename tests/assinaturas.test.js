@@ -839,3 +839,25 @@ test('excluir conta que foi paga por assinatura: o banco recusa até soltar o v�
   const reg = (await db.execute({ sql: `SELECT COUNT(*) n FROM assinaturas_mp_pagamentos WHERE payment_id='9001'`, args: [] })).rows[0].n;
   assert.strictEqual(Number(reg), 1);
 });
+
+test('cancelar: se o MP diz que a assinatura já estava cancelada, o sistema conclui o cancelamento mesmo assim', async () => {
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('jacancel', 'Aluno Ja Cancel', 'jc@teste.com', '70700099911')` });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-jacancel', 'jacancel', 'p1', '2026-11-10', 'pendente')` });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-jacancel', 'jacancel', 'm-jacancel', 9900, 'pendente', 'mercadopago', 'Matrícula', '2026-11-10')` });
+  await assinaturas.salvarPlanosCadastro([{ id: 'mensal_livre', nome: 'Mensal', valor_centavos: 100, limite_cobrancas: null, ativo: true }]);
+  await assinaturas.obterOuCriarParaNovoCadastro({ alunoId: 'jacancel', matriculaId: 'm-jacancel', baseUrl: 'https://academia.test', modalidade: 'mensal_livre' });
+  const { id } = (await db.execute({ sql: `SELECT id FROM assinaturas_mp WHERE matricula_id='m-jacancel'` })).rows[0];
+
+  // O MP responde 400 "You can not modify a cancelled preapproval" (já cancelada do lado dele).
+  const mpPath = require.resolve('../src/services/payment/mercadopago.service');
+  const original = require.cache[mpPath].exports.cancelarAssinatura;
+  require.cache[mpPath].exports.cancelarAssinatura = async () => { throw new Error('Erro ao cancelar assinatura no Mercado Pago: {"message":"You can not modify a cancelled preapproval.","status":400}'); };
+  try {
+    const r = await assinaturas.cancelar({ assinaturaId: id });
+    assert.strictEqual(r.status, 'cancelled');
+  } finally { require.cache[mpPath].exports.cancelarAssinatura = original; }
+  const a = (await db.execute({ sql: `SELECT status FROM assinaturas_mp WHERE id=?`, args: [id] })).rows[0];
+  assert.strictEqual(a.status, 'cancelled');
+  const c = (await db.execute({ sql: `SELECT valor_centavos, status FROM cobrancas WHERE id='c-jacancel'`, args: [] })).rows[0];
+  assert.deepStrictEqual({ ...c }, { valor_centavos: 9900, status: 'pendente' });
+});

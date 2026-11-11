@@ -1003,7 +1003,9 @@ async function matriculaElegivel(alunoId) {
     sql: `SELECT m.id, m.data_inicio, p.nome AS plano_nome, p.valor_centavos
           FROM matriculas m JOIN planos p ON p.id = m.plano_id
           WHERE m.aluno_id = ? AND m.status = 'ativa'
-            AND (m.data_fim IS NULL OR m.data_fim >= date('now'))
+            AND (m.data_fim IS NULL OR m.data_fim >= date('now')
+                 -- aluno com mensalidade em aberto/atrasada ainda é aluno: a matrícula pode estar com a validade vencida
+                 OR EXISTS (SELECT 1 FROM cobrancas c WHERE c.matricula_id = m.id AND c.status IN ('pendente', 'atrasado')))
             AND p.tipo IN (${TIPOS_RECORRENTES.map(() => '?').join(', ')})
             AND NOT EXISTS (SELECT 1 FROM assinaturas_mp s WHERE s.matricula_id = m.id AND s.status = 'completed')
           ORDER BY m.data_inicio DESC LIMIT 1`,

@@ -925,3 +925,17 @@ test('job rápido (2 min) também pega assinatura autorizada sem 1ª cobrança b
   const j = await assinaturas.reconciliarAssinaturas({ somentePendentes: true });
   assert.ok(j.alunosAtualizados.includes('lag2'));
 });
+
+test('oferta de cartão aparece também para aluno com mensalidade atrasada e validade da matrícula vencida', async () => {
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('atrasado', 'Aluno Atrasado', 'atr@teste.com', '30300099900')` });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, data_fim, status) VALUES ('m-atr', 'atrasado', 'p1', date('now', '-40 days'), date('now', '-1 day'), 'ativa')` });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-atr', 'atrasado', 'm-atr', 7000, 'atrasado', 'manual', 'Mensalidade', date('now', '-1 day'))` });
+  await assinaturas.salvarPlanosCadastro([{ id: 'mensal_livre', nome: 'Mensal', valor_centavos: 7000, limite_cobrancas: null, ativo: true }]);
+  let d = await assinaturas.disponibilidadeParaAluno({ alunoId: 'atrasado', baseUrl: 'https://academia.test' });
+  assert.strictEqual(d.disponivel, true);
+  assert.ok(d.opcoes.length >= 1);
+  // Sem conta em aberto e com a validade vencida, continua fora (matrícula realmente encerrada).
+  await db.execute({ sql: `UPDATE cobrancas SET status = 'pago' WHERE id = 'c-atr'` });
+  d = await assinaturas.disponibilidadeParaAluno({ alunoId: 'atrasado', baseUrl: 'https://academia.test' });
+  assert.strictEqual(d.disponivel, false);
+});

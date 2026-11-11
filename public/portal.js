@@ -2172,5 +2172,54 @@ document.getElementById('btn-portal-cadastro-concluir').addEventListener('click'
 // <meta viewport> (ver portal.html) — com a causa raiz corrigida, o zoom
 // trava em 100% de forma estável sem precisar desse reset manual.
 
+// ---------------- Retorno do pagamento no cartão ----------------
+// O Mercado Pago devolve o aluno para portal.html?cartao=<id da assinatura>. Esta tela confirma o pagamento NA HORA
+// (o servidor consulta o Mercado Pago) e mostra o aviso certo: confirmado, aguardando (quantos minutos) ou não concluído.
+function tratarRetornoCartao() {
+  const idAssinatura = new URLSearchParams(location.search).get('cartao');
+  if (!idAssinatura) return false;
+  const $ = (id) => document.getElementById(id);
+  const mostrar = (icone, titulo, texto, contato) => {
+    $('retorno-cartao-icone').textContent = icone;
+    $('retorno-cartao-titulo').textContent = titulo;
+    $('retorno-cartao-texto').textContent = texto;
+    $('retorno-cartao-contato').textContent = contato || '';
+  };
+  $('btn-retorno-cartao-portal').addEventListener('click', () => { history.replaceState(null, '', location.pathname); mostrarPagina('pagina-inicio'); });
+  mostrarPagina('pagina-retorno-cartao');
+  mostrar('⏳', 'Confirmando seu pagamento…', 'Só um instante: estamos conferindo com o Mercado Pago. Isso costuma levar menos de 2 minutos.');
+
+  const formatarData = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return m ? `${m[3]}/${m[2]}/${m[1]}` : ''; };
+  let tentativas = 0;
+  const timer = setInterval(async () => {
+    tentativas += 1;
+    try {
+      const o = await api('/api/pagamentos/assinaturas/oferta/' + encodeURIComponent(idAssinatura) + '/verificar', { method: 'POST' });
+      const contato = o.whatsapp_contato ? 'Dúvidas? Fale com a recepção.' : 'Dúvidas? Fale com a recepção da academia.';
+      if (['authorized', 'completed'].includes(o.status) && Number(o.cobrancas_processadas || 0) > 0) {
+        clearInterval(timer);
+        return mostrar('✅', `Pagamento confirmado${o.aluno ? ', ' + o.aluno : ''}!`, 'Sua matrícula está ativa e seu acesso foi liberado. Pode treinar. As próximas mensalidades serão cobradas automaticamente no cartão, e para cancelar é só falar com a recepção.', contato);
+      }
+      if (o.status === 'authorized' && o.primeira_cobranca && String(o.primeira_cobranca).slice(0, 10) > new Date().toISOString().slice(0, 10)) {
+        clearInterval(timer);
+        return mostrar('✅', 'Cartão cadastrado!', `Sua primeira cobrança no cartão será em ${formatarData(o.primeira_cobranca)}. Até lá, seu acesso segue como está.`, contato);
+      }
+      if (o.status === 'cancelled') {
+        clearInterval(timer);
+        return mostrar('⚠️', 'O pagamento não foi concluído', 'O cartão foi recusado ou o cadastro foi cancelado, e nada foi cobrado. Volte ao portal para tentar outro cartão ou pagar com Pix.', contato);
+      }
+      if (o.status === 'paused') {
+        clearInterval(timer);
+        return mostrar('⏸️', 'Assinatura pausada', 'Fale com a recepção para retomar.', contato);
+      }
+    } catch (err) { /* tenta de novo no próximo ciclo */ }
+    if (tentativas >= 40) { // ~2 minutos de consulta ativa
+      clearInterval(timer);
+      mostrar('🕒', 'Recebemos seu cadastro no cartão', 'A confirmação do Mercado Pago ainda está chegando e pode levar até 5 minutos. Assim que confirmar, sua matrícula é ativada e seu acesso liberado automaticamente. Se passar desse tempo, fale com a recepção.', 'Pode fechar esta página.');
+    }
+  }, 3000);
+  return true;
+}
+
 carregarConfigPublica();
-tentarAutoLoginHub();
+if (!tratarRetornoCartao()) tentarAutoLoginHub();

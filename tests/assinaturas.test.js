@@ -163,7 +163,7 @@ test('criarAssinatura: monta link da oferta, back_url https e link de WhatsApp',
   assert.match(r.whatsapp_link, /^https:\/\/wa\.me\/5511988887777\?text=/);
   assert.ok(decodeURIComponent(r.whatsapp_link).includes(r.oferta_url));
   const [, payload] = chamadas.filter((c) => c[0] === 'criar').pop();
-  assert.strictEqual(payload.urlRetorno, `https://academia.test/assinar/${r.id}?retorno=1`);
+  assert.strictEqual(payload.urlRetorno, `https://academia.test/portal.html?cartao=${r.id}`); // volta ao portal, que confirma o pagamento
 });
 
 test('criarAssinatura: em http (localhost) não manda back_url inválido ao MP', async () => {

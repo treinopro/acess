@@ -374,6 +374,18 @@ if ('serviceWorker' in navigator) {
     <button class="botao-grande secundario" id="btn-ir-cadastro-portal">Quero me cadastrar</button>
   </div>
 
+  <!-- RETORNO DO PAGAMENTO NO CARTÃO (Mercado Pago volta para cá: portal.html?cartao=<id>) -->
+  <div class="pagina" id="pagina-retorno-cartao">
+    <div class="logo">PAGAMENTO NO CARTÃO</div>
+    <div class="cartao" style="text-align:center">
+      <div id="retorno-cartao-icone" style="font-size:46px;margin-bottom:6px">⏳</div>
+      <h3 id="retorno-cartao-titulo" style="margin:6px 0">Confirmando seu pagamento…</h3>
+      <p id="retorno-cartao-texto" style="color:#cbd5e1;line-height:1.45"></p>
+      <p id="retorno-cartao-contato" style="font-size:14px;color:#94a3b8"></p>
+      <button class="botao-grande primario" id="btn-retorno-cartao-portal" style="margin-top:10px">Ir para o portal</button>
+    </div>
+  </div>
+
   <!-- HUB DO ALUNO: CPF -> dashboard -->
   <div class="pagina" id="pagina-hub">
     <div class="logo">MEU ESPAÇO</div>

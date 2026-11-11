@@ -55,7 +55,8 @@ function urlOferta(baseUrl, assinaturaId) {
 
 // O MP exige back_url https; fora disso (ex.: teste em localhost) cai no site do MP.
 function urlRetorno(baseUrl, assinaturaId) {
-  return /^https:\/\//i.test(baseUrl || '') ? `${urlOferta(baseUrl, assinaturaId)}?retorno=1` : 'https://www.mercadopago.com.br';
+  // Depois do cartão, o aluno volta ao PORTAL, que confirma o pagamento e mostra o aviso (ver portal.js: retorno do cartão).
+  return /^https:\/\//i.test(baseUrl || '') ? `${String(baseUrl).replace(/\/+$/, '')}/portal.html?cartao=${encodeURIComponent(assinaturaId)}` : 'https://www.mercadopago.com.br';
 }
 
 function normalizarTelefone(telefone) {
@@ -979,6 +980,7 @@ async function ofertaPublica(id) {
     total_contratado_centavos: o.limite_cobrancas == null ? null : Number(o.valor_centavos) * Number(o.limite_cobrancas),
     valor_centavos: Number(o.valor_centavos),
     desconto_centavos: desconto,
+    primeira_cobranca: o.data_primeira_cobranca || null, // data futura da 1ª cobrança (vazio = cobra ao cadastrar o cartão)
     // Assinaturas antigas (sem valor cheio gravado) não exibem "de/por".
     valor_cheio_centavos: o.valor_cheio_centavos != null ? Number(o.valor_cheio_centavos) : Number(o.valor_centavos) + desconto,
   });

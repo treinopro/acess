@@ -341,6 +341,27 @@ function formatarValorParaDescricao(centavos) {
 
 // ── Criar / listar / cancelar ───────────────────────────────────────────────
 
+// Nome da assinatura no Mercado Pago: o MP recusa mais de 60 caracteres ("reason has more than 60 characters").
+// Escolhe a versão mais completa que cabe; se nem a mais curta couber, corta com reticências.
+const LIMITE_RAZAO_MP = 60;
+function razaoDaAssinatura({ plano = '', modalidade = null, combo = null, valorCentavos = null, aluno = null }) {
+  const limpo = (x) => String(x || '').replace(/[\s-]+$/g, '').trim();
+  const comboCurto = combo ? limpo(String(combo).replace(/^Plano \+ /i, '')) : null;
+  const preco = valorCentavos != null ? formatarValorParaDescricao(valorCentavos) + '/mês' : null;
+  const candidatos = modalidade
+    ? [
+      [limpo(plano), limpo(modalidade), comboCurto && '+ ' + comboCurto, preco && '— ' + preco],
+      [limpo(modalidade), comboCurto && '+ ' + comboCurto, preco && '— ' + preco],
+      [limpo(modalidade), comboCurto && '+ ' + comboCurto],
+      [limpo(modalidade)],
+    ]
+    : [[limpo(plano), aluno && '— ' + limpo(aluno)], [limpo(plano)]];
+  const montar = (partes) => partes.filter(Boolean).join(' ').replace(/ — — /g, ' — ');
+  for (const c of candidatos) { const t = montar(c); if (t && t.length <= LIMITE_RAZAO_MP) return t; }
+  const ultimo = montar(candidatos[candidatos.length - 1]) || 'Mensalidade';
+  return ultimo.length <= LIMITE_RAZAO_MP ? ultimo : ultimo.slice(0, LIMITE_RAZAO_MP - 1) + '…';
+}
+
 async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPrimeiraCobranca = null, cobrancaInicialId = null, valorAnteriorCentavos = null, statusAnteriorCobranca = null, vencimentoAnterior = null, cobrancaInicialCriada = false, permitirMatriculaPendente = false, combo = null }) {
   if (!habilitado()) throw erro('Assinaturas do Mercado Pago estão desligadas (MERCADOPAGO_ASSINATURAS).', 503);
 
@@ -386,8 +407,8 @@ async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPr
   console.log('[assinaturas] criando assinatura no MP:', { modalidade: modalidade || 'legado', valor_centavos: preco.valor_centavos, primeira_cobranca_pedida: dataPrimeiraCobranca, start_date_enviado: dataInicioMP || 'nenhum (cobra ao cadastrar o cartão)' });
   const mp = await mercadopago.criarAssinaturaPendente({
     razao: modalidade
-      ? (m.plano_nome + ' — ' + planoCadastro.nome + (adicionalCombo ? ' + ' + combo.nome : '') + ' — ' + formatarValorParaDescricao(preco.valor_centavos) + ' por mês')
-      : (m.plano_nome + ' — ' + m.aluno_nome),
+      ? razaoDaAssinatura({ plano: m.plano_nome, modalidade: planoCadastro.nome, combo: adicionalCombo ? combo.nome : null, valorCentavos: preco.valor_centavos })
+      : razaoDaAssinatura({ plano: m.plano_nome, aluno: m.aluno_nome }),
     valorCentavos: preco.valor_centavos,
     frequenciaMeses,
     emailPagador: m.email,

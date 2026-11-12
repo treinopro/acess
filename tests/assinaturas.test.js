@@ -953,7 +953,8 @@ test('combo: soma o adicional mensal, grava na assinatura e a conta paga leva o 
   await assinaturas.obterOuCriarParaNovoCadastro({ alunoId: 'combo1', matriculaId: 'm-combo1', baseUrl: 'https://academia.test', modalidade: 'mensal_livre', combo: 'avaliacao' });
   const [, payload] = chamadas.filter((c) => c[0] === 'criar').pop();
   assert.strictEqual(payload.valorCentavos, 11000);
-  assert.match(payload.razao, /Plano \+ avaliação física/);
+  assert.match(payload.razao, /\+ avaliação física/);
+  assert.ok(payload.razao.length <= 60, 'nome da assinatura no MP não pode passar de 60 caracteres: ' + payload.razao);
   const sub = (await db.execute({ sql: `SELECT preapproval_id, valor_centavos, combo_id, combo_nome, adicional_centavos FROM assinaturas_mp WHERE matricula_id='m-combo1'` })).rows[0];
   assert.deepStrictEqual({ v: sub.valor_centavos, id: sub.combo_id, add: sub.adicional_centavos }, { v: 11000, id: 'avaliacao', add: 4000 });
 
@@ -1031,5 +1032,20 @@ test('combo restrito: só CPF/categoria liberados enxergam e contratam; os demai
   const op = (await assinaturas.listarPlanosCadastroPublicos({ alunoId: 'cb-comum' })).find((x) => x.id === 'mensal_livre');
   assert.deepStrictEqual(op.combos.map((c) => c.id), ['avaliacao']);
 
+  await assinaturas.salvarCombos([{ id: 'avaliacao', nome: 'Plano + avaliação física', adicional_centavos: 4000, ativo: true }, { id: 'avaliacao_completa', nome: 'Plano + avaliação completa', adicional_centavos: 5000, ativo: true }]);
+});
+
+
+test('nome da assinatura no MP nunca passa de 60 caracteres, mesmo com plano, modalidade e combo longos', async () => {
+  await db.execute({ sql: `INSERT INTO planos (id, nome, tipo, valor_centavos) VALUES ('p-longo', 'MUSCULAÇÃO E FUNCIONAL COM ACOMPANHAMENTO - ', 'mensal', 9900)` });
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('longo', 'Maria Aparecida dos Santos de Albuquerque Cavalcanti', 'longo@teste.com', '70707070707')` });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-longo', 'longo', 'p-longo', date('now'), 'pendente')` });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-longo', 'longo', 'm-longo', 9900, 'pendente', 'mercadopago', 'Matrícula', date('now'))` });
+  await assinaturas.salvarPlanosCadastro([{ id: 'compromisso_longo', nome: 'Compromisso anual com desconto de fidelidade especial', valor_centavos: 6500, limite_cobrancas: 12, ativo: true }]);
+  await assinaturas.salvarCombos([{ id: 'avaliacao_longa', nome: 'Plano + avaliação física completa com bioimpedância', adicional_centavos: 5000, ativo: true }]);
+  await assinaturas.obterOuCriarParaNovoCadastro({ alunoId: 'longo', matriculaId: 'm-longo', baseUrl: 'https://academia.test', modalidade: 'compromisso_longo', combo: 'avaliacao_longa' });
+  const [, payload] = chamadas.filter((c) => c[0] === 'criar').pop();
+  assert.ok(payload.razao.length <= 60, payload.razao);
+  assert.ok(payload.razao.length > 10, payload.razao);
   await assinaturas.salvarCombos([{ id: 'avaliacao', nome: 'Plano + avaliação física', adicional_centavos: 4000, ativo: true }, { id: 'avaliacao_completa', nome: 'Plano + avaliação completa', adicional_centavos: 5000, ativo: true }]);
 });

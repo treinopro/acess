@@ -223,9 +223,9 @@ const BIBLIOTECA_SEED = [
   ['Costas', 'Remada na máquina', 'https://www.youtube.com/watch?v=mMyxmUx9G2Q', 'máquina', 'iniciante', 'Bíceps, romboides', 'Apoie o tronco quando disponível e puxe conduzindo os cotovelos para trás.'],
   ['Costas', 'Remada unilateral na polia', 'https://www.youtube.com/watch?v=xgYWtfMBRbc', 'polia', 'intermediario', 'Bíceps, core', 'Mantenha o tronco alinhado e puxe a alça em direção à costela.'],
   ['Ombros', 'Desenvolvimento com barra', 'https://youtu.be/OX-GAShzWvE', 'barra', 'intermediario', 'Tríceps', 'Sentado ou em pé, empurre a barra acima da cabeça sem arquear a lombar.'],
-  ['Ombros', 'Desenvolvimento com halteres', 'https://youtu.be/eufDL9MmF8A', 'halter', 'iniciante', 'Tríceps', 'Halteres na linha das orelhas, empurre até quase estender os cotovelos.'],
-  ['Ombros', 'Elevação lateral com halteres', 'https://youtu.be/jannLx4RxKo', 'halter', 'iniciante', 'Trapézio', 'Braços quase retos, eleve os halteres até a linha dos ombros.'],
-  ['Ombros', 'Elevação frontal com halteres', 'https://youtu.be/V1BZ1_0oxe4', 'halter', 'iniciante', '—', 'Eleve o haltere à frente até a altura dos olhos, alternando ou junto.'],
+  ['Ombros', 'Desenvolvimento com halteres', 'https://youtu.be/kLK5JoItOow', 'halter', 'iniciante', 'Tríceps', 'Halteres na linha das orelhas, empurre até quase estender os cotovelos.'],
+  ['Ombros', 'Elevação lateral com halteres', 'https://youtu.be/uSvluHlEHHQ', 'halter', 'iniciante', 'Trapézio', 'Braços quase retos, eleve os halteres até a linha dos ombros.'],
+  ['Ombros', 'Elevação frontal com halteres', 'https://youtu.be/eiRnO9t-oEw', 'halter', 'iniciante', '—', 'Eleve o haltere à frente até a altura dos olhos, alternando ou junto.'],
   ['Ombros', 'Crucifixo inverso (posterior)', 'https://youtu.be/r1efeCcUW-8', 'halter', 'intermediario', 'Trapézio, romboides', 'Tronco inclinado, abra os braços para trabalhar o deltoide posterior.'],
   ['Ombros', 'Elevação lateral na polia', 'https://youtu.be/3vbYw9xklBc', 'polia', 'intermediario', 'Trapézio', 'Tensão constante ao longo de todo o movimento.'],
   ['Ombros', 'Elevação lateral sentado', 'https://youtu.be/YsfdRrrKKcc', 'halter', 'iniciante', 'Trapézio', 'Sentado e com tronco firme, eleve os halteres sem embalo.'],
@@ -235,14 +235,14 @@ const BIBLIOTECA_SEED = [
   ['Ombros', 'Rotação interna do manguito', 'https://youtu.be/NmqJRq7XUAE', 'polia', 'iniciante', 'Subescapular', 'Cotovelo junto ao corpo e flexionado a 90°; gire o antebraço para dentro com carga leve.'],
   ['Trapézio', 'Encolhimento com halteres', 'https://youtu.be/rqtfxLLuxn4', 'halter', 'iniciante', 'Antebraço', 'Eleve os ombros verticalmente sem girá-los e controle a descida.'],
   ['Trapézio', 'Remada alta com barra', 'https://youtu.be/0FOiIyUFDPE', 'barra', 'intermediario', 'Ombros', 'Puxe a barra próxima ao corpo até a altura confortável, conduzindo pelos cotovelos.'],
-  ['Bíceps', 'Rosca direta com barra', 'https://youtu.be/yopIHJ-jr3w', 'barra', 'iniciante', 'Antebraço', 'Cotovelos fixos ao tronco, flexione a barra até o peito.'],
-  ['Bíceps', 'Rosca alternada com halteres', 'https://youtu.be/nAqWZprW4yY', 'halter', 'iniciante', 'Antebraço', 'Alterne os braços, girando o punho na subida.'],
-  ['Bíceps', 'Rosca martelo', 'https://youtu.be/1-xCKLVxqqg', 'halter', 'iniciante', 'Braquial, antebraço', 'Pegada neutra (polegar para cima) do início ao fim.'],
-  ['Bíceps', 'Rosca scott', 'https://youtu.be/TTvOm65EKnA', 'máquina', 'intermediario', 'Antebraço', 'Braços apoiados no banco scott, isola o bíceps.'],
+  ['Bíceps', 'Rosca direta com barra', 'https://youtu.be/x3HQ62nOO1g', 'barra', 'iniciante', 'Antebraço', 'Cotovelos fixos ao tronco, flexione a barra até o peito.'],
+  ['Bíceps', 'Rosca alternada com halteres', 'https://youtu.be/InXSmmeY9BE', 'halter', 'iniciante', 'Antebraço', 'Alterne os braços, girando o punho na subida.'],
+  ['Bíceps', 'Rosca martelo', 'https://youtu.be/TZrrBsm9CDo', 'halter', 'iniciante', 'Braquial, antebraço', 'Pegada neutra (polegar para cima) do início ao fim.'],
+  ['Bíceps', 'Rosca scott', 'https://youtu.be/v-7dy0NiRts', 'máquina', 'intermediario', 'Antebraço', 'Braços apoiados no banco scott, isola o bíceps.'],
   ['Bíceps', 'Rosca com elástico', '', 'elástico', 'iniciante', 'Antebraço', 'Pise no elástico e flexione — boa opção para casa.'],
   ['Bíceps', 'Rosca concentrada', 'https://youtu.be/kZhR6K5oVys', 'halter', 'intermediario', 'Antebraço', 'Sentado, apoie o cotovelo na parte interna da coxa e flexione sem mover o ombro.'],
-  ['Bíceps', 'Rosca direta na polia', 'https://youtu.be/X12n32mNBp8', 'polia', 'iniciante', 'Antebraço', 'Mantenha os cotovelos fixos e flexione contra a tensão constante da polia.'],
-  ['Tríceps', 'Tríceps corda na polia', 'https://youtu.be/M-DTY40JG9M', 'polia', 'iniciante', '—', 'Cotovelos fixos, estenda a corda abrindo as pontas no final.'],
+  ['Bíceps', 'Rosca direta na polia', 'https://youtu.be/JrdXjnUqhsQ', 'polia', 'iniciante', 'Antebraço', 'Mantenha os cotovelos fixos e flexione contra a tensão constante da polia.'],
+  ['Tríceps', 'Tríceps corda na polia', 'https://youtu.be/oI8knuRet0U', 'polia', 'iniciante', '—', 'Cotovelos fixos, estenda a corda abrindo as pontas no final.'],
   ['Tríceps', 'Tríceps testa com barra', 'https://youtu.be/5FTQbDJK0lI', 'barra', 'intermediario', '—', 'Deitado, desça a barra à testa flexionando só os cotovelos.'],
   ['Tríceps', 'Mergulho entre bancos', 'https://youtu.be/pulATDGCQNI', 'peso corporal', 'iniciante', 'Ombro anterior', 'Mãos no banco atrás, desça o quadril e empurre.'],
   ['Tríceps', 'Tríceps francês com haltere', 'https://youtu.be/gB-QMYMlHLs', 'halter', 'iniciante', '—', 'Haltere acima da cabeça, desça atrás da nuca e estenda.'],
@@ -250,9 +250,13 @@ const BIBLIOTECA_SEED = [
   ['Tríceps', 'Paralelas', 'https://youtu.be/TB0HLYUXtos', 'peso corporal', 'avancado', 'Peito, ombro anterior', 'Desça com controle até a amplitude confortável e empurre sem perder a estabilidade dos ombros.'],
   ['Tríceps', 'Supino fechado com barra', 'https://youtu.be/opAEoE-uFN8', 'barra', 'intermediario', 'Peito, ombro anterior', 'Use pegada próxima à largura dos ombros e mantenha os cotovelos mais junto ao tronco.'],
   ['Tríceps', 'Tríceps unilateral na polia', 'https://youtu.be/L3iEoqC-iUA', 'polia', 'iniciante', '—', 'Cotovelo fixo ao lado do tronco; estenda um braço por vez.'],
+  ['Tríceps', 'Tríceps francês na polia', 'https://youtu.be/42a2IZARYDk', 'polia', 'intermediario', '—', 'Cotovelos fixos acima da cabeça, estenda os braços na polia sem abrir os cotovelos.'],
+  ['Tríceps', 'Tríceps testa na polia', 'https://youtu.be/XL5nvBgOOoQ', 'polia', 'intermediario', '—', 'Deitado ou em pé de costas para a polia, flexione os cotovelos e estenda mantendo os braços parados.'],
+  ['Tríceps', 'Tríceps pulley inverso (pegada supinada)', 'https://youtu.be/CExZraPxux8', 'polia', 'iniciante', 'Antebraço', 'Pegada supinada na barra, cotovelos junto ao corpo; estenda os braços sem mover os ombros.'],
+  ['Tríceps', 'Tríceps pulley no cross', 'https://youtu.be/AaOKJaQfNIc', 'polia', 'iniciante', '—', 'Na polia do cross, cotovelos fixos, estenda os braços até o final contraindo o tríceps.'],
   ['Antebraço', 'Flexão de punho com barra', 'https://youtu.be/HH7RrtPCds8', 'barra', 'iniciante', 'Flexores dos dedos', 'Apoie os antebraços e mova somente os punhos, controlando a amplitude.'],
   ['Antebraço', 'Extensão de punho com barra', 'https://youtu.be/GNd76R9ygXY', 'barra', 'iniciante', 'Extensores dos dedos', 'Com pegada pronada, estenda os punhos sem tirar os antebraços do apoio.'],
-  ['Antebraço', 'Rosca inversa com barra', 'https://youtu.be/GjKnc5UJwzo', 'barra', 'intermediario', 'Bíceps, braquiorradial', 'Pegada pronada, cotovelos fixos; flexione a barra sem embalo.'],
+  ['Antebraço', 'Rosca inversa com barra', 'https://youtu.be/sFgwEsJ7rDE', 'barra', 'intermediario', 'Bíceps, braquiorradial', 'Pegada pronada, cotovelos fixos; flexione a barra sem embalo.'],
   ['Antebraço', 'Hand grip', 'https://youtu.be/7c0_BDnrfC8', 'hand grip', 'iniciante', 'Flexores dos dedos', 'Feche o aparelho com controle e retorne sem soltar de uma vez.'],
   ['Pernas', 'Agachamento livre', 'https://youtu.be/rM6SDUdl9fs', 'barra', 'avancado', 'Glúteo, core', 'Barra nas costas, desça até coxas paralelas mantendo o tronco firme.'],
   ['Pernas', 'Leg press 45°', 'https://youtu.be/waAxlYvtCcI', 'máquina', 'iniciante', 'Glúteo', 'Pés na plataforma, desça controlando e empurre sem travar os joelhos.'],
@@ -365,15 +369,26 @@ const VIDEOS_LEANDRO_TWIN_ANTIGOS = new Set([
   'https://youtu.be/ixJcUH8AlL8', 'https://youtu.be/z0rx9swRDR0', 'https://youtu.be/qvdiga5sQvQ',
 ]);
 
+// 2026-11-12: vídeos próprios do canal da academia (@Rjunior_lima) substituíram os da lista abaixo.
+// Fichas e modelos que copiaram o vídeo antigo passam a usar o novo (só quando ainda estão com o antigo).
+const VIDEOS_SUBSTITUIDOS_PELO_CANAL = ['https://youtu.be/V1BZ1_0oxe4', 'https://youtu.be/jannLx4RxKo', 'https://youtu.be/eufDL9MmF8A', 'https://youtu.be/yopIHJ-jr3w', 'https://youtu.be/nAqWZprW4yY', 'https://youtu.be/1-xCKLVxqqg', 'https://youtu.be/TTvOm65EKnA', 'https://youtu.be/X12n32mNBp8', 'https://youtu.be/GjKnc5UJwzo', 'https://youtu.be/M-DTY40JG9M'];
+
 async function atualizarVideosTreinosExistentes() {
-  const placeholders = [...VIDEOS_LEANDRO_TWIN_ANTIGOS].map(() => '?').join(', ');
-  const result = await db.execute({
-    sql: `UPDATE treino_exercicios
-          SET video_url = (SELECT eb.video_url FROM exercicio_biblioteca eb WHERE eb.id = treino_exercicios.biblioteca_id)
-          WHERE biblioteca_id IS NOT NULL AND video_url IN (${placeholders})`,
-    args: [...VIDEOS_LEANDRO_TWIN_ANTIGOS],
-  });
-  return result.rowsAffected || 0;
+  const antigos = [...new Set([...VIDEOS_LEANDRO_TWIN_ANTIGOS, ...VIDEOS_SUBSTITUIDOS_PELO_CANAL])];
+  const placeholders = antigos.map(() => '?').join(', ');
+  let total = 0;
+  // Fichas dos alunos e modelos de treino guardam uma cópia do vídeo da biblioteca.
+  for (const tabela of ['treino_exercicios', 'treino_template_exercicios']) {
+    // eslint-disable-next-line no-await-in-loop
+    const result = await db.execute({
+      sql: `UPDATE ${tabela}
+            SET video_url = (SELECT eb.video_url FROM exercicio_biblioteca eb WHERE eb.id = ${tabela}.biblioteca_id)
+            WHERE biblioteca_id IS NOT NULL AND video_url IN (${placeholders})`,
+      args: antigos,
+    });
+    total += result.rowsAffected || 0;
+  }
+  return total;
 }
 
 async function seedBibliotecaExercicios() {

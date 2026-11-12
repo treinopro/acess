@@ -275,7 +275,10 @@ function normalizarCombos(bruto) {
     const adicional = Math.round(Number(c?.adicional_centavos) || 0);
     if (!id || !nome || adicional < 0 || adicional > 1000000 || ids.has(id) || id === 'nenhum') return null;
     ids.add(id);
-    return { id, nome, adicional_centavos: adicional, ativo: c?.ativo !== false };
+    // Mesma regra das modalidades: restrito = só os CPFs/categorias listados enxergam e contratam (ex.: teste, professores).
+    const cpfs = [...new Set((Array.isArray(c?.cpfs_permitidos) ? c.cpfs_permitidos : []).map((x) => String(x).replace(/\D/g, '')).filter((x) => x.length === 11))].slice(0, 50);
+    const categorias = [...new Set((Array.isArray(c?.categorias_permitidas) ? c.categorias_permitidas : []).map((x) => String(x).toLowerCase()).filter((x) => CATEGORIAS_ALUNO.includes(x)))];
+    return { id, nome, adicional_centavos: adicional, ativo: c?.ativo !== false, restrito: c?.restrito === true, cpfs_permitidos: cpfs, categorias_permitidas: categorias };
   }).filter(Boolean).slice(0, 6);
 }
 
@@ -294,17 +297,21 @@ async function salvarCombos(combos) {
   return normalizados;
 }
 
-// Combo escolhido ('' / 'nenhum' / ausente = só o plano). Lança 404 se não existir ou estiver desativado.
-async function buscarCombo(id, { admin = false } = {}) {
+// Combo escolhido ('' / 'nenhum' / ausente = só o plano). Lança 404 se não existir, estiver desativado ou for restrito
+// a outras pessoas (admin=true, no painel, enxerga todos).
+async function buscarCombo(id, { alunoId = null, cpf = null, admin = false } = {}) {
   const chave = String(id || '').trim().toLowerCase();
   if (!chave || chave === 'nenhum') return null;
   const c = (await obterCombos()).find((x) => x.id === chave && (x.ativo || admin));
-  if (!c) throw erro('Este combo não está disponível. Atualize a página e escolha outra opção.', 404);
+  const identidade = c && c.restrito && !admin ? await identidadeDoAluno({ alunoId, cpf }) : { cpf, categoria: null };
+  if (!c || !modalidadeVisivelPara(c, { ...identidade, admin })) throw erro('Este combo não está disponível. Atualize a página e escolha outra opção.', 404);
   return c;
 }
 
-async function listarCombosPublicos() {
-  return (await obterCombos()).filter((c) => c.ativo).map((c) => ({ id: c.id, nome: c.nome, adicional_centavos: c.adicional_centavos }));
+async function listarCombosPublicos({ alunoId = null, cpf = null } = {}) {
+  const combos = (await obterCombos()).filter((c) => c.ativo);
+  const identidade = combos.some((c) => c.restrito) ? await identidadeDoAluno({ alunoId, cpf }) : { cpf, categoria: null };
+  return combos.filter((c) => modalidadeVisivelPara(c, identidade)).map((c) => ({ id: c.id, nome: c.nome, adicional_centavos: c.adicional_centavos }));
 }
 
 async function listarPlanosCadastroPublicos({ cpf = null, alunoId = null } = {}) {
@@ -312,7 +319,7 @@ async function listarPlanosCadastroPublicos({ cpf = null, alunoId = null } = {})
   if (!habilitado()) return [];
   const planos = await obterPlanosCadastro();
   const identidade = planos.some((p) => p.ativo && p.restrito) ? await identidadeDoAluno({ alunoId, cpf }) : { cpf, categoria: null };
-  const combosAtivos = await listarCombosPublicos();
+  const combosAtivos = await listarCombosPublicos({ alunoId, cpf });
   return planos.filter((p) => p.ativo && modalidadeVisivelPara(p, identidade)).map(p => {
     const preco = precoDaOferta(p.valor_centavos, p.desconto);
     return { id: p.id, nome: p.nome, valor_centavos: p.valor_centavos, valor_final_centavos: preco.valor_centavos,
@@ -1185,7 +1192,7 @@ async function obterOuCriarParaAluno({ alunoId, baseUrl, modalidade, admin = fal
   if (!disp.disponivel) throw erro('Pagamento automático não está disponível para este aluno.', 409);
   const m = await matriculaElegivel(alunoId);
   const pendente = await assinaturaAbertaDaMatricula(m.id);
-  const combo = await buscarCombo(comboId, { admin });
+  const combo = await buscarCombo(comboId, { alunoId, admin });
   if (pendente && pendente.modalidade === modalidade && String(pendente.combo_id || '') === String(combo?.id || '')) {
     return { id: pendente.id, status: 'pending', oferta_url: urlOferta(baseUrl, pendente.id) };
   }
@@ -1225,7 +1232,7 @@ async function obterOuCriarParaNovoCadastro({alunoId,matriculaId,baseUrl,modalid
  const q=await db.execute({sql:"SELECT id,provedor_referencia,valor_centavos,vencimento,descricao,provedor FROM cobrancas WHERE matricula_id=? AND status='pendente' ORDER BY criado_em LIMIT 1",args:[matriculaId]});
  const c=q.rows[0];if(!c||c.provedor_referencia)throw erro('O Pix já foi iniciado ou a cobrança não está disponível.',409);
  const pend=await db.execute({sql:"SELECT id,modalidade,status,combo_id FROM assinaturas_mp WHERE matricula_id=? AND status IN ('pending','authorized','paused') ORDER BY criado_em DESC LIMIT 1",args:[matriculaId]});
- const combo=await buscarCombo(comboId);
+ const combo=await buscarCombo(comboId,{alunoId});
  if(pend.rows[0]){if(pend.rows[0].modalidade===modalidade&&pend.rows[0].status==='pending'&&String(pend.rows[0].combo_id||'')===String(combo?.id||''))return{oferta_url:urlOferta(baseUrl,pend.rows[0].id)};throw erro('Já existe uma assinatura aguardando confirmação para esta matrícula.',409);}
 
  const planoCadastro = await buscarPlanoCadastro(modalidade, { alunoId });

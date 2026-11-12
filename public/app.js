@@ -1148,8 +1148,19 @@ function linhaComboRecorrencia(c = {}) {
         <label style="display:flex;gap:6px;align-items:center"><input class="cmb-ativo" type="checkbox" ${c.ativo === false ? '' : 'checked'} style="width:auto" /> Ativo (aparece para novas adesões)</label>
         <button type="button" class="btn-secundario perigo cmb-remover">Remover combo</button>
       </div>
+      <div style="margin-top:12px;border-top:1px dashed #d0d5dd;padding-top:10px">
+        <label style="display:flex;gap:6px;align-items:center"><input class="cmb-restrito" type="checkbox" ${c.restrito ? 'checked' : ''} style="width:auto" /> Visível só para pessoas selecionadas (modo teste, os demais alunos não enxergam)</label>
+        <div class="cmb-restricao" style="${c.restrito ? '' : 'display:none;'}margin-top:8px">
+          <label>CPFs liberados (um por linha)</label>
+          <textarea class="cmb-cpfs" rows="3" placeholder="000.000.000-00">${escapeHtml((c.cpfs_permitidos || []).join('\n'))}</textarea>
+          <label style="margin-top:6px">Categorias liberadas</label>
+          <div style="display:flex;gap:14px;flex-wrap:wrap">${['professor', 'colaborador', 'bolsista', 'visitante', 'aluno'].map((x) => `<label style="display:flex;gap:4px;align-items:center"><input class="cmb-cat" type="checkbox" value="${x}" ${(c.categorias_permitidas || []).includes(x) ? 'checked' : ''} style="width:auto" /> ${x}</label>`).join('')}</div>
+          <small style="color:#667085">Sem nenhum CPF ou categoria marcado, ninguém além do painel vê este combo (rascunho).</small>
+        </div>
+      </div>
     </div>`);
   linha.querySelector('.cmb-remover').addEventListener('click', () => linha.remove());
+  linha.querySelector('.cmb-restrito').addEventListener('change', (ev) => { linha.querySelector('.cmb-restricao').style.display = ev.target.checked ? '' : 'none'; });
   return linha;
 }
 
@@ -1178,7 +1189,10 @@ document.getElementById('form-combos-recorrencia').addEventListener('submit', as
     let id = linha.querySelector('.cmb-id').value || slug;
     if (usados.has(id)) id = slug + '_' + (i + 1);
     usados.add(id);
-    return { id, nome, adicional_centavos: Math.round(Number(linha.querySelector('.cmb-valor').value) * 100), ativo: linha.querySelector('.cmb-ativo').checked };
+    return { id, nome, adicional_centavos: Math.round(Number(linha.querySelector('.cmb-valor').value) * 100), ativo: linha.querySelector('.cmb-ativo').checked,
+      restrito: linha.querySelector('.cmb-restrito').checked,
+      cpfs_permitidos: linha.querySelector('.cmb-cpfs').value.split(/[\s,;]+/).map((x) => x.replace(/\D/g, '')).filter((x) => x.length === 11),
+      categorias_permitidas: [...linha.querySelectorAll('.cmb-cat:checked')].map((x) => x.value) };
   });
   if (combos.some((c) => !c.nome || !Number.isFinite(c.adicional_centavos) || c.adicional_centavos < 0)) return mostrarToast('Informe nome e adicional mensal válido em todos os combos.', true);
   try {

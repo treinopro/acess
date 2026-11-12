@@ -1006,3 +1006,30 @@ test('combo: aluno existente (painel/portal) cobra o valor com combo e a conta n
   const ativas = (await db.execute({ sql: `SELECT combo_id, status FROM assinaturas_mp WHERE matricula_id='m-combo3' ORDER BY criado_em` })).rows.map((r) => `${r.combo_id}:${r.status}`);
   assert.deepStrictEqual(ativas, ['avaliacao_completa:cancelled', 'avaliacao:pending']);
 });
+
+test('combo restrito: só CPF/categoria liberados enxergam e contratam; os demais recebem 404; painel enxerga todos', async () => {
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf, categoria) VALUES ('cb-prof', 'Prof Combo', 'cbp@teste.com', '91919191919', 'professor')` });
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf, categoria) VALUES ('cb-teste', 'Teste Combo', 'cbt@teste.com', '929.292.929-29', 'aluno')` });
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf, categoria) VALUES ('cb-comum', 'Comum Combo', 'cbc@teste.com', '93939393939', 'aluno')` });
+  await assinaturas.salvarCombos([
+    { id: 'avaliacao', nome: 'Plano + avaliação física', adicional_centavos: 4000, ativo: true },
+    { id: 'combo_teste', nome: 'Plano + combo teste', adicional_centavos: 100, ativo: true, restrito: true, cpfs_permitidos: ['929.292.929-29', 'lixo'], categorias_permitidas: ['professor', 'inexistente'] },
+  ]);
+  const ids = async (arg) => (await assinaturas.listarCombosPublicos(arg)).map((c) => c.id).sort();
+  assert.deepStrictEqual(await ids({}), ['avaliacao']);                                  // anônimo
+  assert.deepStrictEqual(await ids({ alunoId: 'cb-comum' }), ['avaliacao']);              // aluno comum
+  assert.deepStrictEqual(await ids({ cpf: '92929292929' }), ['avaliacao', 'combo_teste']); // CPF liberado
+  assert.deepStrictEqual(await ids({ alunoId: 'cb-prof' }), ['avaliacao', 'combo_teste']); // categoria liberada
+  const salvo = (await assinaturas.obterCombos()).find((c) => c.id === 'combo_teste');
+  assert.deepStrictEqual([salvo.cpfs_permitidos, salvo.categorias_permitidas], [['92929292929'], ['professor']]);
+
+  await assert.rejects(() => assinaturas.buscarCombo('combo_teste', { alunoId: 'cb-comum' }), /não está disponível/);
+  assert.strictEqual((await assinaturas.buscarCombo('combo_teste', { alunoId: 'cb-prof' })).id, 'combo_teste');
+  assert.strictEqual((await assinaturas.buscarCombo('combo_teste', { alunoId: 'cb-comum', admin: true })).id, 'combo_teste');
+
+  // Na modalidade, o aluno comum não recebe o combo restrito na lista.
+  const op = (await assinaturas.listarPlanosCadastroPublicos({ alunoId: 'cb-comum' })).find((x) => x.id === 'mensal_livre');
+  assert.deepStrictEqual(op.combos.map((c) => c.id), ['avaliacao']);
+
+  await assinaturas.salvarCombos([{ id: 'avaliacao', nome: 'Plano + avaliação física', adicional_centavos: 4000, ativo: true }, { id: 'avaliacao_completa', nome: 'Plano + avaliação completa', adicional_centavos: 5000, ativo: true }]);
+});

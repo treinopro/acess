@@ -819,6 +819,9 @@ const comboSchema = z.object({
   nome: z.string().trim().min(1).max(80),
   adicional_centavos: z.number().int().min(0).max(1000000),
   ativo: z.boolean(),
+  restrito: z.boolean().optional(),
+  cpfs_permitidos: z.array(z.string().max(20)).max(50).optional(),
+  categorias_permitidas: z.array(z.enum(['aluno', 'professor', 'visitante', 'colaborador', 'bolsista'])).max(5).optional(),
 });
 router.get('/assinaturas/combos', autenticar, apenasAdmin, async (req, res, next) => {
   try { res.json({ combos: await assinaturas.obterCombos() }); }

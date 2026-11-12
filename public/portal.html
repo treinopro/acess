@@ -163,6 +163,17 @@ if ('serviceWorker' in navigator) {
 
   .item-conta { display: flex; align-items: center; gap: 12px; background: #0f172a; border-radius: 10px; padding: 16px; margin-bottom: 10px; }
   .item-conta input { width: 24px; height: 24px; }
+  .item-conta .abrir { color: #10b981; font-size: 22px; padding-left: 4px; }
+  .item-conta .info { cursor: pointer; }
+  .conta-cabecalho { text-align: center; border-bottom: 1px solid #334155; padding-bottom: 14px; margin-bottom: 6px; }
+  .conta-titulo { font-size: 24px; font-weight: 700; }
+  .conta-subtitulo { font-size: 20px; font-weight: 700; color: #facc15; margin-top: 2px; }
+  .conta-linha { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 2px; font-size: 16px; }
+  .conta-selo { padding: 6px 14px; border-radius: 999px; font-weight: 700; background: #334155; }
+  .conta-selo.atrasada { background: #ef4444; color: #fff; }
+  .conta-valor-box { background: #0f172a; border-radius: 12px; padding: 16px; text-align: center; margin: 10px 0 16px; display: grid; gap: 4px; }
+  .conta-valor-box span { color: #94a3b8; font-size: 14px; }
+  .conta-valor-box strong { font-size: 34px; color: #10b981; }
   .item-conta .info { flex: 1; }
   .item-conta .desc { font-size: 17px; font-weight: 600; }
   .item-conta .venc { font-size: 14px; color: #94a3b8; }
@@ -516,6 +527,30 @@ if ('serviceWorker' in navigator) {
       <div id="lista-contas-hub"></div>
       <div class="total-linha"><span>Total selecionado</span><span id="contas-hub-total">R$ 0,00</span></div>
       <button class="botao-grande primario" id="btn-pagar-contas-hub" style="margin:0">Pagar com Pix</button>
+    </div>
+
+    <!-- Página da conta (uma conta em aberto: detalhes, valor e formas de pagamento) -->
+    <div class="cartao oculto" id="painel-hub-conta" style="text-align:left">
+      <div class="conta-cabecalho">
+        <div class="conta-titulo" id="conta-titulo">Conta</div>
+        <div class="conta-subtitulo" id="conta-subtitulo"></div>
+      </div>
+      <div class="conta-linha"><span>Vencimento</span><span class="conta-selo" id="conta-vencimento"></span></div>
+      <div class="conta-linha"><span>Situação</span><strong id="conta-situacao"></strong></div>
+      <div class="conta-valor-box"><span>Valor a pagar</span><strong id="conta-valor"></strong></div>
+      <button class="botao-grande primario" id="btn-conta-pix" style="margin:0 0 10px">Pagar com Pix</button>
+      <button class="botao-grande secundario oculto" id="btn-conta-cartao" style="margin:0 0 10px">Pagar no cartão (automático)</button>
+      <div id="conta-recorrencia"></div>
+      <div class="erro-msg" id="conta-erro"></div>
+    </div>
+
+    <!-- Troca/assinatura de plano: escolha entre Pix e cartão automático -->
+    <div class="cartao oculto" id="painel-hub-upgrade-escolha" style="text-align:left">
+      <h3 id="upg-escolha-titulo" style="margin-top:0">Assinar plano</h3>
+      <p id="upg-escolha-texto" style="color:#94a3b8"></p>
+      <button class="botao-grande primario" id="btn-upg-pix" style="margin:0 0 10px">Pagar com Pix</button>
+      <div id="upg-recorrencia"></div>
+      <div class="erro-msg" id="upg-escolha-erro"></div>
     </div>
 
     <!-- Treino -->

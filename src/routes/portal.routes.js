@@ -958,6 +958,8 @@ router.post('/upgrade', limitadorSenhaPortal, async (req, res, next) => {
       cpf: z.string().min(1),
       senha: z.string().min(1),
       plano_id: z.string().min(1),
+      // escolher=true: cria a matrícula e a conta SEM gerar o Pix, para o aluno escolher entre Pix e cartão automático.
+      escolher: z.boolean().optional(),
     }).parse(req.body);
     const autenticado = await autenticarAlunoPortal(dados.cpf, dados.senha);
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
@@ -968,11 +970,47 @@ router.post('/upgrade', limitadorSenhaPortal, async (req, res, next) => {
     if (!p) return res.status(404).json({ erro: 'Plano não encontrado ou inativo.' });
 
     const existente = await db.execute({
-      sql: `SELECT id FROM matriculas WHERE aluno_id = ? AND plano_id = ? AND status IN ('ativa', 'pendente')`,
+      sql: `SELECT id, status FROM matriculas WHERE aluno_id = ? AND plano_id = ? AND status IN ('ativa', 'pendente')`,
       args: [aluno.id, dados.plano_id],
     });
     if (existente.rows[0]) {
+      // Pré-matrícula que o aluno deixou pela metade (sem Pix iniciado): retoma a mesma, sem duplicar.
+      if (dados.escolher && existente.rows[0].status === 'pendente') {
+        const aberta = await db.execute({
+          sql: `SELECT id, valor_centavos, vencimento, provedor_referencia FROM cobrancas WHERE matricula_id = ? AND status = 'pendente' ORDER BY criado_em DESC LIMIT 1`,
+          args: [existente.rows[0].id],
+        });
+        const c0 = aberta.rows[0];
+        if (c0 && !c0.provedor_referencia) {
+          return res.status(200).json({
+            retomada: true, matricula_id: existente.rows[0].id, cobranca_id: c0.id, valor_centavos: Number(c0.valor_centavos),
+            vencimento: c0.vencimento, aluno_nome: aluno.nome, plano_nome: p.nome, plano_tipo: p.tipo,
+          });
+        }
+      }
       return res.status(409).json({ erro: 'Você já tem uma matrícula ativa ou pendente neste plano.' });
+    }
+
+    if (dados.escolher) {
+      const hojeE = new Date().toISOString().slice(0, 10);
+      const dataFimE = p.duracao_dias ? new Date(Date.now() + p.duracao_dias * 86400000).toISOString().slice(0, 10) : null;
+      const matriculaIdE = uuid();
+      const cobrancaIdE = uuid();
+      await db.execute({
+        sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, data_fim, status, renovacao_automatica)
+              VALUES (?, ?, ?, ?, ?, 'pendente', 1)`,
+        args: [matriculaIdE, aluno.id, p.id, hojeE, dataFimE],
+      });
+      const vencimentoE = ehRecorrente(p.tipo) ? primeiroVencimento(hojeE) : hojeE;
+      await db.execute({
+        sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, provedor, descricao, vencimento)
+              VALUES (?, ?, ?, ?, 'mercadopago', ?, ?)`,
+        args: [cobrancaIdE, aluno.id, matriculaIdE, p.valor_centavos, `Matrícula - ${p.nome}`, vencimentoE],
+      });
+      return res.status(201).json({
+        matricula_id: matriculaIdE, cobranca_id: cobrancaIdE, valor_centavos: Number(p.valor_centavos),
+        vencimento: vencimentoE, aluno_nome: aluno.nome, plano_nome: p.nome, plano_tipo: p.tipo,
+      });
     }
 
     const cobrancaId = uuid();

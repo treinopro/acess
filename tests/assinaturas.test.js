@@ -7,6 +7,7 @@ process.env.DATABASE_URL = 'file:./teste-assinaturas.db';
 delete process.env.DATABASE_AUTH_TOKEN;
 process.env.MERCADOPAGO_ASSINATURAS = '1';
 process.env.MERCADOPAGO_ACCESS_TOKEN = 'TESTE';
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'teste-jwt'; // o router do portal carrega o módulo de login
 delete process.env.MERCADOPAGO_WEBHOOK_SECRET;
 
 const { test, before, after } = require('node:test');
@@ -1125,4 +1126,42 @@ test('verificar na volta do MP: se o código da página não existir, acha pelo 
   assert.strictEqual(await assinaturas.verificarOferta('codigo-que-nao-existe'), null);
   const r = await assinaturas.verificarOferta('codigo-que-nao-existe', { preapprovalId: sub.preapproval_id });
   assert.ok(r && r.oferta, 'deveria achar pela assinatura do MP');
+});
+
+test('portal: assinar plano em modo "escolher" cria a pré-matrícula sem Pix e retoma a mesma se o aluno voltar', async () => {
+  const express = require('express');
+  const http = require('http');
+  const portal = require('../src/routes/portal.routes');
+  await db.execute({ sql: `INSERT OR IGNORE INTO planos (id, nome, tipo, valor_centavos, ativo) VALUES ('p-up', 'MUSCULAÇÃO UP', 'mensal', 9900, 1)`, args: [] });
+  await db.execute({ sql: `INSERT OR IGNORE INTO alunos (id, nome, email, cpf, biometria_id) VALUES ('al-up', 'Aluno Up', 'up@teste.com', '60606060606', '7777')`, args: [] });
+  const app = express();
+  app.use(express.json());
+  app.use('/api/portal', portal);
+  app.use((err, req, res, next) => res.status(err.status || 500).json({ erro: err.message }));
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, resolve));
+  const porta = server.address().port;
+  const chamar = (corpo) => new Promise((resolve, reject) => {
+    const txt = JSON.stringify(corpo);
+    const r = http.request({ port: porta, path: '/api/portal/upgrade', method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(txt) } },
+      (res) => { let d = ''; res.on('data', (c) => { d += c; }); res.on('end', () => resolve({ status: res.statusCode, json: JSON.parse(d || '{}') })); });
+    r.on('error', reject); r.end(txt);
+  });
+  try {
+    const um = await chamar({ cpf: '60606060606', senha: '7777', plano_id: 'p-up', escolher: true });
+    assert.strictEqual(um.status, 201);
+    assert.strictEqual(um.json.plano_tipo, 'mensal');
+    assert.strictEqual(um.json.valor_centavos, 9900);
+    const conta = (await db.execute({ sql: `SELECT provedor_referencia, status FROM cobrancas WHERE id = ?`, args: [um.json.cobranca_id] })).rows[0];
+    assert.strictEqual(conta.provedor_referencia, null); // nenhum Pix foi gerado
+    // O aluno voltou sem terminar: retoma a mesma pré-matrícula, sem duplicar.
+    const dois = await chamar({ cpf: '60606060606', senha: '7777', plano_id: 'p-up', escolher: true });
+    assert.strictEqual(dois.status, 200);
+    assert.strictEqual(dois.json.retomada, true);
+    assert.strictEqual(dois.json.matricula_id, um.json.matricula_id);
+    const n = (await db.execute({ sql: `SELECT COUNT(*) n FROM matriculas WHERE aluno_id = 'al-up'`, args: [] })).rows[0].n;
+    assert.strictEqual(Number(n), 1);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });

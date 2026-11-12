@@ -491,7 +491,7 @@ function resetHub() {
   document.getElementById('input-senha-hub').classList.add('oculto');
   document.getElementById('hub-cpf-erro').textContent = '';
   document.getElementById('painel-hub-cpf').classList.remove('oculto');
-  ['painel-hub-primeiro-acesso', 'painel-hub-dashboard', 'painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-comprovante', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-avaliacoes']
+  ['painel-hub-primeiro-acesso', 'painel-hub-dashboard', 'painel-hub-contas', 'painel-hub-conta', 'painel-hub-upgrade-escolha', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-comprovante', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-avaliacoes']
     .forEach((id) => document.getElementById(id).classList.add('oculto'));
   const avisoVencimento = document.getElementById('aviso-vencimento-hub');
   avisoVencimento.classList.add('oculto');
@@ -507,13 +507,14 @@ function resetHub() {
 // dashboard); só faz o reset completo pro início quando já está no menu
 // principal (ou na tela de CPF).
 document.getElementById('btn-voltar-hub').addEventListener('click', () => {
-  const SUBPAINEIS_HUB = ['painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-avaliacoes', 'painel-hub-notificacoes'];
+  const SUBPAINEIS_HUB = ['painel-hub-conta', 'painel-hub-upgrade-escolha', 'painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-avaliacoes', 'painel-hub-notificacoes'];
   const painelAberto = SUBPAINEIS_HUB.find((id) => !document.getElementById(id).classList.contains('oculto'));
   if (painelAberto) {
     if (painelAberto === 'painel-hub-pix') pararPollPixHub();
     if (painelAberto === 'painel-hub-facial') pararCamera();
     ocultarPaineisHub();
-    document.getElementById('painel-hub-dashboard').classList.remove('oculto');
+    // Da página de uma conta, volta para a lista de contas; da escolha de pagamento do plano, para a lista de planos.
+    document.getElementById(painelAberto === 'painel-hub-conta' ? 'painel-hub-contas' : (painelAberto === 'painel-hub-upgrade-escolha' ? 'painel-hub-upgrade' : 'painel-hub-dashboard')).classList.remove('oculto');
     return;
   }
   resetHub();
@@ -1334,7 +1335,7 @@ function atualizarAvisoVencimento(contas) {
 }
 
 function ocultarPaineisHub() {
-  ['painel-hub-dashboard', 'painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-comprovante', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-notificacoes', 'painel-hub-avaliacoes']
+  ['painel-hub-dashboard', 'painel-hub-contas', 'painel-hub-conta', 'painel-hub-upgrade-escolha', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-comprovante', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-notificacoes', 'painel-hub-avaliacoes']
     .forEach((id) => document.getElementById(id).classList.add('oculto'));
   irParaTopo();
 }
@@ -1355,15 +1356,19 @@ function renderizarContasHub(contas) {
   contasSelecionadasHub = {};
   const alvo = document.getElementById('lista-contas-hub');
   alvo.innerHTML = contas.map((c) => `
-    <label class="item-conta">
-      <input type="checkbox" data-id="${c.id}" data-valor="${c.valor_centavos}" checked />
-      <div class="info">
-        <div class="desc">${c.descricao || 'Conta'}</div>
+    <div class="item-conta">
+      <input type="checkbox" data-id="${c.id}" data-valor="${c.valor_centavos}" checked aria-label="Incluir no pagamento" />
+      <div class="info" data-abrir-conta="${c.id}" role="button" tabindex="0">
+        <div class="desc">${escapeHtml(c.descricao || 'Conta')}</div>
         <div class="venc">${c.vencimento ? `Vencimento: ${formatarData(c.vencimento)}` : ''}</div>
       </div>
-      <div class="valor">${formatarMoeda(c.valor_centavos)}</div>
-    </label>
+      <div class="valor" data-abrir-conta="${c.id}" role="button">${formatarMoeda(c.valor_centavos)}</div>
+      <span class="abrir" data-abrir-conta="${c.id}" aria-hidden="true">&rsaquo;</span>
+    </div>
   `).join('');
+  alvo.querySelectorAll('[data-abrir-conta]').forEach((el) => {
+    el.addEventListener('click', () => abrirPaginaContaHub(contas.find((x) => x.id === el.dataset.abrirConta)));
+  });
   contas.forEach((c) => { contasSelecionadasHub[c.id] = c.valor_centavos; });
 
   alvo.querySelectorAll('input[type=checkbox]').forEach((chk) => {
@@ -1833,25 +1838,167 @@ document.getElementById('btn-abrir-upgrade').addEventListener('click', async () 
   }
 });
 
+// ---------------------------------------------------------------------------
+// Cartão automático (recorrência) nas telas do Meu espaço: cartões das modalidades com escolha de combo.
+// Usado pela página da conta e pela escolha de pagamento ao assinar um plano.
+// ---------------------------------------------------------------------------
+function htmlCartoesRecorrencia(opcoes) {
+  return opcoes.map((p) => {
+    const mensal = formatarMoeda(p.valor_final_centavos);
+    const detalhe = p.limite_cobrancas
+      ? p.limite_cobrancas + ' cobranças mensais (uma por mês, durante ' + p.limite_cobrancas + ' meses)'
+      : 'Cobrança automática todo mês • Sem permanência mínima';
+    const desconto = p.desconto_centavos > 0 ? '<small style="display:block;color:#64748b">De ' + formatarMoeda(p.valor_centavos) + ' por mês</small>' : '';
+    return '<div style="background:#0f172a;border-radius:10px;padding:12px;margin:10px 0"><strong>' + escapeHtml(p.nome) +
+      '</strong><div data-preco-de="' + escapeHtml(p.id) + '" style="font-size:23px;font-weight:800;color:#10b981">' + mensal + '/mês</div>' + desconto +
+      '<small>' + escapeHtml(detalhe) + '</small>' + seletorComboHtml(p) +
+      '<button type="button" data-modalidade="' + escapeHtml(p.id) + '" data-rotulo="' + escapeHtml(p.nome) + '" class="botao-grande secundario" style="margin-top:8px">Escolher ' + escapeHtml(p.nome) + '</button></div>';
+  }).join('');
+}
+
+const TEXTO_RECORRENCIA_HUB = '<div style="background:#0f172a;border:1px solid #10b981;border-radius:10px;padding:12px;margin:10px 0;font-size:14px;line-height:1.45">' +
+  '<div style="font-weight:800;color:#10b981">🔁 Como funciona o pagamento automático</div>' +
+  '<div style="margin-top:6px">Na próxima página você cadastra o cartão uma única vez. A mensalidade passa a ser <strong>cobrada automaticamente no cartão</strong> todo mês, sem você precisar lembrar.</div>' +
+  '<div style="margin-top:6px">💳 <strong>Não ocupa o limite do cartão:</strong> é cobrado só o valor de cada mês.</div>' +
+  '<div style="margin-top:6px">🙋 Para cancelar, é só falar com a <strong>recepção</strong>.</div></div>';
+
+// Carrega e mostra as opções de recorrência em `container`. `aoEscolher({ modalidade, combo })` devolve uma Promise
+// com a URL do Mercado Pago. Retorna false se não houver nenhuma opção disponível para este aluno.
+async function mostrarRecorrenciaHub(container, aoEscolher, erroEl) {
+  let opcoes = [];
+  try {
+    const dados = await api('/api/portal/cadastro/recorrencia/planos?cpf=' + encodeURIComponent(String(cpfHubAtual || '').replace(/\D/g, '')));
+    opcoes = Array.isArray(dados.opcoes) ? dados.opcoes : [];
+  } catch (e) { /* sem recorrência: só o Pix */ }
+  if (!opcoes.length) { container.innerHTML = ''; return false; }
+  container.innerHTML = TEXTO_RECORRENCIA_HUB + htmlCartoesRecorrencia(opcoes);
+  ligarSeletoresCombo(container);
+  container.querySelectorAll('[data-modalidade]').forEach((btn) => btn.addEventListener('click', async () => {
+    const modalidade = btn.dataset.modalidade;
+    const combo = comboEscolhido(container, modalidade);
+    const botoes = Array.from(container.querySelectorAll('button'));
+    botoes.forEach((b) => { b.disabled = true; });
+    btn.textContent = 'Abrindo Mercado Pago…';
+    if (erroEl) erroEl.textContent = '';
+    try {
+      const url = await aoEscolher({ modalidade, combo });
+      if (!url) throw new Error('O Mercado Pago não retornou o endereço da oferta.');
+      window.location.href = url;
+    } catch (err) {
+      if (erroEl) erroEl.textContent = err.message || 'Não foi possível abrir o cartão agora.';
+      botoes.forEach((b) => { b.disabled = false; });
+      btn.textContent = 'Escolher ' + btn.dataset.rotulo;
+    }
+  }));
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Página de uma conta em aberto: detalhes, valor em destaque e formas de pagamento (Pix e cartão automático).
+// ---------------------------------------------------------------------------
+async function abrirPaginaContaHub(conta) {
+  if (!conta) return;
+  ocultarPaineisHub();
+  const $ = (id) => document.getElementById(id);
+  const painel = $('painel-hub-conta');
+  painel.classList.remove('oculto');
+  const hoje = new Date().toISOString().slice(0, 10);
+  const venc = String(conta.vencimento || '').slice(0, 10);
+  const atrasada = !!venc && venc < hoje;
+  const dias = atrasada ? Math.round((new Date(hoje) - new Date(venc)) / 86400000) : 0;
+  const partes = String(conta.descricao || 'Conta').split(' - ');
+  $('conta-titulo').textContent = partes[0] || 'Conta';
+  $('conta-subtitulo').textContent = partes.slice(1).join(' - ').trim();
+  const selo = $('conta-vencimento');
+  selo.textContent = venc ? formatarData(venc) : '—';
+  selo.className = 'conta-selo' + (atrasada ? ' atrasada' : '');
+  $('conta-situacao').textContent = atrasada ? (dias === 1 ? 'Venceu há 1 dia' : 'Venceu há ' + dias + ' dias') : 'Em dia';
+  $('conta-valor').textContent = formatarMoeda(conta.valor_centavos);
+  $('conta-erro').textContent = '';
+  $('conta-recorrencia').innerHTML = '';
+  const btnPix = $('btn-conta-pix'), btnCartao = $('btn-conta-cartao');
+  btnPix.disabled = false;
+  btnCartao.classList.add('oculto');
+
+  btnPix.onclick = async () => {
+    btnPix.disabled = true;
+    try {
+      const resp = await api('/api/portal/contas/pagar', { method: 'POST', body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, cobranca_ids: [conta.id] }) });
+      abrirPagamentoPixHub({
+        titulo: 'Pagar ' + formatarMoeda(resp.valor_centavos),
+        qrCodePix: resp.qr_code_pix,
+        qrCodePixImagem: resp.qr_code_pix_imagem,
+        statusUrl: '/api/portal/contas/status/' + resp.pagamento_id,
+        aoConfirmar: (statusResp) => {
+          mostrarComprovanteHub({ saudacao: 'Pagamento aprovado, ' + (statusResp.aluno_nome || '') + '!', itens: statusResp.itens, total: statusResp.valor_centavos });
+          carregarResumoContasHub();
+        },
+      });
+    } catch (err) { $('conta-erro').textContent = err.message; }
+    btnPix.disabled = false;
+  };
+
+  // O cartão automático só aparece para quem pode (plano mensal, sem assinatura ativa) e com modalidades disponíveis.
+  try {
+    const d = await api('/api/portal/assinatura?cpf=' + encodeURIComponent(cpfHubAtual) + '&senha=' + encodeURIComponent(senhaHubAtual));
+    if (!d.disponivel) return;
+    btnCartao.classList.remove('oculto');
+    btnCartao.onclick = async () => {
+      btnCartao.classList.add('oculto');
+      const ok = await mostrarRecorrenciaHub($('conta-recorrencia'), async ({ modalidade, combo }) => {
+        const r = await api('/api/portal/assinatura', { method: 'POST', body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, modalidade, combo }) });
+        return r.oferta_url;
+      }, $('conta-erro'));
+      if (!ok) { $('conta-erro').textContent = 'No momento não há opções de cartão automático disponíveis. Você pode pagar com Pix.'; }
+    };
+  } catch (e) { /* sem cartão automático: segue só com o Pix */ }
+}
+
+// ---------------------------------------------------------------------------
+// Assinar / trocar de plano: cria a pré-matrícula e deixa o aluno escolher entre Pix e cartão automático.
+// ---------------------------------------------------------------------------
 async function assinarPlanoHub(planoId) {
   try {
     const resp = await api('/api/portal/upgrade', {
       method: 'POST',
-      body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, plano_id: planoId }),
+      body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, plano_id: planoId, escolher: true }),
     });
-    abrirPagamentoPixHub({
-      titulo: `Assinar plano — ${formatarMoeda(resp.valor_centavos)}`,
-      qrCodePix: resp.qr_code_pix,
-      qrCodePixImagem: resp.qr_code_pix_imagem,
-      statusUrl: `/api/portal/upgrade/status/${resp.cobranca_id}`,
-      aoConfirmar: (statusResp) => {
-        mostrarComprovanteHub({
-          saudacao: `Plano ativado, ${statusResp.aluno_nome || ''}! Bem-vindo(a).`,
-          itens: null,
-          total: null,
-        });
-      },
-    });
+    const aoConfirmarPlano = (statusResp) => {
+      mostrarComprovanteHub({ saudacao: `Plano ativado, ${statusResp.aluno_nome || ''}! Bem-vindo(a).`, itens: null, total: null });
+    };
+    const iniciarPix = async () => {
+      const pix = await api('/api/portal/cadastro/pix', { method: 'POST', body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, cobranca_id: resp.cobranca_id }) });
+      abrirPagamentoPixHub({
+        titulo: `Assinar plano — ${formatarMoeda(pix.valor_centavos)}`,
+        qrCodePix: pix.qr_code_pix,
+        qrCodePixImagem: pix.qr_code_pix_imagem,
+        statusUrl: `/api/portal/upgrade/status/${resp.cobranca_id}`,
+        aoConfirmar: aoConfirmarPlano,
+      });
+    };
+
+    // Só plano mensal tem cartão automático; os demais vão direto para o Pix, como antes.
+    if (resp.plano_tipo !== 'mensal') return await iniciarPix();
+
+    ocultarPaineisHub();
+    const $ = (id) => document.getElementById(id);
+    $('painel-hub-upgrade-escolha').classList.remove('oculto');
+    $('upg-escolha-titulo').textContent = 'Assinar ' + (resp.plano_nome || 'plano');
+    $('upg-escolha-texto').textContent = 'Escolha como prefere pagar. Seu plano é ativado assim que o pagamento for confirmado.';
+    $('upg-escolha-erro').textContent = '';
+    const btnPix = $('btn-upg-pix');
+    btnPix.textContent = 'Pagar com Pix — ' + formatarMoeda(resp.valor_centavos);
+    btnPix.disabled = false;
+    btnPix.onclick = async () => {
+      btnPix.disabled = true;
+      try { await iniciarPix(); } catch (err) { $('upg-escolha-erro').textContent = err.message; }
+      btnPix.disabled = false;
+    };
+    const ok = await mostrarRecorrenciaHub($('upg-recorrencia'), async ({ modalidade, combo }) => {
+      const r = await api('/api/portal/cadastro/recorrencia', { method: 'POST', body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, matricula_id: resp.matricula_id, modalidade, combo }) });
+      return r.oferta_url;
+    }, $('upg-escolha-erro'));
+    if (!ok) $('upg-escolha-texto').textContent = 'Seu plano é ativado assim que o pagamento por Pix for confirmado.';
   } catch (err) {
     alert(err.message);
   }

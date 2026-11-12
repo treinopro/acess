@@ -452,7 +452,7 @@ function carregarSecao(nome) {
   if (nome === 'usuarios') carregarUsuarios();
   if (nome === 'config') {
     carregarConfiguracoesForm(); carregarConfigCooldown(); carregarConfigChamarProfessor();
-    carregarConfigBiometriaCatraca(); carregarConfigBackup(); carregarConfigOfertaAssinatura(); carregarPlanosCadastroRecorrencia(); carregarPendenciasSincronizacao();
+    carregarConfigBiometriaCatraca(); carregarConfigBackup(); carregarConfigOfertaAssinatura(); carregarPlanosCadastroRecorrencia(); carregarCombosRecorrencia(); carregarPendenciasSincronizacao();
   }
   if (nome === 'recuperacao') carregarSecaoRecuperacao();
   if (nome === 'relatorios') carregarSecaoRelatorios();
@@ -1133,6 +1133,62 @@ function linhaPlanoRecorrenciaCadastro(p = {}) {
   linha.querySelector('.prc-restrito').addEventListener('change', (ev) => { linha.querySelector('.prc-restricao').style.display = ev.target.checked ? '' : 'none'; });
   return linha;
 }
+
+// Combos (adicional mensal embutido na assinatura, ex.: avaliação física).
+function linhaComboRecorrencia(c = {}) {
+  const valor = (Number(c.adicional_centavos || 0) / 100).toFixed(2);
+  const linha = el(`
+    <div class="form-painel combo-recorrencia-linha" style="border:1px solid #d0d5dd;margin:10px 0;padding:14px">
+      <input type="hidden" class="cmb-id" value="${escapeHtml(c.id || '')}" />
+      <div class="grid-2">
+        <div><label>Nome do combo</label><input class="cmb-nome" maxlength="80" value="${escapeHtml(c.nome || '')}" placeholder="Ex.: Plano + avaliação física" required /></div>
+        <div><label>Adicional por mês (R$)</label><input class="cmb-valor" type="number" min="0" step="0.01" value="${valor}" required /></div>
+      </div>
+      <div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin-top:10px">
+        <label style="display:flex;gap:6px;align-items:center"><input class="cmb-ativo" type="checkbox" ${c.ativo === false ? '' : 'checked'} style="width:auto" /> Ativo (aparece para novas adesões)</label>
+        <button type="button" class="btn-secundario perigo cmb-remover">Remover combo</button>
+      </div>
+    </div>`);
+  linha.querySelector('.cmb-remover').addEventListener('click', () => linha.remove());
+  return linha;
+}
+
+async function carregarCombosRecorrencia() {
+  const container = document.getElementById('lista-combos-recorrencia');
+  if (!container) return;
+  try {
+    const r = await api('/api/pagamentos/assinaturas/combos');
+    container.innerHTML = '';
+    (r.combos || []).forEach((c) => container.appendChild(linhaComboRecorrencia(c)));
+  } catch (err) { mostrarToast(err.message, true); }
+}
+
+document.getElementById('btn-adicionar-combo').addEventListener('click', () => {
+  const container = document.getElementById('lista-combos-recorrencia');
+  if (container.children.length >= 6) return mostrarToast('Limite de 6 combos atingido.', true);
+  container.appendChild(linhaComboRecorrencia());
+});
+
+document.getElementById('form-combos-recorrencia').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const usados = new Set();
+  const combos = [...document.querySelectorAll('#lista-combos-recorrencia .combo-recorrencia-linha')].map((linha, i) => {
+    const nome = linha.querySelector('.cmb-nome').value.trim();
+    const slug = nome.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 30) || ('combo_' + (i + 1));
+    let id = linha.querySelector('.cmb-id').value || slug;
+    if (usados.has(id)) id = slug + '_' + (i + 1);
+    usados.add(id);
+    return { id, nome, adicional_centavos: Math.round(Number(linha.querySelector('.cmb-valor').value) * 100), ativo: linha.querySelector('.cmb-ativo').checked };
+  });
+  if (combos.some((c) => !c.nome || !Number.isFinite(c.adicional_centavos) || c.adicional_centavos < 0)) return mostrarToast('Informe nome e adicional mensal válido em todos os combos.', true);
+  try {
+    const r = await api('/api/pagamentos/assinaturas/combos', { method: 'PUT', body: JSON.stringify({ combos }) });
+    const container = document.getElementById('lista-combos-recorrencia');
+    container.innerHTML = '';
+    (r.combos || []).forEach((c) => container.appendChild(linhaComboRecorrencia(c)));
+    mostrarToast('Combos salvos. Valem para novas adesões; assinaturas existentes não mudam.');
+  } catch (err) { mostrarToast(err.message, true); }
+});
 
 async function carregarPlanosCadastroRecorrencia() {
   const container = document.getElementById('lista-planos-recorrencia-cadastro');
@@ -3592,12 +3648,18 @@ function etiquetaRecorrencia(rec, { detalhe = false } = {}) {
   const cor = rec.status === 'authorized' ? '#065f46' : '#92400e';
   const fundo = rec.status === 'authorized' ? '#d1fae5' : '#fef3c7';
   const parcelas = detalhe && rec.limite_cobrancas ? ` · ${rec.cobrancas_processadas}/${rec.limite_cobrancas} cobranças` : '';
-  return `<small style="display:inline-block;background:${fundo};color:${cor};border-radius:999px;padding:2px 8px;font-weight:600">💳 Recorrência: ${escapeHtml(rec.nome)} (${escapeHtml(rotuloStatus)})${parcelas}</small>`;
+  return `<small style="display:inline-block;background:${fundo};color:${cor};border-radius:999px;padding:2px 8px;font-weight:600">💳 Recorrência: ${escapeHtml(rec.nome)}${rec.combo_nome ? ' + ' + escapeHtml(rec.combo_nome) : ''} (${escapeHtml(rotuloStatus)})${parcelas}</small>`;
 }
 
 async function abrirDialogoAssinatura(matricula, aluno) {
   // Modalidades ativas cadastradas em Configurações (mesmas condições do portal do aluno).
   let modalidadesAdmin = [];
+  let combosAdmin = [];
+  try {
+    const rc = await api('/api/pagamentos/assinaturas/combos');
+    combosAdmin = (rc.combos || []).filter((c) => c.ativo);
+  } catch (e) { /* sem combos: só o plano */ }
+  const seletorCombo = (atual) => combosAdmin.length ? '<select data-campo="combo" style="flex:1 1 100%;max-width:100%"><option value="nenhum">Só o plano (sem combo)</option>' + combosAdmin.map((c) => '<option value="' + escapeHtml(c.id) + '"' + (c.id === atual ? ' selected' : '') + '>' + escapeHtml(c.nome) + ' (+' + formatarMoeda(c.adicional_centavos) + '/mês)</option>').join('') + '</select>' : '';
   try {
     const cfg = await api('/api/pagamentos/assinaturas/planos-cadastro');
     modalidadesAdmin = (cfg.planos || []).filter((m) => m.ativo).map((m) => {
@@ -3625,9 +3687,9 @@ async function abrirDialogoAssinatura(matricula, aluno) {
           ${whatsappLink ? `<a class="btn-assinar-cartao" style="text-decoration:none" target="_blank" rel="noopener" href="${escapeHtml(whatsappLink)}">Enviar por WhatsApp</a>` : ''}
           <a class="btn-linha" style="text-decoration:none" target="_blank" rel="noopener" href="${escapeHtml(ofertaUrl)}">Ver como o aluno vê</a>
         </div>` : ''}
-      ${ativa && assinatura.status === 'pending' && modalidadesAdmin.length ? '<div style="margin-top:12px;border-top:1px dashed #d0d5dd;padding-top:10px"><label>Trocar a modalidade (cancela este link e gera outro):</label><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px"><select data-campo="modalidade" style="max-width:260px">' + modalidadesAdmin.map((m) => '<option value="' + escapeHtml(m.id) + '"' + (m.id === assinatura.modalidade ? ' selected' : '') + '>' + escapeHtml(m.rotulo) + '</option>').join('') + '</select><button type="button" class="btn-assinar-cartao" data-acao="gerar">Gerar novo link</button></div></div>' : ''}
+      ${ativa && assinatura.status === 'pending' && modalidadesAdmin.length ? '<div style="margin-top:12px;border-top:1px dashed #d0d5dd;padding-top:10px"><label>Trocar a modalidade (cancela este link e gera outro):</label><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px"><select data-campo="modalidade" style="max-width:260px">' + modalidadesAdmin.map((m) => '<option value="' + escapeHtml(m.id) + '"' + (m.id === assinatura.modalidade ? ' selected' : '') + '>' + escapeHtml(m.rotulo) + '</option>').join('') + '</select>' + seletorCombo(assinatura.combo_id) + '<button type="button" class="btn-assinar-cartao" data-acao="gerar">Gerar novo link</button></div></div>' : ''}
       <div style="display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap;margin-top:16px">
-        ${ativa ? '<span style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn-linha perigo" data-acao="cancelar">Cancelar assinatura</button><button type="button" class="btn-linha" data-acao="sincronizar">Atualizar status</button></span>' : (modalidadesAdmin.length ? '<select data-campo="modalidade" style="flex:1 1 100%;max-width:100%">' + modalidadesAdmin.map((m) => '<option value="' + escapeHtml(m.id) + '">' + escapeHtml(m.rotulo) + '</option>').join('') + '</select>' : '') + '<button type="button" class="btn-assinar-cartao" data-acao="gerar">Gerar link de assinatura</button>'}
+        ${ativa ? '<span style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn-linha perigo" data-acao="cancelar">Cancelar assinatura</button><button type="button" class="btn-linha" data-acao="sincronizar">Atualizar status</button></span>' : (modalidadesAdmin.length ? '<select data-campo="modalidade" style="flex:1 1 100%;max-width:100%">' + modalidadesAdmin.map((m) => '<option value="' + escapeHtml(m.id) + '">' + escapeHtml(m.rotulo) + '</option>').join('') + '</select>' + seletorCombo(null) : '') + '<button type="button" class="btn-assinar-cartao" data-acao="gerar">Gerar link de assinatura</button>'}
         <button type="button" class="btn-linha" data-acao="fechar">Fechar</button>
       </div>`;
     dlg.querySelector('[data-acao="fechar"]').addEventListener('click', fechar);
@@ -3639,7 +3701,7 @@ async function abrirDialogoAssinatura(matricula, aluno) {
     if (gerar) gerar.addEventListener('click', async () => {
       gerar.disabled = true;
       try {
-        const r = await api('/api/pagamentos/assinaturas', { method: 'POST', body: JSON.stringify({ matricula_id: matricula.id, ...(dlg.querySelector('[data-campo="modalidade"]') ? { modalidade: dlg.querySelector('[data-campo="modalidade"]').value } : {}) }) });
+        const r = await api('/api/pagamentos/assinaturas', { method: 'POST', body: JSON.stringify({ matricula_id: matricula.id, ...(dlg.querySelector('[data-campo="modalidade"]') ? { modalidade: dlg.querySelector('[data-campo="modalidade"]').value } : {}), ...(dlg.querySelector('[data-campo="combo"]') ? { combo: dlg.querySelector('[data-campo="combo"]').value } : {}) }) });
         desenhar({ id: r.id, status: r.status, valor_centavos: r.valor_centavos, valor_cheio_centavos: r.valor_cheio_centavos, desconto_centavos: r.desconto_centavos }, r.oferta_url, r.whatsapp_link);
       } catch (err) { mostrarToast(err.message, true); gerar.disabled = false; }
     });

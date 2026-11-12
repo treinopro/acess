@@ -790,6 +790,9 @@ CREATE TABLE IF NOT EXISTS assinaturas_mp (
   valor_anterior_centavos INTEGER,
   status_anterior_cobranca TEXT,
   vencimento_anterior TEXT, -- vencimento original (10/20) da conta do cadastro, restaurado se a recorrência não for adiante
+  combo_id TEXT, -- combo escolhido (ex.: avaliacao): o adicional mensal já está somado em valor_centavos
+  combo_nome TEXT,
+  adicional_centavos INTEGER NOT NULL DEFAULT 0,
   cobranca_inicial_criada INTEGER NOT NULL DEFAULT 0,
   init_point TEXT,
   criado_em TEXT NOT NULL DEFAULT (datetime('now')),

@@ -444,7 +444,7 @@ test('prévia: monta a página com as configurações atuais sem criar nada', as
 test('pagamento recorrente estende a validade da matrícula até o próximo vencimento', async () => {
   await novoAlunoComMatricula('renova-validade');
   await db.execute({
-    sql: `UPDATE matriculas SET data_fim = '2026-11-11' WHERE id = 'm-renova-validade'`,
+    sql: `UPDATE matriculas SET data_fim = date('now') WHERE id = 'm-renova-validade'`, // validade termina hoje (data relativa, não fixa)
   });
   await assinaturas.obterOuCriarParaAluno({
     alunoId: 'renova-validade',
@@ -938,4 +938,71 @@ test('oferta de cartão aparece também para aluno com mensalidade atrasada e va
   await db.execute({ sql: `UPDATE cobrancas SET status = 'pago' WHERE id = 'c-atr'` });
   d = await assinaturas.disponibilidadeParaAluno({ alunoId: 'atrasado', baseUrl: 'https://academia.test' });
   assert.strictEqual(d.disponivel, false);
+});
+
+test('combo: soma o adicional mensal, grava na assinatura e a conta paga leva o valor do combo', async () => {
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('combo1', 'Aluno Combo', 'combo1@teste.com', '80800099911')` });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-combo1', 'combo1', 'p1', date('now'), 'pendente')` });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-combo1', 'combo1', 'm-combo1', 9900, 'pendente', 'mercadopago', 'Matrícula', date('now'))` });
+  await assinaturas.salvarPlanosCadastro([{ id: 'mensal_livre', nome: 'Mensal sem fidelidade', valor_centavos: 7000, limite_cobrancas: null, ativo: true }]);
+
+  // Lista pública: cada modalidade traz os combos com o total mensal (70 + 40 e 70 + 50).
+  const op = (await assinaturas.listarPlanosCadastroPublicos()).find((x) => x.id === 'mensal_livre');
+  assert.deepStrictEqual(op.combos.map((c) => [c.id, c.valor_total_centavos]), [['avaliacao', 11000], ['avaliacao_completa', 12000]]);
+
+  await assinaturas.obterOuCriarParaNovoCadastro({ alunoId: 'combo1', matriculaId: 'm-combo1', baseUrl: 'https://academia.test', modalidade: 'mensal_livre', combo: 'avaliacao' });
+  const [, payload] = chamadas.filter((c) => c[0] === 'criar').pop();
+  assert.strictEqual(payload.valorCentavos, 11000);
+  assert.match(payload.razao, /Plano \+ avaliação física/);
+  const sub = (await db.execute({ sql: `SELECT preapproval_id, valor_centavos, combo_id, combo_nome, adicional_centavos FROM assinaturas_mp WHERE matricula_id='m-combo1'` })).rows[0];
+  assert.deepStrictEqual({ v: sub.valor_centavos, id: sub.combo_id, add: sub.adicional_centavos }, { v: 11000, id: 'avaliacao', add: 4000 });
+
+  // Cartão aprovado: a conta passa ao valor do combo, a descrição cita o combo e a próxima nasce com o mesmo valor.
+  estadoMp.assinaturas[sub.preapproval_id].status = 'authorized';
+  estadoMp.cobrancas = { ...(estadoMp.cobrancas || {}), [sub.preapproval_id]: [{ id: 'AP-CB1', preapproval_id: sub.preapproval_id, transaction_amount: 110, payment: { id: 8801, status: 'approved' } }] };
+  await assinaturas.reconciliarAssinaturas();
+  const paga = (await db.execute({ sql: `SELECT status, valor_centavos FROM cobrancas WHERE id='c-combo1'` })).rows[0];
+  assert.deepStrictEqual({ ...paga }, { status: 'pago', valor_centavos: 11000 });
+  const prox = (await db.execute({ sql: `SELECT valor_centavos, descricao FROM cobrancas WHERE matricula_id='m-combo1' AND status='pendente'` })).rows[0];
+  assert.strictEqual(prox.valor_centavos, 11000);
+  assert.match(prox.descricao, /Mensal sem fidelidade \+ Plano \+ avaliação física/);
+  // A etiqueta do painel mostra o combo.
+  const [marcada] = await assinaturas.anexarRecorrencia([{ matricula_id: 'm-combo1' }]);
+  assert.strictEqual(marcada.recorrencia.combo_nome, 'Plano + avaliação física');
+});
+
+test('combo: sem combo cobra só o plano; combo inexistente ou desativado é recusado; mudar o combo não altera contratos', async () => {
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('combo2', 'Aluno Combo2', 'combo2@teste.com', '80800099922')` });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-combo2', 'combo2', 'p1', date('now'), 'pendente')` });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-combo2', 'combo2', 'm-combo2', 9900, 'pendente', 'mercadopago', 'Matrícula', date('now'))` });
+  await assert.rejects(() => assinaturas.obterOuCriarParaNovoCadastro({ alunoId: 'combo2', matriculaId: 'm-combo2', baseUrl: 'https://academia.test', modalidade: 'mensal_livre', combo: 'nao_existe' }), /não está disponível/);
+
+  await assinaturas.obterOuCriarParaNovoCadastro({ alunoId: 'combo2', matriculaId: 'm-combo2', baseUrl: 'https://academia.test', modalidade: 'mensal_livre', combo: 'nenhum' });
+  const [, p1] = chamadas.filter((c) => c[0] === 'criar').pop();
+  assert.strictEqual(p1.valorCentavos, 7000);
+  const s1 = (await db.execute({ sql: `SELECT valor_centavos, combo_id, adicional_centavos FROM assinaturas_mp WHERE matricula_id='m-combo2'` })).rows[0];
+  assert.deepStrictEqual({ v: s1.valor_centavos, id: s1.combo_id, add: s1.adicional_centavos }, { v: 7000, id: null, add: 0 });
+
+  // Desativar o combo esconde da lista pública e bloqueia novas adesões, sem mexer em contratos existentes.
+  await assinaturas.salvarCombos([{ id: 'avaliacao', nome: 'Plano + avaliação física', adicional_centavos: 9999, ativo: false }]);
+  assert.deepStrictEqual((await assinaturas.listarPlanosCadastroPublicos()).find((x) => x.id === 'mensal_livre').combos, []);
+  await assert.rejects(() => assinaturas.buscarCombo('avaliacao'), /não está disponível/);
+  const antigo = (await db.execute({ sql: `SELECT valor_centavos, adicional_centavos FROM assinaturas_mp WHERE matricula_id='m-combo1'` })).rows[0];
+  assert.deepStrictEqual({ v: antigo.valor_centavos, add: antigo.adicional_centavos }, { v: 11000, add: 4000 });
+  // restaura os combos padrão para os testes seguintes
+  await assinaturas.salvarCombos([{ id: 'avaliacao', nome: 'Plano + avaliação física', adicional_centavos: 4000, ativo: true }, { id: 'avaliacao_completa', nome: 'Plano + avaliação completa', adicional_centavos: 5000, ativo: true }]);
+});
+
+test('combo: aluno existente (painel/portal) cobra o valor com combo e a conta não muda antes do pagamento', async () => {
+  await novoAlunoComMatricula('combo3');
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, vencimento) VALUES ('c-combo3', 'combo3', 'm-combo3', 9900, 'pendente', 'recorrencia', date('now'))` });
+  await assinaturas.obterOuCriarParaAluno({ alunoId: 'combo3', baseUrl: 'https://academia.test', modalidade: 'mensal_livre', combo: 'avaliacao_completa' });
+  const [, payload] = chamadas.filter((c) => c[0] === 'criar').pop();
+  assert.strictEqual(payload.valorCentavos, 12000);
+  const conta = (await db.execute({ sql: `SELECT valor_centavos FROM cobrancas WHERE id='c-combo3'` })).rows[0];
+  assert.strictEqual(conta.valor_centavos, 9900); // só muda quando o cartão for aprovado
+  // Trocar o combo da pendente cria outra assinatura (e cancela a anterior).
+  await assinaturas.obterOuCriarParaAluno({ alunoId: 'combo3', baseUrl: 'https://academia.test', modalidade: 'mensal_livre', combo: 'avaliacao' });
+  const ativas = (await db.execute({ sql: `SELECT combo_id, status FROM assinaturas_mp WHERE matricula_id='m-combo3' ORDER BY criado_em` })).rows.map((r) => `${r.combo_id}:${r.status}`);
+  assert.deepStrictEqual(ativas, ['avaliacao_completa:cancelled', 'avaliacao:pending']);
 });

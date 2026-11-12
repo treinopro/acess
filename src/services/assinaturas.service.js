@@ -257,15 +257,67 @@ async function identidadeDoAluno({ alunoId = null, cpf = null } = {}) {
   } catch { return { cpf: null, categoria: null }; }
 }
 
+// ── Combos (adicional mensal embutido na assinatura, ex.: avaliação física a cada 90 dias) ─────────────────
+// Configuráveis em Configurações (chave `assinatura_combos`). O valor do combo é o adicional por mês somado ao da
+// modalidade: ex. avaliação de R$ 120 em 3 meses = +R$ 40/mês. Ao contratar, id, nome e adicional ficam gravados na
+// assinatura; mudar o combo depois não altera contratos existentes.
+const COMBOS_PADRAO = [
+  { id: 'avaliacao', nome: 'Plano + avaliação física', adicional_centavos: 4000, ativo: true },
+  { id: 'avaliacao_completa', nome: 'Plano + avaliação completa', adicional_centavos: 5000, ativo: true },
+];
+
+function normalizarCombos(bruto) {
+  const lista = Array.isArray(bruto) ? bruto : COMBOS_PADRAO;
+  const ids = new Set();
+  return lista.map((c) => {
+    const id = String(c?.id || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 40);
+    const nome = String(c?.nome || '').trim().slice(0, 80);
+    const adicional = Math.round(Number(c?.adicional_centavos) || 0);
+    if (!id || !nome || adicional < 0 || adicional > 1000000 || ids.has(id) || id === 'nenhum') return null;
+    ids.add(id);
+    return { id, nome, adicional_centavos: adicional, ativo: c?.ativo !== false };
+  }).filter(Boolean).slice(0, 6);
+}
+
+async function obterCombos() {
+  const cfg = await lerConfig(['assinatura_combos']);
+  try { return normalizarCombos(cfg.assinatura_combos ? JSON.parse(cfg.assinatura_combos) : null); }
+  catch { return normalizarCombos(null); }
+}
+
+async function salvarCombos(combos) {
+  const normalizados = normalizarCombos(combos);
+  await db.execute({
+    sql: "INSERT INTO configuracoes (chave, valor) VALUES ('assinatura_combos', ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor",
+    args: [JSON.stringify(normalizados)],
+  });
+  return normalizados;
+}
+
+// Combo escolhido ('' / 'nenhum' / ausente = só o plano). Lança 404 se não existir ou estiver desativado.
+async function buscarCombo(id, { admin = false } = {}) {
+  const chave = String(id || '').trim().toLowerCase();
+  if (!chave || chave === 'nenhum') return null;
+  const c = (await obterCombos()).find((x) => x.id === chave && (x.ativo || admin));
+  if (!c) throw erro('Este combo não está disponível. Atualize a página e escolha outra opção.', 404);
+  return c;
+}
+
+async function listarCombosPublicos() {
+  return (await obterCombos()).filter((c) => c.ativo).map((c) => ({ id: c.id, nome: c.nome, adicional_centavos: c.adicional_centavos }));
+}
+
 async function listarPlanosCadastroPublicos({ cpf = null, alunoId = null } = {}) {
   // Recurso desligado (MERCADOPAGO_ASSINATURAS != 1): não oferece nada ao aluno.
   if (!habilitado()) return [];
   const planos = await obterPlanosCadastro();
   const identidade = planos.some((p) => p.ativo && p.restrito) ? await identidadeDoAluno({ alunoId, cpf }) : { cpf, categoria: null };
+  const combosAtivos = await listarCombosPublicos();
   return planos.filter((p) => p.ativo && modalidadeVisivelPara(p, identidade)).map(p => {
     const preco = precoDaOferta(p.valor_centavos, p.desconto);
     return { id: p.id, nome: p.nome, valor_centavos: p.valor_centavos, valor_final_centavos: preco.valor_centavos,
-      desconto_centavos: preco.desconto_centavos, limite_cobrancas: p.limite_cobrancas };
+      desconto_centavos: preco.desconto_centavos, limite_cobrancas: p.limite_cobrancas,
+      combos: combosAtivos.map((c) => ({ id: c.id, nome: c.nome, adicional_centavos: c.adicional_centavos, valor_total_centavos: preco.valor_centavos + c.adicional_centavos })) };
   });
 }
 
@@ -282,7 +334,7 @@ function formatarValorParaDescricao(centavos) {
 
 // ── Criar / listar / cancelar ───────────────────────────────────────────────
 
-async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPrimeiraCobranca = null, cobrancaInicialId = null, valorAnteriorCentavos = null, statusAnteriorCobranca = null, vencimentoAnterior = null, cobrancaInicialCriada = false, permitirMatriculaPendente = false }) {
+async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPrimeiraCobranca = null, cobrancaInicialId = null, valorAnteriorCentavos = null, statusAnteriorCobranca = null, vencimentoAnterior = null, cobrancaInicialCriada = false, permitirMatriculaPendente = false, combo = null }) {
   if (!habilitado()) throw erro('Assinaturas do Mercado Pago estão desligadas (MERCADOPAGO_ASSINATURAS).', 503);
 
   const r = await db.execute({
@@ -310,9 +362,12 @@ async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPr
   // Só o fluxo de NOVO cadastro usa a tabela configurável. A oferta de migração
   // para alunos existentes mantém as condições antigas e independentes.
   const planoCadastro = modalidade ? await buscarPlanoCadastro(modalidade, { admin: true }) : null; // quem chama já validou a visibilidade
-  const preco = planoCadastro
+  const precoBase = planoCadastro
     ? precoDaOferta(Number(planoCadastro.valor_centavos), planoCadastro.desconto)
     : precoDaOferta(Number(m.valor_centavos), oferta);
+  // Combo (ex.: avaliação física): o adicional entra no valor mensal cobrado (o desconto da modalidade vale só para a base).
+  const adicionalCombo = planoCadastro && combo ? Number(combo.adicional_centavos) : 0;
+  const preco = { ...precoBase, valor_centavos: precoBase.valor_centavos + adicionalCombo, valor_cheio_centavos: precoBase.valor_cheio_centavos + adicionalCombo };
 
   const id = uuid();
   const frequenciaMeses = modalidade ? 1 : MESES_POR_TIPO[m.tipo];
@@ -324,7 +379,7 @@ async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPr
   console.log('[assinaturas] criando assinatura no MP:', { modalidade: modalidade || 'legado', valor_centavos: preco.valor_centavos, primeira_cobranca_pedida: dataPrimeiraCobranca, start_date_enviado: dataInicioMP || 'nenhum (cobra ao cadastrar o cartão)' });
   const mp = await mercadopago.criarAssinaturaPendente({
     razao: modalidade
-      ? (m.plano_nome + ' — ' + planoCadastro.nome + ' — ' + formatarValorParaDescricao(preco.valor_centavos) + ' por mês')
+      ? (m.plano_nome + ' — ' + planoCadastro.nome + (adicionalCombo ? ' + ' + combo.nome : '') + ' — ' + formatarValorParaDescricao(preco.valor_centavos) + ' por mês')
       : (m.plano_nome + ' — ' + m.aluno_nome),
     valorCentavos: preco.valor_centavos,
     frequenciaMeses,
@@ -337,9 +392,9 @@ async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPr
   if (!mp?.id) throw erro('Mercado Pago não devolveu o id da assinatura.', 502);
 
   await db.execute({
-    sql: `INSERT INTO assinaturas_mp (id, matricula_id, aluno_id, preapproval_id, status, valor_centavos, valor_cheio_centavos, desconto_centavos, frequencia_meses, modalidade, limite_cobrancas, cobrancas_processadas, data_primeira_cobranca, cobranca_inicial_id, valor_anterior_centavos, status_anterior_cobranca, vencimento_anterior, cobranca_inicial_criada, init_point)
-          VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
-    args: [id, matriculaId, m.aluno_id, String(mp.id), preco.valor_centavos, preco.valor_cheio_centavos, preco.desconto_centavos, frequenciaMeses, modalidade || 'legado', limiteCobrancas, dataPrimeiraCobranca, cobrancaInicialId, valorAnteriorCentavos, statusAnteriorCobranca, vencimentoAnterior, cobrancaInicialCriada ? 1 : 0, mp.init_point || null],
+    sql: `INSERT INTO assinaturas_mp (id, matricula_id, aluno_id, preapproval_id, status, valor_centavos, valor_cheio_centavos, desconto_centavos, frequencia_meses, modalidade, limite_cobrancas, cobrancas_processadas, data_primeira_cobranca, cobranca_inicial_id, valor_anterior_centavos, status_anterior_cobranca, vencimento_anterior, cobranca_inicial_criada, init_point, combo_id, combo_nome, adicional_centavos)
+          VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [id, matriculaId, m.aluno_id, String(mp.id), preco.valor_centavos, preco.valor_cheio_centavos, preco.desconto_centavos, frequenciaMeses, modalidade || 'legado', limiteCobrancas, dataPrimeiraCobranca, cobrancaInicialId, valorAnteriorCentavos, statusAnteriorCobranca, vencimentoAnterior, cobrancaInicialCriada ? 1 : 0, mp.init_point || null, adicionalCombo ? combo.id : null, adicionalCombo ? combo.nome : null, adicionalCombo],
   });
 
   const oUrl = urlOferta(baseUrl, id);
@@ -359,7 +414,7 @@ async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPr
 async function listar({ matriculaId }) {
   const r = await db.execute({
     sql: `SELECT id, matricula_id, aluno_id, preapproval_id, status, valor_centavos, valor_cheio_centavos, desconto_centavos,
-                 frequencia_meses, modalidade, limite_cobrancas, cobrancas_processadas, init_point, criado_em, atualizado_em
+                 frequencia_meses, modalidade, combo_id, combo_nome, limite_cobrancas, cobrancas_processadas, init_point, criado_em, atualizado_em
           FROM assinaturas_mp WHERE matricula_id = ? ORDER BY criado_em DESC`,
     args: [matriculaId],
   });
@@ -367,10 +422,10 @@ async function listar({ matriculaId }) {
 }
 
 // Descrição das contas geradas pela assinatura: usa o NOME da modalidade (e não o código interno).
-async function descricaoDaRecorrencia(modalidade) {
+async function descricaoDaRecorrencia(modalidade, comboNome = null) {
   let nome = String(modalidade || 'mensal');
   try { nome = (await obterPlanosCadastro()).find((p) => p.id === modalidade)?.nome || nome; } catch { /* usa o código */ }
-  return 'Recorrência - ' + nome;
+  return 'Recorrência - ' + nome + (comboNome ? ' + ' + comboNome : '');
 }
 
 // Devolve a cobrança do cadastro ao estado de antes do checkout (valor, status e
@@ -397,7 +452,7 @@ async function anexarRecorrencia(rows, campoMatricula = 'matricula_id') {
   let subs;
   try {
     subs = await db.execute({
-      sql: `SELECT matricula_id, modalidade, status, limite_cobrancas, cobrancas_processadas
+      sql: `SELECT matricula_id, modalidade, combo_nome, status, limite_cobrancas, cobrancas_processadas
             FROM assinaturas_mp WHERE status IN ('pending', 'authorized', 'paused', 'completed') ORDER BY criado_em ASC`,
       args: [], // o cliente do Turso exige `args`, mesmo vazio
     });
@@ -412,6 +467,7 @@ async function anexarRecorrencia(rows, campoMatricula = 'matricula_id') {
   for (const x of subs.rows) {
     porMatricula.set(x.matricula_id, {
       modalidade: x.modalidade,
+      combo_nome: x.combo_nome || null,
       nome: x.modalidade === 'legado' ? 'Cartão automático' : (nomes[x.modalidade] || x.modalidade),
       status: x.status,
       limite_cobrancas: x.limite_cobrancas == null ? null : Number(x.limite_cobrancas),
@@ -665,7 +721,7 @@ async function registrarProximaCobranca(assinatura, cobrancaAtual) {
       args: [a.matricula_id, proximoVencimento],
     });
   }
-  const descricao = await descricaoDaRecorrencia(a.modalidade);
+  const descricao = await descricaoDaRecorrencia(a.modalidade, a.combo_nome);
   // Cancela somente competências futuras além da próxima. Reutiliza a linha
   // já pré-gerada para a próxima competência, respeitando o índice único.
   await db.execute({
@@ -943,7 +999,7 @@ async function ofertaPublica(id) {
   }
 
   const r = await db.execute({
-    sql: `SELECT s.status, s.valor_centavos, s.valor_cheio_centavos, s.desconto_centavos, s.frequencia_meses, s.modalidade, s.limite_cobrancas, s.cobrancas_processadas, s.data_primeira_cobranca, s.init_point,
+    sql: `SELECT s.status, s.valor_centavos, s.valor_cheio_centavos, s.desconto_centavos, s.frequencia_meses, s.modalidade, s.combo_nome, s.adicional_centavos, s.limite_cobrancas, s.cobrancas_processadas, s.data_primeira_cobranca, s.init_point,
                  a.nome AS aluno_nome, p.nome AS plano_nome
           FROM assinaturas_mp s
           JOIN alunos a ON a.id = s.aluno_id
@@ -961,9 +1017,11 @@ async function ofertaPublica(id) {
   const resumoCondicao = modalidadeConfigurada
     ? (limiteContratado ? 'Compromisso de ' + limiteContratado + ' cobranças mensais de ' + formatarValorParaDescricao(valorMensal) : 'Cobrança mensal de ' + formatarValorParaDescricao(valorMensal) + ', sem permanência mínima')
     : null;
+  const adicionalCombo = Number(o.adicional_centavos || 0);
   const beneficiosModalidade = [
     ...oferta.beneficios.filter((b) => !/cancele quando quiser|sem fidelidade|permanência mínima/i.test(b)),
     resumoCondicao,
+    adicionalCombo > 0 && o.combo_nome ? 'Inclui: ' + String(o.combo_nome).replace(/^Plano \+ /i, '') + ' (' + formatarValorParaDescricao(adicionalCombo) + ' por mês já somados ao valor)' : null,
   ].filter(Boolean).slice(0, LIMITES.beneficios);
   const faqModalidade = modalidadeConfigurada
     ? [
@@ -984,6 +1042,8 @@ async function ofertaPublica(id) {
     init_point: ['cancelled', 'completed'].includes(o.status) ? null : o.init_point,
     frequencia_meses: Number(o.frequencia_meses),
     modalidade: o.modalidade || 'legado',
+    combo_nome: o.combo_nome || null,
+    adicional_centavos: Number(o.adicional_centavos || 0),
     limite_cobrancas: o.limite_cobrancas == null ? null : Number(o.limite_cobrancas),
     cobrancas_processadas: Number(o.cobrancas_processadas || 0),
     total_contratado_centavos: o.limite_cobrancas == null ? null : Number(o.valor_centavos) * Number(o.limite_cobrancas),
@@ -1031,7 +1091,7 @@ function cronogramaCobrancaAutomatica(hoje = new Date().toISOString().slice(0, 1
 // Na migração: reaproveita a primeira mensalidade em aberto. Se a competência
 // atual já foi quitada, inicia no próximo vencimento mensal; não cria segunda
 // cobrança para a mesma competência.
-async function prepararCobrancaInicial({ matricula, valorCentavos, modalidade }) {
+async function prepararCobrancaInicial({ matricula, valorCentavos, modalidade, comboNome = null }) {
   const abertas = await db.execute({
     sql: `SELECT id, vencimento, valor_centavos, status FROM cobrancas
           WHERE matricula_id = ? AND status IN ('pendente', 'atrasado')
@@ -1063,7 +1123,7 @@ async function prepararCobrancaInicial({ matricula, valorCentavos, modalidade })
       sql: `SELECT id, valor_centavos, status FROM cobrancas WHERE matricula_id = ? AND vencimento = ? AND provedor = 'recorrencia' LIMIT 1`,
       args: [matricula.id, vencimento],
     });
-    const descricao = await descricaoDaRecorrencia(modalidade);
+    const descricao = await descricaoDaRecorrencia(modalidade, comboNome);
     if (existenteNaCompetencia.rows[0]) {
       cobrancaId = existenteNaCompetencia.rows[0].id;
       valorAnteriorCentavos = Number(existenteNaCompetencia.rows[0].valor_centavos);
@@ -1087,7 +1147,7 @@ async function prepararCobrancaInicial({ matricula, valorCentavos, modalidade })
 
 async function assinaturaAbertaDaMatricula(matriculaId) {
   const r = await db.execute({
-    sql: `SELECT id, status, valor_centavos, modalidade FROM assinaturas_mp WHERE matricula_id = ? AND status IN ('pending', 'authorized', 'paused')
+    sql: `SELECT id, status, valor_centavos, modalidade, combo_id FROM assinaturas_mp WHERE matricula_id = ? AND status IN ('pending', 'authorized', 'paused')
           ORDER BY criado_em DESC LIMIT 1`,
     args: [matriculaId],
   });
@@ -1119,26 +1179,27 @@ async function disponibilidadeParaAluno({ alunoId, baseUrl }) {
 
 // Reaproveita assinatura pendente da mesma modalidade. Uma assinatura ativa impede
 // criar outra, para não manter duas cobranças automáticas simultâneas.
-async function obterOuCriarParaAluno({ alunoId, baseUrl, modalidade, admin = false }) {
+async function obterOuCriarParaAluno({ alunoId, baseUrl, modalidade, admin = false, combo: comboId = null }) {
   if (typeof modalidade !== 'string' || !modalidade.trim()) throw erro('Escolha uma das modalidades disponíveis.', 400);
   const disp = await disponibilidadeParaAluno({ alunoId, baseUrl });
   if (!disp.disponivel) throw erro('Pagamento automático não está disponível para este aluno.', 409);
   const m = await matriculaElegivel(alunoId);
   const pendente = await assinaturaAbertaDaMatricula(m.id);
-  if (pendente && pendente.modalidade === modalidade) {
+  const combo = await buscarCombo(comboId, { admin });
+  if (pendente && pendente.modalidade === modalidade && String(pendente.combo_id || '') === String(combo?.id || '')) {
     return { id: pendente.id, status: 'pending', oferta_url: urlOferta(baseUrl, pendente.id) };
   }
   const planoCadastro = await buscarPlanoCadastro(modalidade, { alunoId, admin }); // valida antes de cancelar a pendente
   if (pendente) await cancelar({ assinaturaId: pendente.id });
   const precoCadastro = precoDaOferta(Number(planoCadastro.valor_centavos), planoCadastro.desconto);
-  const ciclo = await prepararCobrancaInicial({ matricula: { ...m, aluno_id: alunoId }, valorCentavos: precoCadastro.valor_centavos, modalidade });
+  const ciclo = await prepararCobrancaInicial({ matricula: { ...m, aluno_id: alunoId }, valorCentavos: precoCadastro.valor_centavos + (combo ? combo.adicional_centavos : 0), modalidade, comboNome: combo ? combo.nome : null });
   // Matrícula SEM nenhuma conta paga (aluno criado do zero, ainda não pagou o plano): cobra NA ADESÃO, como no
   // cadastro novo. Só adia a 1ª cobrança para o próximo vencimento quando já existe pagamento nessa matrícula
   // (o ciclo atual já foi pago e o aluno não deve pagar duas vezes).
   const jaPagou = (await db.execute({ sql: `SELECT 1 FROM cobrancas WHERE matricula_id = ? AND status = 'pago' LIMIT 1`, args: [m.id] })).rows.length > 0;
   try {
     const criada = await criarAssinatura({
-      matriculaId: m.id, baseUrl, modalidade, dataPrimeiraCobranca: jaPagou ? ciclo.vencimento : null,
+      matriculaId: m.id, baseUrl, modalidade, combo, dataPrimeiraCobranca: jaPagou ? ciclo.vencimento : null,
       cobrancaInicialId: ciclo.cobrancaId, valorAnteriorCentavos: ciclo.valorAnteriorCentavos,
       statusAnteriorCobranca: ciclo.statusAnteriorCobranca, cobrancaInicialCriada: ciclo.cobrancaCriada,
     });
@@ -1157,21 +1218,22 @@ async function obterOuCriarParaAluno({ alunoId, baseUrl, modalidade, admin = fal
 }
 
 
-async function obterOuCriarParaNovoCadastro({alunoId,matriculaId,baseUrl,modalidade}){
+async function obterOuCriarParaNovoCadastro({alunoId,matriculaId,baseUrl,modalidade,combo:comboId=null}){
  if(!habilitado())throw erro('Pagamento recorrente indisponível no momento.',503);
  const m=await db.execute({sql:"SELECT id FROM matriculas WHERE id=? AND aluno_id=? AND status='pendente'",args:[matriculaId,alunoId]});
  if(!m.rows[0])throw erro('Matrícula pendente não encontrada.',404);
  const q=await db.execute({sql:"SELECT id,provedor_referencia,valor_centavos,vencimento,descricao,provedor FROM cobrancas WHERE matricula_id=? AND status='pendente' ORDER BY criado_em LIMIT 1",args:[matriculaId]});
  const c=q.rows[0];if(!c||c.provedor_referencia)throw erro('O Pix já foi iniciado ou a cobrança não está disponível.',409);
- const pend=await db.execute({sql:"SELECT id,modalidade,status FROM assinaturas_mp WHERE matricula_id=? AND status IN ('pending','authorized','paused') ORDER BY criado_em DESC LIMIT 1",args:[matriculaId]});
- if(pend.rows[0]){if(pend.rows[0].modalidade===modalidade&&pend.rows[0].status==='pending')return{oferta_url:urlOferta(baseUrl,pend.rows[0].id)};throw erro('Já existe uma assinatura aguardando confirmação para esta matrícula.',409);}
+ const pend=await db.execute({sql:"SELECT id,modalidade,status,combo_id FROM assinaturas_mp WHERE matricula_id=? AND status IN ('pending','authorized','paused') ORDER BY criado_em DESC LIMIT 1",args:[matriculaId]});
+ const combo=await buscarCombo(comboId);
+ if(pend.rows[0]){if(pend.rows[0].modalidade===modalidade&&pend.rows[0].status==='pending'&&String(pend.rows[0].combo_id||'')===String(combo?.id||''))return{oferta_url:urlOferta(baseUrl,pend.rows[0].id)};throw erro('Já existe uma assinatura aguardando confirmação para esta matrícula.',409);}
 
  const planoCadastro = await buscarPlanoCadastro(modalidade, { alunoId });
- const preco = precoDaOferta(Number(planoCadastro.valor_centavos), planoCadastro.desconto); const valor=preco.valor_centavos,hoje=new Date().toISOString().slice(0,10);
+ const preco = precoDaOferta(Number(planoCadastro.valor_centavos), planoCadastro.desconto); const valor=preco.valor_centavos+(combo?combo.adicional_centavos:0),hoje=new Date().toISOString().slice(0,10);
  // Novo cadastro no cartão: o MP cobra NA HORA em que o cartão é cadastrado (sem start_date). A conta NÃO muda aqui:
  // valor e vencimento só passam para os da modalidade quando a cobrança for aprovada (baixarParcela). Até lá,
  // quem desistir do cartão e pagar em Pix vê e paga o valor original.
- try{const criada=await criarAssinatura({matriculaId,baseUrl,modalidade,dataPrimeiraCobranca:null,cobrancaInicialId:c.id,valorAnteriorCentavos:Number(c.valor_centavos),statusAnteriorCobranca:'pendente',vencimentoAnterior:c.vencimento||null,permitirMatriculaPendente:true});return{oferta_url:criada.oferta_url};}
+ try{const criada=await criarAssinatura({matriculaId,baseUrl,modalidade,combo,dataPrimeiraCobranca:null,cobrancaInicialId:c.id,valorAnteriorCentavos:Number(c.valor_centavos),statusAnteriorCobranca:'pendente',vencimentoAnterior:c.vencimento||null,permitirMatriculaPendente:true});return{oferta_url:criada.oferta_url};}
  catch(e){throw e;}
 }
 
@@ -1179,5 +1241,5 @@ module.exports = {
   habilitado, criarAssinatura, listar, cancelar, processarEvento, processarPagamentoAprovado,
   ofertaPublica, disponibilidadeParaAluno, obterOuCriarParaAluno, obterOuCriarParaNovoCadastro, baseUrlDaRequisicao, urlOferta,
   obterOferta, salvarOferta, calcularDescontoCentavos, OFERTA_PADRAO,
-  obterPlanosCadastro, salvarPlanosCadastro, listarPlanosCadastroPublicos, buscarPlanoCadastro, expirarCheckoutsAbandonados, reconciliarAssinaturas, sincronizarAgora, cronogramaCobrancaAutomatica, cancelarPendentesDasMatriculas, anexarRecorrencia, desvincularCobranca, verificarOferta,
+  obterPlanosCadastro, salvarPlanosCadastro, listarPlanosCadastroPublicos, buscarPlanoCadastro, expirarCheckoutsAbandonados, reconciliarAssinaturas, sincronizarAgora, cronogramaCobrancaAutomatica, cancelarPendentesDasMatriculas, anexarRecorrencia, desvincularCobranca, verificarOferta, obterCombos, salvarCombos, listarCombosPublicos, buscarCombo,
 };

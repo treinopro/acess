@@ -733,13 +733,13 @@ router.post('/webhook/mercadopago', limitadorWebhook, express.json(), async (req
 // O init_point é o link que o aluno abre para cadastrar o cartão no Mercado Pago.
 router.post('/assinaturas', autenticar, apenasAdmin, async (req, res, next) => {
   try {
-    const { matricula_id, modalidade } = z.object({ matricula_id: z.string().min(1), modalidade: z.string().min(1).max(40).optional() }).parse(req.body);
+    const { matricula_id, modalidade, combo } = z.object({ matricula_id: z.string().min(1), modalidade: z.string().min(1).max(40).optional(), combo: z.string().max(40).optional() }).parse(req.body);
     const baseUrl = assinaturas.baseUrlDaRequisicao(req);
     if (modalidade) {
       // Modalidade escolhida no painel (mesmas condições que o aluno vê no portal).
       const m = (await db.execute({ sql: 'SELECT aluno_id FROM matriculas WHERE id = ?', args: [matricula_id] })).rows[0];
       if (!m) return res.status(404).json({ erro: 'Matrícula não encontrada.' });
-      return res.status(201).json(await assinaturas.obterOuCriarParaAluno({ alunoId: m.aluno_id, baseUrl, modalidade, admin: true }));
+      return res.status(201).json(await assinaturas.obterOuCriarParaAluno({ alunoId: m.aluno_id, baseUrl, modalidade, combo, admin: true }));
     }
     res.status(201).json(await assinaturas.criarAssinatura({ matriculaId: matricula_id, baseUrl }));
   } catch (err) {
@@ -811,6 +811,24 @@ const planoCadastroSchema = z.object({
     percentual: z.number().min(0).max(90),
     valor_centavos: z.number().int().min(0).max(1000000),
   }),
+});
+
+// Combos (adicional mensal, ex.: avaliação física a cada 90 dias): configuráveis pelo admin.
+const comboSchema = z.object({
+  id: z.string().min(1).max(40).regex(/^[a-z0-9_-]+$/),
+  nome: z.string().trim().min(1).max(80),
+  adicional_centavos: z.number().int().min(0).max(1000000),
+  ativo: z.boolean(),
+});
+router.get('/assinaturas/combos', autenticar, apenasAdmin, async (req, res, next) => {
+  try { res.json({ combos: await assinaturas.obterCombos() }); }
+  catch (err) { next(err); }
+});
+router.put('/assinaturas/combos', autenticar, apenasAdmin, async (req, res, next) => {
+  try {
+    const dados = z.object({ combos: z.array(comboSchema).max(6) }).parse(req.body);
+    res.json({ combos: await assinaturas.salvarCombos(dados.combos) });
+  } catch (err) { next(err); }
 });
 
 router.get('/assinaturas/planos-cadastro', autenticar, apenasAdmin, async (req, res, next) => {

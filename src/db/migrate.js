@@ -90,6 +90,9 @@ const ALTERACOES_INCREMENTAIS = [
   "ALTER TABLE assinaturas_mp ADD COLUMN valor_anterior_centavos INTEGER",
   "ALTER TABLE assinaturas_mp ADD COLUMN status_anterior_cobranca TEXT",
   "ALTER TABLE assinaturas_mp ADD COLUMN vencimento_anterior TEXT",
+  "ALTER TABLE assinaturas_mp ADD COLUMN combo_id TEXT",
+  "ALTER TABLE assinaturas_mp ADD COLUMN combo_nome TEXT",
+  "ALTER TABLE assinaturas_mp ADD COLUMN adicional_centavos INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE assinaturas_mp ADD COLUMN cobranca_inicial_criada INTEGER NOT NULL DEFAULT 0",
 ];
 

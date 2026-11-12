@@ -888,13 +888,13 @@ router.get('/cadastro/recorrencia/planos', async (req, res, next) => {
 
 router.post('/cadastro/recorrencia', limitadorSenhaPortal, async(req,res,next)=>{
  try{
-  const d=z.object({cpf:z.string().min(1),senha:z.string().min(1),matricula_id:z.string().min(1),modalidade:z.string().min(1).max(40)}).parse(req.body);
+  const d=z.object({cpf:z.string().min(1),senha:z.string().min(1),matricula_id:z.string().min(1),modalidade:z.string().min(1).max(40),combo:z.string().max(40).optional()}).parse(req.body);
   const auth=await autenticarAlunoPortal(d.cpf,d.senha);if(auth.erro)return res.status(auth.status).json({erro:auth.erro});
   const m=await db.execute({sql:"SELECT id FROM matriculas WHERE id=? AND aluno_id=? AND status='pendente'",args:[d.matricula_id,auth.aluno.id]});
   if(!m.rows[0])return res.status(404).json({erro:'Matrícula pendente não encontrada.'});
   const c=await db.execute({sql:"SELECT id,provedor_referencia FROM cobrancas WHERE matricula_id=? AND status='pendente'",args:[d.matricula_id]});
   if(!c.rows.length||c.rows.some(x=>x.provedor_referencia))return res.status(409).json({erro:'O Pix já foi iniciado ou a cobrança não está disponível.'});
-  res.json(await assinaturas.obterOuCriarParaNovoCadastro({alunoId:auth.aluno.id,matriculaId:d.matricula_id,modalidade:d.modalidade,baseUrl:assinaturas.baseUrlDaRequisicao(req)}));
+  res.json(await assinaturas.obterOuCriarParaNovoCadastro({alunoId:auth.aluno.id,matriculaId:d.matricula_id,modalidade:d.modalidade,combo:d.combo,baseUrl:assinaturas.baseUrlDaRequisicao(req)}));
  }catch(e){next(e);}
 });
 
@@ -1191,15 +1191,17 @@ router.get('/assinatura', limitadorSenhaPortal, async (req, res, next) => {
 
 router.post('/assinatura', limitadorSenhaPortal, async (req, res, next) => {
   try {
-    const { cpf, senha, modalidade } = z.object({
+    const { cpf, senha, modalidade, combo } = z.object({
       cpf: z.string().min(1), senha: z.string().min(1),
       modalidade: z.string().min(1).max(40),
+      combo: z.string().max(40).optional(),
     }).parse(req.body);
     const autenticado = await autenticarAlunoPortal(cpf, senha);
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
     res.json(await assinaturas.obterOuCriarParaAluno({
       alunoId: autenticado.aluno.id,
       modalidade,
+      combo,
       baseUrl: assinaturas.baseUrlDaRequisicao(req),
     }));
   } catch (err) {

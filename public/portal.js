@@ -53,6 +53,30 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+// Combos (ex.: avaliação física a cada 90 dias): o aluno escolhe junto com a modalidade e o valor mensal já inclui o adicional.
+function seletorComboHtml(p) {
+  const combos = Array.isArray(p.combos) ? p.combos : [];
+  if (!combos.length) return '';
+  const base = '<option value="nenhum" data-total="' + p.valor_final_centavos + '">Só o plano</option>';
+  const opcoes = combos.map((c) => '<option value="' + escapeHtml(c.id) + '" data-total="' + c.valor_total_centavos + '">' + escapeHtml((function (n) { return n.charAt(0).toUpperCase() + n.slice(1); })(String(c.nome).replace(/^Plano \+ /i, ''))) + ' (+' + formatarMoeda(c.adicional_centavos) + ')</option>').join('');
+  return '<label style="display:block;font-size:12px;margin:10px 0 4px;color:inherit;opacity:.8">Quer incluir uma avaliação física?</label>' +
+    '<select data-combo-de="' + escapeHtml(p.id) + '" style="width:100%;padding:10px;border-radius:8px;font-size:16px">' + base + opcoes + '</select>' +
+    '<small style="display:block;margin-top:4px;opacity:.75">O adicional entra no valor mensal. A liberação da avaliação segue a regra da modalidade.</small>';
+}
+function ligarSeletoresCombo(container) {
+  container.querySelectorAll('select[data-combo-de]').forEach((sel) => {
+    sel.addEventListener('change', () => {
+      const alvo = container.querySelector('[data-preco-de="' + sel.dataset.comboDe + '"]');
+      const total = Number(sel.selectedOptions[0] && sel.selectedOptions[0].dataset.total);
+      if (alvo && Number.isFinite(total)) alvo.textContent = formatarMoeda(total) + '/mês';
+    });
+  });
+}
+function comboEscolhido(container, modalidade) {
+  const sel = container.querySelector('select[data-combo-de="' + modalidade + '"]');
+  return sel ? sel.value : undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Banners/avisos do admin (2026-08-14, ver Recuperação de Clientes >
 // Banners) — mostrados como um feed no topo do dashboard. "Some 1h depois
@@ -107,9 +131,9 @@ async function carregarCardAssinaturaHub() {
         ? '<small style="display:block;color:#64748b">De ' + formatarMoeda(p.valor_centavos) + ' por mês</small>' : '';
       const cor = i === 0 ? '#166534' : '#1d4ed8';
       return '<div style="background:#fff;color:#0f172a;border-radius:12px;padding:14px"><strong style="font-size:16px">' +
-        escapeHtml(p.nome) + '</strong><div style="font-size:27px;font-weight:900;margin:4px 0;color:' + cor + '">' +
+        escapeHtml(p.nome) + '</strong><div data-preco-de="' + escapeHtml(p.id) + '" style="font-size:27px;font-weight:900;margin:4px 0;color:' + cor + '">' +
         mensal + '/mês</div>' + desconto + '<div style="font-size:13px;color:#475569">' + escapeHtml(detalhe) +
-        '</div><button type="button" data-modalidade="' + escapeHtml(p.id) + '" data-rotulo="' + escapeHtml(p.nome) +
+        '</div>' + seletorComboHtml(p) + '<button type="button" data-modalidade="' + escapeHtml(p.id) + '" data-rotulo="' + escapeHtml(p.nome) +
         '" style="width:100%;margin-top:12px;border:0;border-radius:9px;padding:12px;font-size:15px;font-weight:800;color:#fff;background:' +
         (i === 0 ? '#15803d' : '#1d4ed8') + ';cursor:pointer">Escolher ' + escapeHtml(p.nome) + '</button></div>';
     }).join('');
@@ -121,15 +145,17 @@ async function carregarCardAssinaturaHub() {
         <div style="display:grid;gap:12px">${cards}</div>
         <p style="font-size:11px;color:#dbeafe;margin:12px 0 0">O cartão é cadastrado diretamente no Mercado Pago.</p>
       </div>`;
+    ligarSeletoresCombo(container);
     container.querySelectorAll('[data-modalidade]').forEach((btn) => {
       btn.addEventListener('click', async () => {
         const modalidade = btn.dataset.modalidade;
+        const combo = comboEscolhido(container, modalidade);
         const botoes = Array.from(container.querySelectorAll('[data-modalidade]'));
         botoes.forEach((b) => { b.disabled = true; b.textContent = 'Abrindo…'; });
         try {
           const r = await api('/api/portal/assinatura', {
             method: 'POST',
-            body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, modalidade }),
+            body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, modalidade, combo }),
           });
           window.location.href = r.oferta_url;
         } catch (err) {
@@ -2095,7 +2121,7 @@ async function carregarOfertaRecorrenciaNovoAluno(){
   const detalhe=p.limite_cobrancas?String(p.limite_cobrancas)+' cobranças mensais de '+mensal+' (uma por mês, durante '+p.limite_cobrancas+' meses)':'Cobrança automática todo mês, por tempo indeterminado • Sem permanência mínima';
   const desconto=p.desconto_centavos>0?'<small style="display:block;color:#64748b">De '+formatarMoeda(p.valor_centavos)+' por mês</small>':'';
   const classe=i===0?'primario':'secundario';
-  return '<div style="background:#0f172a;border-radius:10px;padding:12px;margin:10px 0"><strong>'+escapeHtml(p.nome)+'</strong><div style="font-size:23px;font-weight:800;color:#10b981">'+mensal+'/mês</div>'+desconto+'<small>'+escapeHtml(detalhe)+'</small><button type="button" data-modalidade="'+escapeHtml(p.id)+'" data-rotulo="'+escapeHtml(p.nome)+'" class="botao-grande '+classe+'" style="margin-top:8px">Escolher '+escapeHtml(p.nome)+'</button></div>';
+  return '<div style="background:#0f172a;border-radius:10px;padding:12px;margin:10px 0"><strong>'+escapeHtml(p.nome)+'</strong><div data-preco-de="'+escapeHtml(p.id)+'" style="font-size:23px;font-weight:800;color:#10b981">'+mensal+'/mês</div>'+desconto+'<small>'+escapeHtml(detalhe)+'</small>'+seletorComboHtml(p)+'<button type="button" data-modalidade="'+escapeHtml(p.id)+'" data-rotulo="'+escapeHtml(p.nome)+'" class="botao-grande '+classe+'" style="margin-top:8px">Escolher '+escapeHtml(p.nome)+'</button></div>';
  }).join('');
  container.innerHTML=`
   <div style="text-align:left"><div style="font-weight:800;color:#10b981">⚡ ESCOLHA COMO DESEJA PAGAR</div>
@@ -2107,9 +2133,10 @@ async function carregarOfertaRecorrenciaNovoAluno(){
   <small>Se sair agora, seu cadastro ficará salvo como pendente, sem cobrança nem ativação.</small><div class="erro-msg" data-erro-recorrencia></div></div>`;
  // Sem modalidades (recurso desligado ou todas inativas): segue direto para o Pix.
  if(!opcoes.length)setTimeout(()=>container.querySelector('[data-escolher-pix]')?.click(),0);
+ ligarSeletoresCombo(container);
  container.querySelectorAll('[data-modalidade]').forEach(btn=>btn.addEventListener('click',async()=>{
-  const modalidade=btn.dataset.modalidade,botoes=Array.from(container.querySelectorAll('button'));botoes.forEach(b=>b.disabled=true);btn.textContent='Abrindo Mercado Pago…';
-  try{const r=await api('/api/portal/cadastro/recorrencia',{method:'POST',body:JSON.stringify({cpf:cadastroPortalCpfAtual,senha:cadastroPortalSenhaAtual,matricula_id:cadastroPortalMatriculaId,modalidade})});if(!r.oferta_url)throw new Error('O Mercado Pago não retornou o endereço da oferta.');window.location.href=r.oferta_url;}
+  const modalidade=btn.dataset.modalidade,combo=comboEscolhido(container,modalidade),botoes=Array.from(container.querySelectorAll('button'));botoes.forEach(b=>b.disabled=true);btn.textContent='Abrindo Mercado Pago…';
+  try{const r=await api('/api/portal/cadastro/recorrencia',{method:'POST',body:JSON.stringify({cpf:cadastroPortalCpfAtual,senha:cadastroPortalSenhaAtual,matricula_id:cadastroPortalMatriculaId,modalidade,combo})});if(!r.oferta_url)throw new Error('O Mercado Pago não retornou o endereço da oferta.');window.location.href=r.oferta_url;}
   catch(err){container.querySelector('[data-erro-recorrencia]').textContent=err.message||'Não foi possível abrir a recorrência.';botoes.forEach(b=>b.disabled=false);btn.textContent='Escolher '+btn.dataset.rotulo;}
  }));
  container.querySelector('[data-escolher-pix]').addEventListener('click',async ev=>{

@@ -1179,6 +1179,8 @@ router.get('/assinatura', limitadorSenhaPortal, async (req, res, next) => {
     const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(req.query);
     const autenticado = await autenticarAlunoPortal(cpf, senha);
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
+    // O aluno voltou ao portal: se deixou um cartão pela metade há mais de 15 min, desfaz (conta volta ao normal).
+    await assinaturas.cancelarPendentesOciosasDoAluno(autenticado.aluno.id, 15).catch(() => {});
     res.set('Cache-Control', 'no-store');
     res.json(await assinaturas.disponibilidadeParaAluno({
       alunoId: autenticado.aluno.id,

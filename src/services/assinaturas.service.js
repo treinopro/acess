@@ -362,7 +362,7 @@ function razaoDaAssinatura({ plano = '', modalidade = null, combo = null, valorC
   return ultimo.length <= LIMITE_RAZAO_MP ? ultimo : ultimo.slice(0, LIMITE_RAZAO_MP - 1) + '…';
 }
 
-async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPrimeiraCobranca = null, cobrancaInicialId = null, valorAnteriorCentavos = null, statusAnteriorCobranca = null, vencimentoAnterior = null, cobrancaInicialCriada = false, permitirMatriculaPendente = false, combo = null }) {
+async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPrimeiraCobranca = null, cobrancaInicialId = null, valorAnteriorCentavos = null, statusAnteriorCobranca = null, vencimentoAnterior = null, cobrancaInicialCriada = false, permitirMatriculaPendente = false, combo = null, origem = 'painel' }) {
   if (!habilitado()) throw erro('Assinaturas do Mercado Pago estão desligadas (MERCADOPAGO_ASSINATURAS).', 503);
 
   const r = await db.execute({
@@ -420,9 +420,9 @@ async function criarAssinatura({ matriculaId, baseUrl, modalidade = null, dataPr
   if (!mp?.id) throw erro('Mercado Pago não devolveu o id da assinatura.', 502);
 
   await db.execute({
-    sql: `INSERT INTO assinaturas_mp (id, matricula_id, aluno_id, preapproval_id, status, valor_centavos, valor_cheio_centavos, desconto_centavos, frequencia_meses, modalidade, limite_cobrancas, cobrancas_processadas, data_primeira_cobranca, cobranca_inicial_id, valor_anterior_centavos, status_anterior_cobranca, vencimento_anterior, cobranca_inicial_criada, init_point, combo_id, combo_nome, adicional_centavos)
-          VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    args: [id, matriculaId, m.aluno_id, String(mp.id), preco.valor_centavos, preco.valor_cheio_centavos, preco.desconto_centavos, frequenciaMeses, modalidade || 'legado', limiteCobrancas, dataPrimeiraCobranca, cobrancaInicialId, valorAnteriorCentavos, statusAnteriorCobranca, vencimentoAnterior, cobrancaInicialCriada ? 1 : 0, mp.init_point || null, adicionalCombo ? combo.id : null, adicionalCombo ? combo.nome : null, adicionalCombo],
+    sql: `INSERT INTO assinaturas_mp (id, matricula_id, aluno_id, preapproval_id, status, valor_centavos, valor_cheio_centavos, desconto_centavos, frequencia_meses, modalidade, limite_cobrancas, cobrancas_processadas, data_primeira_cobranca, cobranca_inicial_id, valor_anterior_centavos, status_anterior_cobranca, vencimento_anterior, cobranca_inicial_criada, init_point, combo_id, combo_nome, adicional_centavos, origem)
+          VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [id, matriculaId, m.aluno_id, String(mp.id), preco.valor_centavos, preco.valor_cheio_centavos, preco.desconto_centavos, frequenciaMeses, modalidade || 'legado', limiteCobrancas, dataPrimeiraCobranca, cobrancaInicialId, valorAnteriorCentavos, statusAnteriorCobranca, vencimentoAnterior, cobrancaInicialCriada ? 1 : 0, mp.init_point || null, adicionalCombo ? combo.id : null, adicionalCombo ? combo.nome : null, adicionalCombo, origem === 'portal' ? 'portal' : 'painel'],
   });
 
   const oUrl = urlOferta(baseUrl, id);
@@ -538,6 +538,28 @@ async function cancelarPendentesDasMatriculas(matriculaIds) {
   return n;
 }
 
+// O aluno voltou ao portal sem terminar o cartão: cancela a tentativa pendente dele (origem portal) parada há mais de
+// `minutos` e devolve tudo ao normal. Não mexe em links gerados pela recepção.
+async function cancelarPendentesOciosasDoAluno(alunoId, minutos = 15) {
+  if (!habilitado() || !alunoId) return 0;
+  let r;
+  try {
+    r = await db.execute({
+      sql: `SELECT id FROM assinaturas_mp WHERE aluno_id = ? AND status = 'pending' AND origem = 'portal' AND criado_em <= datetime('now', ?)`,
+      args: [alunoId, `-${Math.max(1, Number(minutos) || 15)} minutes`],
+    });
+  } catch (err) {
+    if (/no such (table|column)/i.test(String(err.message))) return 0;
+    throw err;
+  }
+  let n = 0;
+  for (const a of r.rows) {
+    try { await cancelar({ assinaturaId: a.id }); n++; }
+    catch (err) { console.error('[assinaturas] não foi possível cancelar checkout ocioso', a.id, err.message); }
+  }
+  return n;
+}
+
 // Recorrência encerrada com a matrícula seguindo: volta a valer a regra normal
 // (renovação automática do sistema, vencimentos dia 10/20, pagamento Pix/balcão).
 // Apaga só as contas em aberto criadas pela assinatura (provedor 'assinatura_mp');
@@ -635,8 +657,19 @@ async function baixarParcela({ assinatura, paymentId, valorCentavos, metodo }) {
           ORDER BY vencimento ASC, criado_em ASC LIMIT 1`,
     args: [assinatura.matricula_id],
   });
-  const conta = aberta.rows[0] || null;
+  let conta = aberta.rows[0] || null;
   const pago = Number(valorCentavos ?? assinatura.valor_centavos);
+  // Adesão sem conta em aberto (a conta não é criada ao abrir a oferta): cria agora, vencendo hoje, para receber esta baixa.
+  if (!conta && assinatura.modalidade && assinatura.modalidade !== 'legado') {
+    const idNova = uuid();
+    const hojeAdesao = new Date().toISOString().slice(0, 10);
+    await db.execute({
+      sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento)
+            VALUES (?, ?, ?, ?, 'pendente', 'assinatura_mp', ?, ?)`,
+      args: [idNova, assinatura.aluno_id, assinatura.matricula_id, Number(assinatura.valor_centavos), await descricaoDaRecorrencia(assinatura.modalidade, assinatura.combo_nome), hojeAdesao],
+    });
+    conta = { id: idNova, aluno_id: assinatura.aluno_id, valor_centavos: Number(assinatura.valor_centavos), vencimento: hojeAdesao };
+  }
 
   let baixa = 'sem_cobranca';
   let novoValorConta = null;
@@ -779,12 +812,16 @@ async function registrarProximaCobranca(assinatura, cobrancaAtual) {
  * confere o status real no MP: se já estiver autorizada, só sincroniza (webhook
  * perdido). Ao cancelar, cancelar() restaura a cobrança tradicional original.
  */
-async function expirarCheckoutsAbandonados({ horas = 48 } = {}) {
+async function expirarCheckoutsAbandonados({ horas = 48, minutosPortal = 60 } = {}) {
   if (!habilitado()) return { cancelados: 0, sincronizados: 0 };
+  // Aluno que escolheu sozinho no portal e não terminou: cancela em poucos minutos (a conta volta ao normal). Link gerado
+  // pela recepção (enviado por WhatsApp) tem prazo maior, porque o aluno pode demorar para pagar.
   const r = await db.execute({
     sql: `SELECT id, preapproval_id FROM assinaturas_mp
-          WHERE status = 'pending' AND criado_em <= datetime('now', ?)`,
-    args: [`-${Math.max(1, Number(horas) || 48)} hours`],
+          WHERE status = 'pending'
+            AND ((origem = 'portal' AND criado_em <= datetime('now', ?))
+              OR (COALESCE(origem, 'painel') = 'painel' AND criado_em <= datetime('now', ?)))`,
+    args: [`-${Math.max(5, Number(minutosPortal) || 60)} minutes`, `-${Math.max(1, Number(horas) || 48)} hours`],
   });
   let cancelados = 0, sincronizados = 0;
   for (const a of r.rows) {
@@ -1142,6 +1179,8 @@ async function prepararCobrancaInicial({ matricula, valorCentavos, modalidade, c
     // O valor da conta só muda quando o cartão for aprovado (ver baixarParcela): até lá, quem
     // preferir pagar em Pix continua vendo e pagando o valor original do plano.
   } else {
+    // Sem conta em aberto: NÃO cria conta agora. Só abrir a oferta não pode lançar cobrança no Financeiro (se ela vencesse no
+    // passado, bloquearia o aluno). A conta nasce já PAGA quando o cartão for aprovado (ver baixarParcela).
     const ultima = await db.execute({
       sql: `SELECT vencimento FROM cobrancas WHERE matricula_id = ? AND status = 'pago' ORDER BY vencimento DESC, criado_em DESC LIMIT 1`,
       args: [matricula.id],
@@ -1150,30 +1189,8 @@ async function prepararCobrancaInicial({ matricula, valorCentavos, modalidade, c
     vencimento = ultima.rows[0]?.vencimento
       ? somarMesesISO(String(ultima.rows[0].vencimento), passoMeses)
       : primeiroVencimento(matricula.data_inicio || hoje);
-    // Uma conta NOVA nunca nasce no passado (nasceria "atrasada" e bloquearia o acesso): se o próximo ciclo já passou, vence hoje.
     if (vencimento < hoje) vencimento = hoje;
-    const existenteNaCompetencia = await db.execute({
-      sql: `SELECT id, valor_centavos, status FROM cobrancas WHERE matricula_id = ? AND vencimento = ? AND provedor = 'recorrencia' LIMIT 1`,
-      args: [matricula.id, vencimento],
-    });
-    const descricao = await descricaoDaRecorrencia(modalidade, comboNome);
-    if (existenteNaCompetencia.rows[0]) {
-      cobrancaId = existenteNaCompetencia.rows[0].id;
-      valorAnteriorCentavos = Number(existenteNaCompetencia.rows[0].valor_centavos);
-      statusAnteriorCobranca = existenteNaCompetencia.rows[0].status;
-      await db.execute({
-        sql: `UPDATE cobrancas SET status = 'pendente', descricao = ? WHERE id = ?`,
-        args: [descricao, cobrancaId],
-      });
-    } else {
-      cobrancaId = uuid();
-      cobrancaCriada = true;
-      await db.execute({
-        sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento)
-              VALUES (?, ?, ?, ?, 'pendente', 'recorrencia', ?, ?)`,
-        args: [cobrancaId, matricula.aluno_id, matricula.id, Number(matricula.valor_centavos) || valorCentavos, descricao, vencimento],
-      });
-    }
+    cobrancaId = null;
   }
   return { vencimento, cobrancaId, valorAnteriorCentavos, statusAnteriorCobranca, cobrancaCriada };
 }
@@ -1232,7 +1249,7 @@ async function obterOuCriarParaAluno({ alunoId, baseUrl, modalidade, admin = fal
   const jaPagou = (await db.execute({ sql: `SELECT 1 FROM cobrancas WHERE matricula_id = ? AND status = 'pago' LIMIT 1`, args: [m.id] })).rows.length > 0;
   try {
     const criada = await criarAssinatura({
-      matriculaId: m.id, baseUrl, modalidade, combo, dataPrimeiraCobranca: jaPagou ? ciclo.vencimento : null,
+      matriculaId: m.id, baseUrl, modalidade, combo, origem: admin ? 'painel' : 'portal', dataPrimeiraCobranca: jaPagou ? ciclo.vencimento : null,
       cobrancaInicialId: ciclo.cobrancaId, valorAnteriorCentavos: ciclo.valorAnteriorCentavos,
       statusAnteriorCobranca: ciclo.statusAnteriorCobranca, cobrancaInicialCriada: ciclo.cobrancaCriada,
     });
@@ -1266,7 +1283,7 @@ async function obterOuCriarParaNovoCadastro({alunoId,matriculaId,baseUrl,modalid
  // Novo cadastro no cartão: o MP cobra NA HORA em que o cartão é cadastrado (sem start_date). A conta NÃO muda aqui:
  // valor e vencimento só passam para os da modalidade quando a cobrança for aprovada (baixarParcela). Até lá,
  // quem desistir do cartão e pagar em Pix vê e paga o valor original.
- try{const criada=await criarAssinatura({matriculaId,baseUrl,modalidade,combo,dataPrimeiraCobranca:null,cobrancaInicialId:c.id,valorAnteriorCentavos:Number(c.valor_centavos),statusAnteriorCobranca:'pendente',vencimentoAnterior:c.vencimento||null,permitirMatriculaPendente:true});return{oferta_url:criada.oferta_url};}
+ try{const criada=await criarAssinatura({matriculaId,baseUrl,modalidade,combo,origem:'portal',dataPrimeiraCobranca:null,cobrancaInicialId:c.id,valorAnteriorCentavos:Number(c.valor_centavos),statusAnteriorCobranca:'pendente',vencimentoAnterior:c.vencimento||null,permitirMatriculaPendente:true});return{oferta_url:criada.oferta_url};}
  catch(e){throw e;}
 }
 
@@ -1274,5 +1291,5 @@ module.exports = {
   habilitado, criarAssinatura, listar, cancelar, processarEvento, processarPagamentoAprovado,
   ofertaPublica, disponibilidadeParaAluno, obterOuCriarParaAluno, obterOuCriarParaNovoCadastro, baseUrlDaRequisicao, urlOferta,
   obterOferta, salvarOferta, calcularDescontoCentavos, OFERTA_PADRAO,
-  obterPlanosCadastro, salvarPlanosCadastro, listarPlanosCadastroPublicos, buscarPlanoCadastro, expirarCheckoutsAbandonados, reconciliarAssinaturas, sincronizarAgora, cronogramaCobrancaAutomatica, cancelarPendentesDasMatriculas, anexarRecorrencia, desvincularCobranca, verificarOferta, obterCombos, salvarCombos, listarCombosPublicos, buscarCombo,
+  obterPlanosCadastro, salvarPlanosCadastro, listarPlanosCadastroPublicos, buscarPlanoCadastro, expirarCheckoutsAbandonados, reconciliarAssinaturas, sincronizarAgora, cronogramaCobrancaAutomatica, cancelarPendentesDasMatriculas, anexarRecorrencia, desvincularCobranca, verificarOferta, cancelarPendentesOciosasDoAluno, obterCombos, salvarCombos, listarCombosPublicos, buscarCombo,
 };

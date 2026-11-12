@@ -6,7 +6,7 @@
 const assinaturas = require('../services/assinaturas.service');
 
 async function rodar() {
-  const r = await assinaturas.expirarCheckoutsAbandonados({ horas: 48 });
+  const r = await assinaturas.expirarCheckoutsAbandonados({ horas: 48, minutosPortal: Number(process.env.ASSINATURA_CHECKOUT_MINUTOS) || 60 });
   if (r.cancelados || r.sincronizados) console.log('[expirarCheckoutsRecorrencia]', r);
   return r;
 }

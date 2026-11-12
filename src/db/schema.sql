@@ -793,6 +793,7 @@ CREATE TABLE IF NOT EXISTS assinaturas_mp (
   combo_id TEXT, -- combo escolhido (ex.: avaliacao): o adicional mensal já está somado em valor_centavos
   combo_nome TEXT,
   adicional_centavos INTEGER NOT NULL DEFAULT 0,
+  origem TEXT, -- 'portal' (aluno escolheu sozinho) | 'painel' (link gerado pela recepção), define em quanto tempo um checkout parado é cancelado
   cobranca_inicial_criada INTEGER NOT NULL DEFAULT 0,
   init_point TEXT,
   criado_em TEXT NOT NULL DEFAULT (datetime('now')),

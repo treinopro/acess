@@ -307,18 +307,27 @@ test('migração: reaproveita mensalidade em aberto sem criar competência dupli
   assert.strictEqual(Number(qtd), 1);
 });
 
-test('migração: se a competência atual já está quitada, começa no próximo mês', async () => {
+test('migração: abrir a oferta não cria conta; ao pagar, a conta nasce paga e a próxima vence no mês seguinte', async () => {
   await novoAlunoComMatricula('migra-paga');
   const hoje = new Date().toISOString().slice(0, 10);
   await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, vencimento) VALUES ('c-migra-paga', 'migra-paga', 'm-migra-paga', 9900, 'pago', 'recorrencia', ?)`, args: [hoje] });
   await assinaturas.obterOuCriarParaAluno({ alunoId: 'migra-paga', baseUrl: 'https://academia.test', modalidade: 'mensal_livre' });
-  const proximo = (await db.execute({ sql: `SELECT valor_centavos, vencimento FROM cobrancas WHERE matricula_id='m-migra-paga' AND status='pendente'` })).rows[0];
+  // Só abrir a oferta NÃO lança conta no Financeiro.
+  const antes = (await db.execute({ sql: `SELECT COUNT(*) n FROM cobrancas WHERE matricula_id='m-migra-paga' AND status IN ('pendente','atrasado')`, args: [] })).rows[0].n;
+  assert.strictEqual(Number(antes), 0);
+
+  const { id, preapproval_id: pre } = (await db.execute({ sql: `SELECT id, preapproval_id FROM assinaturas_mp WHERE matricula_id='m-migra-paga'`, args: [] })).rows[0];
+  estadoMp.assinaturas[pre].status = 'authorized';
+  estadoMp.pagamentosRef = { ...(estadoMp.pagamentosRef || {}), [id]: [{ id: 6101, status: 'approved', transaction_amount: 70, payment_type_id: 'credit_card' }] };
+  estadoMp.cobrancas = { ...(estadoMp.cobrancas || {}), [pre]: [] };
+  await assinaturas.sincronizarAgora({ assinaturaId: id });
+  const contas = (await db.execute({ sql: `SELECT status, valor_centavos, vencimento, provedor FROM cobrancas WHERE matricula_id='m-migra-paga' AND id != 'c-migra-paga' ORDER BY vencimento`, args: [] })).rows;
+  assert.deepStrictEqual(contas.map((c) => [c.status, Number(c.valor_centavos), c.provedor]), [['pago', 7000, 'assinatura_mp'], ['pendente', 7000, 'assinatura_mp']]);
   const [ano, mes, dia] = hoje.split('-').map(Number);
   const alvo = new Date(Date.UTC(ano, mes, 1));
   const ultimo = new Date(Date.UTC(alvo.getUTCFullYear(), alvo.getUTCMonth() + 1, 0)).getUTCDate();
-  const esperado = `${alvo.getUTCFullYear()}-${String(alvo.getUTCMonth()+1).padStart(2,'0')}-${String(Math.min(dia,ultimo)).padStart(2,'0')}`;
-  assert.strictEqual(proximo.vencimento, esperado);
-  assert.strictEqual(Number(proximo.valor_centavos), 9900); // valor do plano até o cartão ser aprovado
+  const esperado = `${alvo.getUTCFullYear()}-${String(alvo.getUTCMonth() + 1).padStart(2, '0')}-${String(Math.min(dia, ultimo)).padStart(2, '0')}`;
+  assert.strictEqual(contas[1].vencimento, esperado);
 });
 
 test('recorrência de 12 meses encerra após 12 pagamentos aprovados', async () => {
@@ -454,11 +463,9 @@ test('pagamento recorrente estende a validade da matrícula até o próximo venc
   const sub = (await db.execute({
     sql: `SELECT * FROM assinaturas_mp WHERE aluno_id = 'renova-validade'`,
   })).rows[0];
-  const primeira = (await db.execute({
-    sql: `SELECT id, vencimento FROM cobrancas WHERE matricula_id = 'm-renova-validade' AND status = 'pendente'`,
-  })).rows[0];
+  // A conta da adesão nasce quando o pagamento é aprovado (vencendo hoje), e a validade vai até o mês seguinte.
   const hoje = new Date().toISOString().slice(0, 10);
-  const baseVencimento = primeira.vencimento < hoje ? hoje : primeira.vencimento;
+  const baseVencimento = hoje;
   const [ano, mes, dia] = baseVencimento.split('-').map(Number);
   const alvo = new Date(Date.UTC(ano, mes, 1));
   const ultimo = new Date(Date.UTC(alvo.getUTCFullYear(), alvo.getUTCMonth() + 1, 0)).getUTCDate();
@@ -1070,7 +1077,45 @@ test('plano mensal com ciclo já passado: a conta nova nasce vencendo hoje, nunc
   await assinaturas.salvarPlanosCadastro([{ id: 'mensal_livre', nome: 'Mensal', valor_centavos: 7000, limite_cobrancas: null, ativo: true }]);
   await assinaturas.obterOuCriarParaAluno({ alunoId: 'passado', baseUrl: 'https://academia.test', modalidade: 'mensal_livre' });
   const hoje = new Date().toISOString().slice(0, 10);
-  const nova = (await db.execute({ sql: `SELECT vencimento, status FROM cobrancas WHERE matricula_id='m-passado' AND status IN ('pendente','atrasado')`, args: [] })).rows[0];
-  assert.strictEqual(nova.vencimento, hoje);
-  assert.strictEqual(nova.status, 'pendente');
+  // Não cria conta ao abrir a oferta (nada atrasado, nada bloqueando); a 1ª cobrança do cartão é pedida para hoje.
+  const abertas = (await db.execute({ sql: `SELECT COUNT(*) n FROM cobrancas WHERE matricula_id='m-passado' AND status IN ('pendente','atrasado')`, args: [] })).rows[0].n;
+  assert.strictEqual(Number(abertas), 0);
+  const sub = (await db.execute({ sql: `SELECT data_primeira_cobranca FROM assinaturas_mp WHERE matricula_id='m-passado'`, args: [] })).rows[0];
+  assert.ok(!sub.data_primeira_cobranca || sub.data_primeira_cobranca <= hoje, 'a 1ª cobrança não pode ficar no futuro nem no passado distante');
+});
+
+test('checkout parado: portal cancela em minutos, link da recepção só em horas; ao voltar ao portal desfaz a tentativa ociosa', async () => {
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('ocioso', 'Aluno Ocioso', 'ocioso@teste.com', '12121212121')` });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-ocioso', 'ocioso', 'p1', date('now'), 'ativa')` });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-ocioso', 'ocioso', 'm-ocioso', 9900, 'pendente', 'manual', 'Mensalidade', date('now', '+5 days'))` });
+  await assinaturas.salvarPlanosCadastro([{ id: 'mensal_livre', nome: 'Mensal', valor_centavos: 7000, limite_cobrancas: null, ativo: true }]);
+
+  // Aluno escolhe sozinho no portal (origem 'portal').
+  await assinaturas.obterOuCriarParaAluno({ alunoId: 'ocioso', baseUrl: 'https://academia.test', modalidade: 'mensal_livre' });
+  await db.execute({ sql: `UPDATE assinaturas_mp SET origem = 'portal' WHERE matricula_id = 'm-ocioso'` });
+  // Recém-criada: nada acontece.
+  assert.strictEqual((await assinaturas.expirarCheckoutsAbandonados({ minutosPortal: 60 })).cancelados, 0);
+  assert.strictEqual(await assinaturas.cancelarPendentesOciosasDoAluno('ocioso', 15), 0);
+
+  // Parada há 20 min: ao voltar ao portal (15 min) é desfeita; a conta segue como era.
+  await db.execute({ sql: `UPDATE assinaturas_mp SET criado_em = datetime('now', '-20 minutes') WHERE matricula_id = 'm-ocioso'` });
+  assert.strictEqual((await assinaturas.expirarCheckoutsAbandonados({ minutosPortal: 60 })).cancelados, 0); // ainda dentro dos 60 min
+  assert.strictEqual(await assinaturas.cancelarPendentesOciosasDoAluno('ocioso', 15), 1);
+  let a = (await db.execute({ sql: `SELECT status FROM assinaturas_mp WHERE matricula_id='m-ocioso'`, args: [] })).rows[0];
+  assert.strictEqual(a.status, 'cancelled');
+  const conta = (await db.execute({ sql: `SELECT valor_centavos, status FROM cobrancas WHERE id='c-ocioso'`, args: [] })).rows[0];
+  assert.deepStrictEqual({ ...conta }, { valor_centavos: 9900, status: 'pendente' });
+
+  // Outro caso: parada há 70 min, o job cancela (portal, 60 min).
+  await assinaturas.obterOuCriarParaAluno({ alunoId: 'ocioso', baseUrl: 'https://academia.test', modalidade: 'mensal_livre' });
+  await db.execute({ sql: `UPDATE assinaturas_mp SET origem = 'portal', criado_em = datetime('now', '-70 minutes') WHERE matricula_id = 'm-ocioso' AND status = 'pending'` });
+  assert.strictEqual((await assinaturas.expirarCheckoutsAbandonados({ minutosPortal: 60 })).cancelados, 1);
+
+  // Link gerado pela recepção (origem 'painel'): 70 minutos não cancela; só depois de 48 h.
+  await assinaturas.obterOuCriarParaAluno({ alunoId: 'ocioso', baseUrl: 'https://academia.test', modalidade: 'mensal_livre', admin: true });
+  await db.execute({ sql: `UPDATE assinaturas_mp SET criado_em = datetime('now', '-70 minutes') WHERE matricula_id = 'm-ocioso' AND status = 'pending'` });
+  assert.strictEqual((await assinaturas.expirarCheckoutsAbandonados({ minutosPortal: 60 })).cancelados, 0);
+  assert.strictEqual(await assinaturas.cancelarPendentesOciosasDoAluno('ocioso', 15), 0); // não mexe em link da recepção
+  await db.execute({ sql: `UPDATE assinaturas_mp SET criado_em = datetime('now', '-3 days') WHERE matricula_id = 'm-ocioso' AND status = 'pending'` });
+  assert.strictEqual((await assinaturas.expirarCheckoutsAbandonados({ minutosPortal: 60 })).cancelados, 1);
 });

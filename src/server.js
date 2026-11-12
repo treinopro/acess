@@ -376,11 +376,11 @@ server.listen(PORT, () => {
     }, 15 * 60 * 1000);
   }
 
-  // Checkouts de recorrência abandonados (cartão nunca cadastrado): a cada hora.
+  // Checkouts de recorrência abandonados (cartão nunca cadastrado): confere a cada 10 min (portal: 60 min parado; recepção: 48 h).
   if (EXECUTAR_JOBS_AGENDADOS) {
     setInterval(() => {
       rodarExpirarCheckoutsRecorrencia().catch((err) => console.error('[expirarCheckoutsRecorrencia] erro:', err));
-    }, 60 * 60 * 1000);
+    }, 10 * 60 * 1000);
   }
 
   // "Modo totem offline-resiliente" (2026-07): só ativa quando

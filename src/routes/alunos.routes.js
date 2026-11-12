@@ -334,6 +334,19 @@ router.post('/pendencias-sincronizacao/:pendenciaId/resolver', async (req, res, 
 });
 
 // GET /api/alunos/:id — mesmo fallback offline da busca acima.
+// GET /api/alunos/:id/foto — só a foto de perfil (uma linha, uma coluna). Usado pela janela "Acessos ao vivo", que
+// busca a foto de cada aluno uma única vez (o navegador guarda) em vez de a lista inteira carregar fotos.
+router.get('/:id/foto', async (req, res, next) => {
+  try {
+    const r = await db.execute({ sql: 'SELECT foto_url FROM alunos WHERE id = ?', args: [req.params.id] });
+    if (!r.rows[0]) return res.status(404).json({ erro: 'Aluno não encontrado.' });
+    res.set('Cache-Control', 'private, max-age=600');
+    res.json({ foto_url: r.rows[0].foto_url || null });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/:id', async (req, res, next) => {
   try {
     let usouEspelho = false;

@@ -6292,6 +6292,30 @@ async function liberarAcessoNegadoPelaRecepcao(a) {
   } catch (err) { mostrarToast(err.message, true); }
 }
 
+// Foto pequena do aluno na janela "Acessos ao vivo": busca uma vez por aluno e guarda na memória do navegador.
+const fotosAcessosVivo = new Map(); // aluno_id -> dataURL | '' (sem foto)
+function avatarAcessoVivoHtml(a) {
+  const inicial = escapeHtml(String(a.aluno_nome || '?').trim().charAt(0).toUpperCase() || '?');
+  const base = 'width:34px;height:34px;border-radius:50%;flex:0 0 34px;';
+  if (!a.aluno_id) return `<span style="${base}background:#e5e7eb"></span>`;
+  const foto = fotosAcessosVivo.get(a.aluno_id);
+  if (foto) return `<img src="${escapeHtml(foto)}" alt="" style="${base}object-fit:cover" />`;
+  return `<span data-avatar-aluno="${escapeHtml(a.aluno_id)}" style="${base}background:#cbd5e1;color:#334155;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:14px">${inicial}</span>`;
+}
+async function carregarFotosAcessosVivo() {
+  const faltam = [...new Set(acessosVivoLista.map((a) => a.aluno_id).filter((id) => id && !fotosAcessosVivo.has(id)))];
+  if (!faltam.length) return;
+  faltam.forEach((id) => fotosAcessosVivo.set(id, ''));
+  let mudou = false;
+  await Promise.all(faltam.map(async (id) => {
+    try {
+      const r = await api(`/api/alunos/${encodeURIComponent(id)}/foto`);
+      if (r && r.foto_url) { fotosAcessosVivo.set(id, r.foto_url); mudou = true; }
+    } catch { /* sem foto: fica a inicial */ }
+  }));
+  if (mudou) renderizarAcessosVivo();
+}
+
 function renderizarAcessosVivo() {
   const tbody = document.getElementById('lista-acessos-vivo');
   if (!tbody) return;
@@ -6303,7 +6327,7 @@ function renderizarAcessosVivo() {
     const tr = el(`
       <tr>
         <td>${new Date(a.em).toLocaleTimeString('pt-BR')}</td>
-        <td>${nomeCel}</td>
+        <td><span style="display:flex;align-items:center;gap:8px">${avatarAcessoVivoHtml(a)}${nomeCel}</span></td>
         <td>${formatarTipoAcessoVivo(a)}</td>
       </tr>
     `);
@@ -6311,6 +6335,7 @@ function renderizarAcessosVivo() {
     tr.querySelector('.negado-liberar')?.addEventListener('click', () => liberarAcessoNegadoPelaRecepcao(a));
     tbody.appendChild(tr);
   });
+  carregarFotosAcessosVivo();
 }
 
 function iniciarEscutaAcessosVivo() {

@@ -2132,7 +2132,7 @@ async function carregarPerfilAluno() {
           } catch (err) { mostrarToast(err.message, true); }
         });
       }
-      if (assinaturaHabilitada && m.status === 'ativa' && ['mensal', 'trimestral', 'semestral', 'anual'].includes(m.plano_tipo)) {
+      if (assinaturaHabilitada && m.status === 'ativa' && m.plano_tipo === 'mensal') { // recorrência no cartão só para plano mensal
         const botaoAssinar = el('<button class="btn-assinar-cartao" type="button">💳 Assinar no cartão</button>');
         botaoAssinar.addEventListener('click', () => abrirDialogoAssinatura(m, aluno));
         tr.lastElementChild.appendChild(botaoAssinar);

@@ -1049,3 +1049,28 @@ test('nome da assinatura no MP nunca passa de 60 caracteres, mesmo com plano, mo
   assert.ok(payload.razao.length > 10, payload.razao);
   await assinaturas.salvarCombos([{ id: 'avaliacao', nome: 'Plano + avaliação física', adicional_centavos: 4000, ativo: true }, { id: 'avaliacao_completa', nome: 'Plano + avaliação completa', adicional_centavos: 5000, ativo: true }]);
 });
+
+
+test('plano anual (já pago adiantado) não recebe oferta de recorrência mensal nem conta nova atrasada', async () => {
+  await db.execute({ sql: `INSERT INTO planos (id, nome, tipo, valor_centavos) VALUES ('p-anual', 'ANUAL PROMOCIONAL', 'anual', 53984)` });
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('anual1', 'Aluna Anual', 'anual@teste.com', '40404040404')` });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, data_fim, status) VALUES ('m-anual1', 'anual1', 'p-anual', date('now', '-5 months'), date('now', '+7 months'), 'ativa')` });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-anual1', 'anual1', 'm-anual1', 48000, 'pago', 'manual', 'Anual', date('now', '-5 months'))` });
+  const d = await assinaturas.disponibilidadeParaAluno({ alunoId: 'anual1', baseUrl: 'https://academia.test' });
+  assert.strictEqual(d.disponivel, false);
+  await assert.rejects(() => assinaturas.obterOuCriarParaAluno({ alunoId: 'anual1', baseUrl: 'https://academia.test', modalidade: 'mensal_livre' }), /não está disponível/);
+  const novas = (await db.execute({ sql: `SELECT COUNT(*) n FROM cobrancas WHERE matricula_id='m-anual1' AND status IN ('pendente','atrasado')`, args: [] })).rows[0].n;
+  assert.strictEqual(Number(novas), 0); // nenhuma conta nova criada
+});
+
+test('plano mensal com ciclo já passado: a conta nova nasce vencendo hoje, nunca no passado', async () => {
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('passado', 'Aluno Passado', 'passado@teste.com', '50404040404')` });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-passado', 'passado', 'p1', date('now', '-6 months'), 'ativa')` });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-passado', 'passado', 'm-passado', 9900, 'pago', 'manual', 'Mensalidade', date('now', '-4 months'))` });
+  await assinaturas.salvarPlanosCadastro([{ id: 'mensal_livre', nome: 'Mensal', valor_centavos: 7000, limite_cobrancas: null, ativo: true }]);
+  await assinaturas.obterOuCriarParaAluno({ alunoId: 'passado', baseUrl: 'https://academia.test', modalidade: 'mensal_livre' });
+  const hoje = new Date().toISOString().slice(0, 10);
+  const nova = (await db.execute({ sql: `SELECT vencimento, status FROM cobrancas WHERE matricula_id='m-passado' AND status IN ('pendente','atrasado')`, args: [] })).rows[0];
+  assert.strictEqual(nova.vencimento, hoje);
+  assert.strictEqual(nova.status, 'pendente');
+});

@@ -1088,16 +1088,18 @@ async function matriculaElegivel(alunoId) {
   // A oferta migra matrículas ativas de planos com ciclo recorrente (mensal,
   // trimestral, semestral ou anual), independentemente do ciclo tradicional atual.
   const r = await db.execute({
-    sql: `SELECT m.id, m.data_inicio, p.nome AS plano_nome, p.valor_centavos
+    sql: `SELECT m.id, m.data_inicio, p.nome AS plano_nome, p.valor_centavos, p.tipo AS plano_tipo
           FROM matriculas m JOIN planos p ON p.id = m.plano_id
           WHERE m.aluno_id = ? AND m.status = 'ativa'
             AND (m.data_fim IS NULL OR m.data_fim >= date('now')
                  -- aluno com mensalidade em aberto/atrasada ainda é aluno: a matrícula pode estar com a validade vencida
                  OR EXISTS (SELECT 1 FROM cobrancas c WHERE c.matricula_id = m.id AND c.status IN ('pendente', 'atrasado')))
-            AND p.tipo IN (${TIPOS_RECORRENTES.map(() => '?').join(', ')})
+            -- Só plano MENSAL: as modalidades de recorrência são mensais. Quem tem plano trimestral/semestral/anual já pagou
+            -- adiantado e não pode receber uma conta mensal nova (isso gerou cobrança indevida de R$ 539,84 numa aluna anual).
+            AND p.tipo = 'mensal'
             AND NOT EXISTS (SELECT 1 FROM assinaturas_mp s WHERE s.matricula_id = m.id AND s.status = 'completed')
           ORDER BY m.data_inicio DESC LIMIT 1`,
-    args: [alunoId, ...TIPOS_RECORRENTES],
+    args: [alunoId],
   });
   return r.rows[0] || null;
 }
@@ -1144,9 +1146,12 @@ async function prepararCobrancaInicial({ matricula, valorCentavos, modalidade, c
       sql: `SELECT vencimento FROM cobrancas WHERE matricula_id = ? AND status = 'pago' ORDER BY vencimento DESC, criado_em DESC LIMIT 1`,
       args: [matricula.id],
     });
+    const passoMeses = MESES_POR_TIPO[matricula.plano_tipo] || 1;
     vencimento = ultima.rows[0]?.vencimento
-      ? somarMesesISO(String(ultima.rows[0].vencimento), 1)
+      ? somarMesesISO(String(ultima.rows[0].vencimento), passoMeses)
       : primeiroVencimento(matricula.data_inicio || hoje);
+    // Uma conta NOVA nunca nasce no passado (nasceria "atrasada" e bloquearia o acesso): se o próximo ciclo já passou, vence hoje.
+    if (vencimento < hoje) vencimento = hoje;
     const existenteNaCompetencia = await db.execute({
       sql: `SELECT id, valor_centavos, status FROM cobrancas WHERE matricula_id = ? AND vencimento = ? AND provedor = 'recorrencia' LIMIT 1`,
       args: [matricula.id, vencimento],

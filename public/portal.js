@@ -1373,7 +1373,7 @@ function renderizarContasHub(contas) {
     <div class="item-conta">
       <input type="checkbox" data-id="${c.id}" data-valor="${c.valor_centavos}" checked aria-label="Incluir no pagamento" />
       <div class="info" data-abrir-conta="${c.id}" role="button" tabindex="0">
-        <div class="desc">${escapeHtml(c.descricao || 'Conta')}</div>
+        <div class="desc">${escapeHtml(String(c.descricao || 'Conta').replace(/[\s-]+$/, ''))}</div>
         <div class="venc">${c.vencimento ? `Vencimento: ${formatarData(c.vencimento)}` : ''}</div>
       </div>
       <div class="valor" data-abrir-conta="${c.id}" role="button">${formatarMoeda(c.valor_centavos)}</div>
@@ -1393,6 +1393,26 @@ function renderizarContasHub(contas) {
     });
   });
   atualizarTotalContasHub();
+  mostrarBannerCartaoContas(contas);
+}
+
+// Destaque na lista de contas: oferece o cartão automático (se o aluno puder) e abre a página da mensalidade.
+async function mostrarBannerCartaoContas(contas) {
+  const banner = document.getElementById('banner-cartao-contas');
+  if (!banner) return;
+  banner.classList.add('oculto');
+  const alvo = contas.find((c) => /^Mensalidade/i.test(c.descricao || ''));
+  if (!alvo) return;
+  try {
+    const d = await api('/api/portal/assinatura?cpf=' + encodeURIComponent(cpfHubAtual) + '&senha=' + encodeURIComponent(senhaHubAtual));
+    if (!d.disponivel) return;
+    banner.classList.remove('oculto');
+    document.getElementById('btn-banner-cartao').onclick = async () => {
+      await abrirPaginaContaHub(alvo);
+      const b = document.getElementById('btn-conta-cartao');
+      if (b && !b.classList.contains('oculto')) b.click();
+    };
+  } catch (e) { /* sem cartão: só Pix */ }
 }
 
 function atualizarTotalContasHub() {
@@ -1922,7 +1942,7 @@ async function abrirPaginaContaHub(conta) {
   const dias = atrasada ? Math.round((new Date(hoje) - new Date(venc)) / 86400000) : 0;
   const partes = String(conta.descricao || 'Conta').split(' - ');
   $('conta-titulo').textContent = partes[0] || 'Conta';
-  $('conta-subtitulo').textContent = partes.slice(1).join(' - ').trim();
+  $('conta-subtitulo').textContent = partes.slice(1).join(' - ').replace(/[\s-]+$/, '').trim();
   const selo = $('conta-vencimento');
   selo.textContent = venc ? formatarData(venc) : '—';
   selo.className = 'conta-selo' + (atrasada ? ' atrasada' : '');
@@ -1930,9 +1950,12 @@ async function abrirPaginaContaHub(conta) {
   $('conta-valor').textContent = formatarMoeda(conta.valor_centavos);
   $('conta-erro').textContent = '';
   $('conta-recorrencia').innerHTML = '';
+  $('conta-aviso').innerHTML = '';
   const btnPix = $('btn-conta-pix'), btnCartao = $('btn-conta-cartao');
   btnPix.disabled = false;
   btnCartao.classList.add('oculto');
+  $('conta-destaque-cartao').classList.add('oculto');
+  btnPix.classList.remove('primario'); btnPix.classList.add('secundario');
 
   btnPix.onclick = async () => {
     btnPix.disabled = true;
@@ -1955,10 +1978,11 @@ async function abrirPaginaContaHub(conta) {
   // O cartão automático só aparece para quem pode (plano mensal, sem assinatura ativa) e com modalidades disponíveis.
   try {
     const d = await api('/api/portal/assinatura?cpf=' + encodeURIComponent(cpfHubAtual) + '&senha=' + encodeURIComponent(senhaHubAtual));
+    if (d.disponivel) { $('conta-destaque-cartao').classList.remove('oculto'); btnPix.textContent = 'Pagar só esta conta com Pix'; }
     if (!d.disponivel && d.motivo === 'mensalidades_anteriores' && (d.mensalidades_anteriores || []).length) {
       // Mês anterior em aberto: essa conta só por Pix. O cartão automático cobre a mensalidade do mês corrente.
       const ant = d.mensalidades_anteriores;
-      const box = $('conta-recorrencia');
+      const box = $('conta-aviso');
       box.innerHTML = '<div style="background:#1e293b;border:1px solid #f59e0b;border-radius:12px;padding:14px;margin-top:12px;font-size:14px;line-height:1.5">' +
         '<div style="font-weight:800;color:#f59e0b">Cartão automático indisponível por enquanto</div>' +
         '<div style="margin-top:6px">Você tem <strong>' + ant.length + (ant.length === 1 ? ' mensalidade' : ' mensalidades') + ' de mês anterior em aberto</strong> (' + formatarMoeda(d.total_anteriores_centavos) + '). Essas contas são pagas somente por <strong>Pix</strong>. Depois de quitá-las, você pode ativar o cartão automático para a mensalidade do mês corrente.</div>' +
@@ -1980,7 +2004,7 @@ async function abrirPaginaContaHub(conta) {
       };
       return;
     }
-    if (!d.disponivel) return;
+    if (!d.disponivel) { btnPix.textContent = 'Pagar com Pix'; btnPix.classList.remove('secundario'); btnPix.classList.add('primario'); return; }
     btnCartao.classList.remove('oculto');
     btnCartao.onclick = async () => {
       btnCartao.classList.add('oculto');

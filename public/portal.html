@@ -527,6 +527,11 @@ if ('serviceWorker' in navigator) {
       <div id="lista-contas-hub"></div>
       <div class="total-linha"><span>Total selecionado</span><span id="contas-hub-total">R$ 0,00</span></div>
       <button class="botao-grande primario" id="btn-pagar-contas-hub" style="margin:0">Pagar com Pix</button>
+      <div class="oculto" id="banner-cartao-contas" style="margin-top:14px;border:2px solid #10b981;border-radius:14px;padding:14px;background:#0f172a">
+        <div style="font-weight:800;color:#10b981;font-size:16px">🔁 Esqueça o vencimento</div>
+        <div style="font-size:14px;line-height:1.45;margin-top:4px">Pague no <strong>cartão automático</strong>: a mensalidade é cobrada todo mês sozinha, sem ocupar o limite do cartão.</div>
+        <button class="botao-grande secundario" id="btn-banner-cartao" style="margin:10px 0 0">Ver opções no cartão</button>
+      </div>
     </div>
 
     <!-- Página da conta (uma conta em aberto: detalhes, valor e formas de pagamento) -->
@@ -538,9 +543,14 @@ if ('serviceWorker' in navigator) {
       <div class="conta-linha"><span>Vencimento</span><span class="conta-selo" id="conta-vencimento"></span></div>
       <div class="conta-linha"><span>Situação</span><strong id="conta-situacao"></strong></div>
       <div class="conta-valor-box"><span>Valor a pagar</span><strong id="conta-valor"></strong></div>
-      <button class="botao-grande primario" id="btn-conta-pix" style="margin:0 0 10px">Pagar com Pix</button>
-      <button class="botao-grande secundario oculto" id="btn-conta-cartao" style="margin:0 0 10px">Pagar no cartão (automático)</button>
-      <div id="conta-recorrencia"></div>
+      <div class="oculto" id="conta-destaque-cartao" style="border:2px solid #10b981;border-radius:14px;padding:14px;background:#0f172a;margin:0 0 12px">
+        <div style="font-weight:800;color:#10b981;font-size:16px">🔁 Pagamento automático no cartão <span style="background:#10b981;color:#052e22;border-radius:999px;padding:2px 8px;font-size:11px;margin-left:6px;vertical-align:middle">RECOMENDADO</span></div>
+        <div style="font-size:14px;line-height:1.45;margin:6px 0 10px">Cobrança todo mês sozinha, sem ocupar o limite do cartão. Nunca mais esqueça o vencimento.</div>
+        <button class="botao-grande primario" id="btn-conta-cartao" style="margin:0">Ativar pagamento automático</button>
+        <div id="conta-recorrencia"></div>
+      </div>
+      <div id="conta-aviso"></div>
+      <button class="botao-grande secundario" id="btn-conta-pix" style="margin:0 0 10px">Pagar só esta conta com Pix</button>
       <div class="erro-msg" id="conta-erro"></div>
     </div>
 

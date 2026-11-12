@@ -873,7 +873,7 @@ const limitadorVerificar = criarLimitador({
 });
 router.post('/assinaturas/oferta/:id/verificar', limitadorVerificar, async (req, res, next) => {
   try {
-    const r = await assinaturas.verificarOferta(req.params.id);
+    const r = await assinaturas.verificarOferta(req.params.id, { preapprovalId: String(req.query.preapproval_id || '').slice(0, 64) || null });
     if (!r?.oferta) return res.status(404).json({ erro: 'Oferta não encontrada.' });
     for (const alunoId of new Set(r.alunosAtualizados)) acessoTerminal.notificarAgenteAtualizacaoAluno(alunoId); // libera a catraca já
     res.set('Cache-Control', 'no-store');

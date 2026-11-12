@@ -924,9 +924,15 @@ async function reconciliarAssinaturas({ somentePendentes = false } = {}) {
 // Chamada pela página pública /assinar/:id quando o aluno volta do Mercado Pago: confirma NA HORA no MP (sem esperar
 // o webhook nem o job) e devolve a oferta atualizada. Limita a 1 consulta ao MP a cada 3s por assinatura.
 const ultimaVerificacao = new Map();
-async function verificarOferta(id) {
-  const a = await buscarPorId(id);
-  if (!a) return null;
+async function verificarOferta(id, { preapprovalId = null } = {}) {
+  // Acha pelo código da página; se não existir, tenta pelo preapproval_id que o próprio MP devolve na URL de retorno.
+  let a = await buscarPorId(id);
+  if (!a && preapprovalId) a = await buscarPorPreapproval(preapprovalId);
+  if (!a) {
+    console.warn(`[assinaturas] verificação ao voltar do MP: assinatura NÃO encontrada (id=${String(id).slice(0, 40)}, preapproval_id=${preapprovalId || 'ausente'})`);
+    return null;
+  }
+  id = a.id;
   let alunosAtualizados = [];
   // Aguardando o 1º pagamento: 'pending' OU já 'authorized' mas a 1ª cobrança ainda não foi baixada (o MP
   // autoriza a assinatura alguns segundos ANTES de o pagamento aparecer como aprovado).

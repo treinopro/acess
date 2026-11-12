@@ -2227,7 +2227,8 @@ function tratarRetornoCartao() {
       const ctrl = new AbortController(); // (AbortSignal.timeout não existe em iPhones mais antigos)
       const limite = setTimeout(() => ctrl.abort(), 12000);
       let o;
-      try { o = await api('/api/pagamentos/assinaturas/oferta/' + encodeURIComponent(idAssinatura) + '/verificar', { method: 'POST', signal: ctrl.signal }); }
+      const pre = new URLSearchParams(location.search).get('preapproval_id'); // o Mercado Pago acrescenta este código na volta
+      try { o = await api('/api/pagamentos/assinaturas/oferta/' + encodeURIComponent(idAssinatura) + '/verificar' + (pre ? '?preapproval_id=' + encodeURIComponent(pre) : ''), { method: 'POST', signal: ctrl.signal }); }
       finally { clearTimeout(limite); }
       ultimaResposta = `${o.status}, ${Number(o.cobrancas_processadas || 0)} cobrança(s) baixada(s)`;
       const contato = 'Dúvidas? Fale com a recepção da academia.';

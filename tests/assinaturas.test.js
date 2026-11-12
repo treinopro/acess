@@ -1119,3 +1119,10 @@ test('checkout parado: portal cancela em minutos, link da recepção só em hora
   await db.execute({ sql: `UPDATE assinaturas_mp SET criado_em = datetime('now', '-3 days') WHERE matricula_id = 'm-ocioso' AND status = 'pending'` });
   assert.strictEqual((await assinaturas.expirarCheckoutsAbandonados({ minutosPortal: 60 })).cancelados, 1);
 });
+
+test('verificar na volta do MP: se o código da página não existir, acha pelo preapproval_id que o MP devolve', async () => {
+  const sub = (await db.execute({ sql: `SELECT id, preapproval_id FROM assinaturas_mp ORDER BY criado_em DESC LIMIT 1`, args: [] })).rows[0];
+  assert.strictEqual(await assinaturas.verificarOferta('codigo-que-nao-existe'), null);
+  const r = await assinaturas.verificarOferta('codigo-que-nao-existe', { preapprovalId: sub.preapproval_id });
+  assert.ok(r && r.oferta, 'deveria achar pela assinatura do MP');
+});

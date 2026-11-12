@@ -1941,6 +1941,31 @@ async function abrirPaginaContaHub(conta) {
   // O cartão automático só aparece para quem pode (plano mensal, sem assinatura ativa) e com modalidades disponíveis.
   try {
     const d = await api('/api/portal/assinatura?cpf=' + encodeURIComponent(cpfHubAtual) + '&senha=' + encodeURIComponent(senhaHubAtual));
+    if (!d.disponivel && d.motivo === 'mensalidades_anteriores' && (d.mensalidades_anteriores || []).length) {
+      // Mês anterior em aberto: essa conta só por Pix. O cartão automático cobre a mensalidade do mês corrente.
+      const ant = d.mensalidades_anteriores;
+      const box = $('conta-recorrencia');
+      box.innerHTML = '<div style="background:#1e293b;border:1px solid #f59e0b;border-radius:12px;padding:14px;margin-top:12px;font-size:14px;line-height:1.5">' +
+        '<div style="font-weight:800;color:#f59e0b">Cartão automático indisponível por enquanto</div>' +
+        '<div style="margin-top:6px">Você tem <strong>' + ant.length + (ant.length === 1 ? ' mensalidade' : ' mensalidades') + ' de mês anterior em aberto</strong> (' + formatarMoeda(d.total_anteriores_centavos) + '). Essas contas são pagas somente por <strong>Pix</strong>. Depois de quitá-las, você pode ativar o cartão automático para a mensalidade do mês corrente.</div>' +
+        '<button type="button" id="btn-pagar-anteriores" class="btn" style="margin-top:10px;width:100%">Pagar mensalidades anteriores por Pix</button></div>';
+      $('btn-pagar-anteriores').onclick = async () => {
+        try {
+          const resp = await api('/api/portal/contas/pagar', { method: 'POST', body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, cobranca_ids: ant.map((c) => c.id) }) });
+          abrirPagamentoPixHub({
+            titulo: 'Pagar ' + formatarMoeda(resp.valor_centavos),
+            qrCodePix: resp.qr_code_pix,
+            qrCodePixImagem: resp.qr_code_pix_imagem,
+            statusUrl: '/api/portal/contas/status/' + resp.pagamento_id,
+            aoConfirmar: (statusResp) => {
+              mostrarComprovanteHub({ saudacao: 'Pagamento aprovado, ' + (statusResp.aluno_nome || '') + '!', itens: statusResp.itens, total: statusResp.valor_centavos });
+              carregarResumoContasHub();
+            },
+          });
+        } catch (err) { $('conta-erro').textContent = err.message; }
+      };
+      return;
+    }
     if (!d.disponivel) return;
     btnCartao.classList.remove('oculto');
     btnCartao.onclick = async () => {

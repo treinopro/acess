@@ -1165,3 +1165,47 @@ test('portal: assinar plano em modo "escolher" cria a pré-matrícula sem Pix e 
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test('cartão automático só para a mensalidade do mês corrente: mês anterior em aberto bloqueia e vai por Pix', async () => {
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('mes1', 'Aluno Mes', 'mes@teste.com', '45454545454')` });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-mes1', 'mes1', 'p1', date('now', '-90 days'), 'ativa')` });
+  // Mensalidade do mês anterior (vencida) + a do mês corrente.
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-mes-ant', 'mes1', 'm-mes1', 7000, 'atrasado', 'recorrencia', 'Mensalidade - MUSCULAÇÃO', date('now', 'start of month', '-1 day', 'start of month', '+9 days'))` });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-mes-cor', 'mes1', 'm-mes1', 7000, 'pendente', 'recorrencia', 'Mensalidade - MUSCULAÇÃO', date('now'))` });
+  await assinaturas.salvarPlanosCadastro([{ id: 'mensal_livre', nome: 'Mensal', valor_centavos: 7000, limite_cobrancas: null, ativo: true }]);
+
+  let d = await assinaturas.disponibilidadeParaAluno({ alunoId: 'mes1', baseUrl: 'https://academia.test' });
+  assert.strictEqual(d.disponivel, false);
+  assert.strictEqual(d.motivo, 'mensalidades_anteriores');
+  assert.deepStrictEqual(d.mensalidades_anteriores.map((c) => c.id), ['c-mes-ant']);
+  assert.strictEqual(d.total_anteriores_centavos, 7000);
+  // O servidor também recusa (painel e portal), com mensagem clara.
+  await assert.rejects(() => assinaturas.obterOuCriarParaAluno({ alunoId: 'mes1', baseUrl: 'https://academia.test', modalidade: 'mensal_livre' }), /mês anterior em aberto/);
+
+  // Pagou a de mês anterior por Pix: o cartão volta, e a cobrança cobre a do mês corrente.
+  await db.execute({ sql: `UPDATE cobrancas SET status = 'pago' WHERE id = 'c-mes-ant'` });
+  d = await assinaturas.disponibilidadeParaAluno({ alunoId: 'mes1', baseUrl: 'https://academia.test' });
+  assert.strictEqual(d.disponivel, true);
+});
+
+test('cartão automático nunca baixa conta de serviço/produto, mesmo mais antiga que a mensalidade', async () => {
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('serv1', 'Aluno Serv', 'serv@teste.com', '46464646464')` });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-serv1', 'serv1', 'p1', date('now', '-30 days'), 'ativa')` });
+  // Serviço atrasado (mês anterior) ligado à matrícula + mensalidade do mês corrente.
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-serv', 'serv1', 'm-serv1', 15978, 'atrasado', 'manual', 'Serviço - Avaliação adipometria+postural', date('now', '-40 days'))` });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-mens', 'serv1', 'm-serv1', 7000, 'pendente', 'recorrencia', 'Mensalidade - MUSCULAÇÃO', date('now'))` });
+  await assinaturas.salvarPlanosCadastro([{ id: 'mensal_livre', nome: 'Mensal', valor_centavos: 7000, limite_cobrancas: null, ativo: true }]);
+
+  // O serviço de mês anterior não bloqueia o cartão (só mensalidades contam).
+  const d = await assinaturas.disponibilidadeParaAluno({ alunoId: 'serv1', baseUrl: 'https://academia.test' });
+  assert.strictEqual(d.disponivel, true);
+  await assinaturas.obterOuCriarParaAluno({ alunoId: 'serv1', baseUrl: 'https://academia.test', modalidade: 'mensal_livre' });
+  const { id, preapproval_id: pre } = (await db.execute({ sql: `SELECT id, preapproval_id FROM assinaturas_mp WHERE matricula_id='m-serv1'`, args: [] })).rows[0];
+  estadoMp.assinaturas[pre].status = 'authorized';
+  estadoMp.pagamentosRef = { ...(estadoMp.pagamentosRef || {}), [id]: [{ id: 9701, status: 'approved', transaction_amount: 70, payment_type_id: 'credit_card' }] };
+  estadoMp.cobrancas = { ...(estadoMp.cobrancas || {}), [pre]: [] };
+  await assinaturas.sincronizarAgora({ assinaturaId: id });
+  const st = Object.fromEntries((await db.execute({ sql: `SELECT id, status, valor_centavos FROM cobrancas WHERE id IN ('c-serv','c-mens')`, args: [] })).rows.map((r) => [r.id, [r.status, Number(r.valor_centavos)]]));
+  assert.deepStrictEqual(st['c-serv'], ['atrasado', 15978]); // o serviço continua aberto, com o valor original
+  assert.deepStrictEqual(st['c-mens'], ['pago', 7000]);      // a mensalidade do mês é a quitada
+});

@@ -653,7 +653,7 @@ async function baixarParcela({ assinatura, paymentId, valorCentavos, metodo }) {
 
   const aberta = await db.execute({
     sql: `SELECT id, aluno_id, valor_centavos, vencimento FROM cobrancas
-          WHERE matricula_id = ? AND status IN ('pendente', 'atrasado')
+          WHERE matricula_id = ? AND status IN ('pendente', 'atrasado') AND ${SQL_SO_MENSALIDADE}
           ORDER BY vencimento ASC, criado_em ASC LIMIT 1`,
     args: [assinatura.matricula_id],
   });
@@ -1167,7 +1167,7 @@ function cronogramaCobrancaAutomatica(hoje = new Date().toISOString().slice(0, 1
 async function prepararCobrancaInicial({ matricula, valorCentavos, modalidade, comboNome = null }) {
   const abertas = await db.execute({
     sql: `SELECT id, vencimento, valor_centavos, status FROM cobrancas
-          WHERE matricula_id = ? AND status IN ('pendente', 'atrasado')
+          WHERE matricula_id = ? AND status IN ('pendente', 'atrasado') AND ${SQL_SO_MENSALIDADE}
           ORDER BY vencimento ASC, criado_em ASC`,
     args: [matricula.id],
   });
@@ -1213,6 +1213,25 @@ async function assinaturaAbertaDaMatricula(matriculaId) {
 // Para o portal do aluno: mostra o card "pague no automático"? Nunca mostra se o
 // recurso está desligado, se não há matrícula elegível ou se já está autorizada.
 // O preço exibido é o ATUAL (com o desconto vigente), não o de uma assinatura antiga.
+// ── Regra do mês corrente ────────────────────────────────────────────────────────────────────────────────────
+// A assinatura do Mercado Pago cobra todo mês no MESMO DIA da 1ª cobrança. Se a 1ª cobrança pagasse a mensalidade de um
+// mês anterior, a do mês corrente ficaria aberta e seria paga só no ciclo seguinte. Por isso o cartão automático cobre
+// apenas a mensalidade do mês corrente: as de meses anteriores o aluno paga por Pix. Contas de serviço e de produto
+// ("Serviço - …" / "Produto - …") nunca entram nessa conta e nunca são baixadas pela assinatura.
+const SQL_SO_MENSALIDADE = "COALESCE(descricao, '') NOT LIKE 'Serviço - %' AND COALESCE(descricao, '') NOT LIKE 'Produto - %'";
+function hojeBrasilia() { return new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10); }
+
+async function mensalidadesAnterioresEmAberto(matriculaId) {
+  const inicioMes = hojeBrasilia().slice(0, 8) + '01';
+  const r = await db.execute({
+    sql: `SELECT id, descricao, valor_centavos, vencimento FROM cobrancas
+          WHERE matricula_id = ? AND status IN ('pendente', 'atrasado') AND vencimento < ? AND ${SQL_SO_MENSALIDADE}
+          ORDER BY vencimento ASC`,
+    args: [matriculaId, inicioMes],
+  });
+  return r.rows;
+}
+
 async function disponibilidadeParaAluno({ alunoId, baseUrl }) {
   if (!habilitado()) return { disponivel: false };
   const m = await matriculaElegivel(alunoId);
@@ -1220,6 +1239,14 @@ async function disponibilidadeParaAluno({ alunoId, baseUrl }) {
   const existente = await assinaturaAbertaDaMatricula(m.id);
   if (existente && ['authorized', 'paused'].includes(existente.status)) {
     return { disponivel: false, status: existente.status };
+  }
+  const anteriores = await mensalidadesAnterioresEmAberto(m.id);
+  if (anteriores.length) {
+    return {
+      disponivel: false, motivo: 'mensalidades_anteriores',
+      mensalidades_anteriores: anteriores.map((c) => ({ id: c.id, descricao: c.descricao, vencimento: c.vencimento, valor_centavos: Number(c.valor_centavos) })),
+      total_anteriores_centavos: anteriores.reduce((a, c) => a + Number(c.valor_centavos), 0),
+    };
   }
   return {
     disponivel: true,
@@ -1238,6 +1265,7 @@ async function disponibilidadeParaAluno({ alunoId, baseUrl }) {
 async function obterOuCriarParaAluno({ alunoId, baseUrl, modalidade, admin = false, combo: comboId = null }) {
   if (typeof modalidade !== 'string' || !modalidade.trim()) throw erro('Escolha uma das modalidades disponíveis.', 400);
   const disp = await disponibilidadeParaAluno({ alunoId, baseUrl });
+  if (disp.motivo === 'mensalidades_anteriores') throw erro('Há mensalidade de mês anterior em aberto. Ela precisa ser paga por Pix antes de ativar o cartão automático, que cobre a mensalidade do mês corrente.', 409);
   if (!disp.disponivel) throw erro('Pagamento automático não está disponível para este aluno.', 409);
   const m = await matriculaElegivel(alunoId);
   const pendente = await assinaturaAbertaDaMatricula(m.id);

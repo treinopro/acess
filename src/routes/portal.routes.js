@@ -562,7 +562,8 @@ router.get('/avaliacoes', limitadorSenhaPortal, async (req, res, next) => {
       sql: `SELECT id FROM avaliandos WHERE origem='academia' AND externo_id=?`,
       args: [aluno.id],
     });
-    if (!espelho.rows.length) return res.json({ avaliacoes: [] });
+    const direito = await assinaturas.direitoAvaliacao({ alunoId: aluno.id }).catch(() => ({ tem_combo: false }));
+    if (!espelho.rows.length) return res.json({ avaliacoes: [], direito });
 
     const linhas = await db.execute({
       sql: `SELECT tipo, protocolo, data, fields_json, computed_json, origem
@@ -571,6 +572,7 @@ router.get('/avaliacoes', limitadorSenhaPortal, async (req, res, next) => {
     });
 
     res.json({
+      direito,
       avaliacoes: linhas.rows.map((r) => ({
         tipo: r.tipo,
         protocolo: r.protocolo,

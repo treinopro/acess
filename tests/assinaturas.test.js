@@ -1209,3 +1209,77 @@ test('cartão automático nunca baixa conta de serviço/produto, mesmo mais anti
   assert.deepStrictEqual(st['c-serv'], ['atrasado', 15978]); // o serviço continua aberto, com o valor original
   assert.deepStrictEqual(st['c-mens'], ['pago', 7000]);      // a mensalidade do mês é a quitada
 });
+
+async function criarAssinaturaDireta({ id, alunoId, limite, combo = true, desconto = 500, pagamentos = [], status = 'authorized', processadas = null }) {
+  await db.execute({ sql: `INSERT OR IGNORE INTO alunos (id, nome, email, cpf) VALUES (?, ?, ?, ?)`, args: [alunoId, 'Aluno ' + alunoId, alunoId + '@t.com', String(Math.floor(Math.random() * 1e11)).padStart(11, '1')] });
+  await db.execute({ sql: `INSERT OR IGNORE INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES (?, ?, 'p1', date('now','-120 days'), 'ativa')`, args: ['m-' + id, alunoId] });
+  await db.execute({
+    sql: `INSERT INTO assinaturas_mp (id, matricula_id, aluno_id, preapproval_id, status, valor_centavos, valor_cheio_centavos, desconto_centavos, frequencia_meses, modalidade, limite_cobrancas, cobrancas_processadas, combo_id, combo_nome, adicional_centavos)
+          VALUES (?, ?, ?, ?, ?, 6500, 7000, ?, 1, 'x', ?, ?, ?, ?, 4000)`,
+    args: [id, 'm-' + id, alunoId, 'pre-' + id, status, desconto, limite, processadas ?? pagamentos.length, combo ? 'avaliacao' : null, combo ? 'Plano + avaliação física' : null],
+  });
+  estadoMp.assinaturas['pre-' + id] = { id: 'pre-' + id, status };
+  for (let i = 0; i < pagamentos.length; i++) {
+    await db.execute({ sql: `INSERT INTO assinaturas_mp_pagamentos (payment_id, assinatura_id, valor_centavos, baixa, criado_em) VALUES (?, ?, 6500, 'baixada', ?)`, args: [id + '-' + i, id, pagamentos[i] + ' 12:00:00'] });
+  }
+}
+const diasAtras = (n) => new Date(Date.now() - 3 * 3600e3 - n * 86400e3).toISOString().slice(0, 10);
+
+test('direito à avaliação: 12 meses libera na adesão; sem fidelidade só após a 3ª cobrança; avaliação vigente adia', async () => {
+  await criarAssinaturaDireta({ id: 'dir12', alunoId: 'dir12a', limite: 12, pagamentos: [diasAtras(1)] });
+  let d = await assinaturas.direitoAvaliacao({ alunoId: 'dir12a' });
+  assert.strictEqual(d.tem_combo, true);
+  assert.strictEqual(d.disponivel, true);
+
+  await criarAssinaturaDireta({ id: 'dirlv', alunoId: 'dirlva', limite: null, pagamentos: [diasAtras(40), diasAtras(10)] });
+  d = await assinaturas.direitoAvaliacao({ alunoId: 'dirlva' });
+  assert.strictEqual(d.disponivel, false);
+  assert.strictEqual(d.motivo, 'aguardando_terceira_cobranca');
+  assert.strictEqual(d.faltam_cobrancas, 1);
+
+  await criarAssinaturaDireta({ id: 'dirlv3', alunoId: 'dirlv3a', limite: null, pagamentos: [diasAtras(70), diasAtras(40), diasAtras(10)] });
+  d = await assinaturas.direitoAvaliacao({ alunoId: 'dirlv3a' });
+  assert.strictEqual(d.disponivel, true);
+
+  // Avaliação já válida (feita há 30 dias) só libera ao vencer (90 dias depois da data dela).
+  await db.execute({ sql: `INSERT INTO avaliacoes_fisicas (id, aluno_id, data_avaliacao) VALUES ('af-dir', 'dir12a', ?)`, args: [diasAtras(30)] });
+  d = await assinaturas.direitoAvaliacao({ alunoId: 'dir12a' });
+  assert.strictEqual(d.disponivel, false);
+  assert.strictEqual(d.motivo, 'avaliacao_vigente');
+  assert.strictEqual(d.disponivel_em, diasAtras(30 - 90));
+
+  // Sem combo: nada a mostrar.
+  await criarAssinaturaDireta({ id: 'dirsc', alunoId: 'dirsca', limite: 12, combo: false, pagamentos: [diasAtras(1)] });
+  assert.strictEqual((await assinaturas.direitoAvaliacao({ alunoId: 'dirsca' })).tem_combo, false);
+});
+
+test('multa de fidelidade: devolve R$5 por mês cobrado; 7 dias, sem fidelidade e contrato concluído isentam', async () => {
+  await criarAssinaturaDireta({ id: 'mul1', alunoId: 'mul1a', limite: 12, pagamentos: [diasAtras(95), diasAtras(65), diasAtras(35), diasAtras(5)] });
+  let p = await assinaturas.previaCancelamentoPorId('mul1');
+  assert.strictEqual(p.multa_centavos, 2000);
+  assert.strictEqual(p.motivo, 'devolucao_desconto');
+
+  await criarAssinaturaDireta({ id: 'mul2', alunoId: 'mul2a', limite: 12, pagamentos: [diasAtras(3)] });
+  p = await assinaturas.previaCancelamentoPorId('mul2');
+  assert.strictEqual(p.multa_centavos, 0);
+  assert.strictEqual(p.motivo, 'arrependimento');
+
+  await criarAssinaturaDireta({ id: 'mul3', alunoId: 'mul3a', limite: null, pagamentos: [diasAtras(95), diasAtras(65)] });
+  assert.strictEqual((await assinaturas.previaCancelamentoPorId('mul3')).multa_centavos, 0);
+
+  await criarAssinaturaDireta({ id: 'mul4', alunoId: 'mul4a', limite: 12, processadas: 12, pagamentos: [diasAtras(300)] });
+  assert.strictEqual((await assinaturas.previaCancelamentoPorId('mul4')).motivo, 'contrato_concluido');
+});
+
+test('cancelar com fidelidade gera a conta de multa (Serviço) e pode ser isentada', async () => {
+  await criarAssinaturaDireta({ id: 'mul5', alunoId: 'mul5a', limite: 12, pagamentos: [diasAtras(95), diasAtras(65), diasAtras(35)] });
+  const r = await assinaturas.cancelar({ assinaturaId: 'mul5' });
+  assert.strictEqual(r.multa.valor_centavos, 1500);
+  const c = (await db.execute({ sql: 'SELECT descricao, status, valor_centavos FROM cobrancas WHERE id = ?', args: [r.multa.cobranca_id] })).rows[0];
+  assert.match(c.descricao, /^Serviço - Devolução do desconto/);
+  assert.strictEqual(Number(c.valor_centavos), 1500);
+
+  await criarAssinaturaDireta({ id: 'mul6', alunoId: 'mul6a', limite: 12, pagamentos: [diasAtras(95), diasAtras(65), diasAtras(35)] });
+  const r2 = await assinaturas.cancelar({ assinaturaId: 'mul6', isentarMulta: true });
+  assert.strictEqual(r2.multa, null);
+});

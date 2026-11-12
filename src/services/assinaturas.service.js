@@ -586,14 +586,105 @@ async function cancelarNoMp(preapprovalId) {
   }
 }
 
-async function cancelar({ assinaturaId, encerrarMatricula = false }) {
+// ── Fidelidade e direito à avaliação (combos) ───────────────────────────────
+
+const DIAS_ARREPENDIMENTO = 7;
+const CADENCIA_AVALIACAO_DIAS = 90;
+
+function somarDiasISO(iso, dias) {
+  const d = new Date(String(iso).slice(0, 10) + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() + dias);
+  return d.toISOString().slice(0, 10);
+}
+
+function ehFidelidade(a) { return Number(a.limite_cobrancas) >= 12; }
+
+async function datasDosPagamentos(assinaturaId) {
+  const r = await db.execute({
+    sql: 'SELECT criado_em FROM assinaturas_mp_pagamentos WHERE assinatura_id = ? ORDER BY criado_em ASC, rowid ASC',
+    args: [assinaturaId],
+  });
+  return r.rows.map((x) => String(x.criado_em).slice(0, 10));
+}
+
+// Multa de cancelamento do compromisso de 12 meses: devolver o desconto recebido (desconto por mês x meses
+// cobrados). Sem multa: sem fidelidade, nada cobrado ainda, contrato concluído ou até 7 dias da 1ª cobrança.
+async function previaCancelamento(a) {
+  const base = { fidelidade: ehFidelidade(a), multa_centavos: 0, meses_cobrados: Number(a.cobrancas_processadas) || 0, desconto_mensal_centavos: Number(a.desconto_centavos) || 0, motivo: null };
+  if (!base.fidelidade) return { ...base, motivo: 'sem_fidelidade' };
+  if (['pending', 'cancelled'].includes(a.status)) return { ...base, motivo: 'sem_cobranca' };
+  if (base.meses_cobrados >= Number(a.limite_cobrancas)) return { ...base, motivo: 'contrato_concluido' };
+  const datas = await datasDosPagamentos(a.id);
+  if (!datas.length) return { ...base, motivo: 'sem_cobranca' };
+  if (hojeBrasilia() <= somarDiasISO(datas[0], DIAS_ARREPENDIMENTO)) return { ...base, motivo: 'arrependimento', arrependimento_ate: somarDiasISO(datas[0], DIAS_ARREPENDIMENTO) };
+  return { ...base, multa_centavos: base.desconto_mensal_centavos * base.meses_cobrados, motivo: 'devolucao_desconto' };
+}
+
+// Direito à avaliação física a cada 90 dias, para quem contratou combo.
+// Liberado: 12 meses → na adesão; sem fidelidade → após a 3ª cobrança paga.
+// Avaliação ainda válida (feita há menos de 90 dias) só libera ao vencer.
+async function direitoAvaliacao({ alunoId }) {
+  const r = await db.execute({
+    sql: `SELECT * FROM assinaturas_mp WHERE aluno_id = ? AND combo_id IS NOT NULL AND status IN ('authorized','paused') ORDER BY criado_em DESC LIMIT 1`,
+    args: [alunoId],
+  });
+  const a = r.rows[0];
+  if (!a) return { tem_combo: false };
+  const datas = await datasDosPagamentos(a.id);
+  let liberadoEm = null;
+  if (ehFidelidade(a)) liberadoEm = datas[0] || null;
+  else if (datas.length >= 3) liberadoEm = datas[2];
+  const resp = { tem_combo: true, combo_nome: a.combo_nome, fidelidade: ehFidelidade(a), cobrancas_pagas: datas.length, liberado_em: liberadoEm, disponivel: false, disponivel_em: null, motivo: null };
+  if (!liberadoEm) { resp.motivo = 'aguardando_terceira_cobranca'; resp.faltam_cobrancas = Math.max(0, 3 - datas.length); return resp; }
+  let ultima = null;
+  try {
+    const u = await db.execute({
+      sql: `SELECT MAX(av.data) AS data FROM avaliacoes av JOIN avaliandos a2 ON a2.id = av.avaliando_id WHERE a2.origem = 'academia' AND a2.externo_id = ?`,
+      args: [alunoId],
+    });
+    ultima = u.rows[0]?.data ? String(u.rows[0].data).slice(0, 10) : null;
+  } catch { /* AvaliaPro ausente: ignora */ }
+  if (!ultima) {
+    const u2 = await db.execute({ sql: 'SELECT MAX(data_avaliacao) AS data FROM avaliacoes_fisicas WHERE aluno_id = ?', args: [alunoId] });
+    ultima = u2.rows[0]?.data ? String(u2.rows[0].data).slice(0, 10) : null;
+  }
+  const vencimentoDaUltima = ultima ? somarDiasISO(ultima, CADENCIA_AVALIACAO_DIAS) : null;
+  const disponivelEm = vencimentoDaUltima && vencimentoDaUltima > liberadoEm ? vencimentoDaUltima : liberadoEm;
+  resp.disponivel_em = disponivelEm;
+  resp.ultima_avaliacao = ultima;
+  resp.disponivel = hojeBrasilia() >= disponivelEm;
+  resp.motivo = resp.disponivel ? null : 'avaliacao_vigente';
+  return resp;
+}
+
+async function previaCancelamentoPorId(assinaturaId) {
+  const r = await db.execute({ sql: 'SELECT * FROM assinaturas_mp WHERE id = ?', args: [assinaturaId] });
+  if (!r.rows[0]) throw erro('Assinatura não encontrada.', 404);
+  return previaCancelamento(r.rows[0]);
+}
+
+async function lancarMultaDeFidelidade(a, multaCentavos) {
+  const id = require('crypto').randomUUID();
+  await db.execute({
+    sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento)
+          VALUES (?, ?, ?, ?, 'pendente', 'manual', ?, ?)`,
+    args: [id, a.aluno_id, a.matricula_id, multaCentavos, 'Serviço - Devolução do desconto da fidelidade (' + a.cobrancas_processadas + ' meses)', somarDiasISO(hojeBrasilia(), 7)],
+  });
+  return id;
+}
+
+
+async function cancelar({ assinaturaId, encerrarMatricula = false, isentarMulta = false }) {
   if (!habilitado()) throw erro('Assinaturas do Mercado Pago estão desligadas (MERCADOPAGO_ASSINATURAS).', 503);
   const r = await db.execute({ sql: 'SELECT * FROM assinaturas_mp WHERE id = ?', args: [assinaturaId] });
   const a = r.rows[0];
   if (!a) throw erro('Assinatura não encontrada.', 404);
   if (a.status === 'cancelled' || a.status === 'completed') return { id: a.id, status: a.status };
+  const previa = await previaCancelamento(a);
   await cancelarNoMp(a.preapproval_id);
   await atualizarStatus(a.preapproval_id, 'cancelled');
+  let multa = null;
+  if (previa.multa_centavos > 0 && !isentarMulta) multa = { cobranca_id: await lancarMultaDeFidelidade(a, previa.multa_centavos), valor_centavos: previa.multa_centavos };
   // Checkout pendente ainda não migrou a matrícula nem encerrou a modalidade atual.
   if (a.status === 'pending') {
     await restaurarCobrancaInicial(a);
@@ -603,7 +694,7 @@ async function cancelar({ assinaturaId, encerrarMatricula = false }) {
   // ativa pela regra de hoje). Só encerra o acesso se pedirem explicitamente.
   if (a.modalidade && a.modalidade !== 'legado' && !encerrarMatricula) {
     await reverterParaPlanoNormal(a);
-    return { id: a.id, status: 'cancelled', voltou_plano_normal: true };
+    return { id: a.id, status: 'cancelled', voltou_plano_normal: true, multa };
   }
   const ultimaPaga = await db.execute({
     sql: `SELECT vencimento FROM cobrancas WHERE matricula_id = ? AND status = 'pago' ORDER BY vencimento DESC, pago_em DESC LIMIT 1`,
@@ -621,7 +712,7 @@ async function cancelar({ assinaturaId, encerrarMatricula = false }) {
     sql: `UPDATE cobrancas SET status = 'cancelado' WHERE matricula_id = ? AND status IN ('pendente', 'atrasado') AND vencimento >= date('now')`,
     args: [a.matricula_id],
   });
-  return { id: a.id, status: 'cancelled', acesso_ate: fimAcesso };
+  return { id: a.id, status: 'cancelled', acesso_ate: fimAcesso, multa };
 }
 
 async function atualizarStatus(preapprovalId, status) {
@@ -1325,5 +1416,5 @@ module.exports = {
   habilitado, criarAssinatura, listar, cancelar, processarEvento, processarPagamentoAprovado,
   ofertaPublica, disponibilidadeParaAluno, obterOuCriarParaAluno, obterOuCriarParaNovoCadastro, baseUrlDaRequisicao, urlOferta,
   obterOferta, salvarOferta, calcularDescontoCentavos, OFERTA_PADRAO,
-  obterPlanosCadastro, salvarPlanosCadastro, listarPlanosCadastroPublicos, buscarPlanoCadastro, expirarCheckoutsAbandonados, reconciliarAssinaturas, sincronizarAgora, cronogramaCobrancaAutomatica, cancelarPendentesDasMatriculas, anexarRecorrencia, desvincularCobranca, verificarOferta, cancelarPendentesOciosasDoAluno, obterCombos, salvarCombos, listarCombosPublicos, buscarCombo,
+  obterPlanosCadastro, salvarPlanosCadastro, listarPlanosCadastroPublicos, buscarPlanoCadastro, expirarCheckoutsAbandonados, reconciliarAssinaturas, sincronizarAgora, cronogramaCobrancaAutomatica, cancelarPendentesDasMatriculas, anexarRecorrencia, desvincularCobranca, verificarOferta, cancelarPendentesOciosasDoAluno, obterCombos, salvarCombos, listarCombosPublicos, buscarCombo, direitoAvaliacao, previaCancelamentoPorId,
 };

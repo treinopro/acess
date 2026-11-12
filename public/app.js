@@ -3733,10 +3733,21 @@ const sincronizar = dlg.querySelector('[data-acao="sincronizar"]');
     });
     const cancelar = dlg.querySelector('[data-acao="cancelar"]');
     if (cancelar) cancelar.addEventListener('click', async () => {
-      if (!confirmar(`Cancelar a assinatura automática de "${aluno.nome}"? O Mercado Pago deixa de cobrar o cartão; as contas voltam a depender do pagamento manual.`)) return;
+      let previa = null;
+      try { previa = await api(`/api/pagamentos/assinaturas/${assinatura.id}/cancelamento-previa`); } catch { /* segue sem prévia */ }
+      let isentar = false;
+      let aviso = `Cancelar a assinatura automática de "${aluno.nome}"? O Mercado Pago deixa de cobrar o cartão; as contas voltam a depender do pagamento manual.`;
+      if (previa && previa.multa_centavos > 0) {
+        aviso += `\n\nCompromisso de 12 meses: será gerada uma conta de ${formatarMoeda(previa.multa_centavos)} (devolução do desconto de ${formatarMoeda(previa.desconto_mensal_centavos)} x ${previa.meses_cobrados} mês(es)).`;
+        if (!confirmar(aviso)) return;
+        isentar = confirmar('Isentar a multa de fidelidade? OK = isentar (sem cobrar), Cancelar = cobrar a multa.');
+      } else {
+        if (previa && previa.motivo === 'arrependimento') aviso += '\n\nDentro dos 7 dias de arrependimento: sem multa.';
+        if (!confirmar(aviso)) return;
+      }
       try {
-        await api(`/api/pagamentos/assinaturas/${assinatura.id}`, { method: 'DELETE' });
-        mostrarToast('Assinatura cancelada.');
+        const rc = await api(`/api/pagamentos/assinaturas/${assinatura.id}${isentar ? '?isentar_multa=1' : ''}`, { method: 'DELETE' });
+        mostrarToast(rc && rc.multa ? `Assinatura cancelada. Conta de multa gerada: ${formatarMoeda(rc.multa.valor_centavos)}.` : 'Assinatura cancelada.');
         desenhar(null, null, null);
       } catch (err) { mostrarToast(err.message, true); }
     });

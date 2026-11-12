@@ -905,10 +905,15 @@ router.post('/assinaturas/:id/sincronizar', autenticar, apenasAdmin, async (req,
   }
 });
 
+// GET /api/pagamentos/assinaturas/:id/cancelamento-previa — quanto custaria cancelar agora (fidelidade).
+router.get('/assinaturas/:id/cancelamento-previa', autenticar, apenasAdmin, async (req, res, next) => {
+  try { res.json(await assinaturas.previaCancelamentoPorId(req.params.id)); } catch (err) { next(err); }
+});
+
 // DELETE /api/pagamentos/assinaturas/:id — cancela no Mercado Pago e localmente.
 router.delete('/assinaturas/:id', autenticar, apenasAdmin, async (req, res, next) => {
   try {
-    res.json(await assinaturas.cancelar({ assinaturaId: req.params.id, encerrarMatricula: req.query.encerrar === '1' }));
+    res.json(await assinaturas.cancelar({ assinaturaId: req.params.id, encerrarMatricula: req.query.encerrar === '1', isentarMulta: req.query.isentar_multa === '1' }));
   } catch (err) {
     next(err);
   }

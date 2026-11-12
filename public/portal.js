@@ -762,6 +762,15 @@ let avaliacoesHubAtual = [];
 const CADENCIA_AVALIACAO_DIAS = 90;
 const AVISO_AVALIACAO_ANTECEDENCIA_DIAS = 15;
 
+function htmlDireitoAvaliacao(d) {
+  if (!d || !d.tem_combo) return '';
+  const nome = escapeHtml(String(d.combo_nome || 'avaliação').replace(/^Plano \+ /i, ''));
+  if (d.disponivel) return '<strong style="color:#10b981">✅ Sua ' + nome + ' está liberada.</strong> Fale com a recepção para agendar.';
+  if (d.motivo === 'aguardando_terceira_cobranca') return '🔒 Sua ' + nome + ' é liberada após a 3ª mensalidade paga (faltam ' + d.faltam_cobrancas + ').';
+  if (d.disponivel_em) return '⏳ Sua ' + nome + ' será liberada em ' + formatarData(d.disponivel_em) + ' (a avaliação atual ainda está válida).';
+  return '';
+}
+
 async function carregarAvaliacoesHub() {
   const cardAvaliacao = document.getElementById('card-avaliacao');
   const botaoVer = document.getElementById('btn-ver-avaliacoes-hub');
@@ -769,7 +778,12 @@ async function carregarAvaliacoesHub() {
   try {
     const resp = await api(`/api/portal/avaliacoes?cpf=${encodeURIComponent(cpfHubAtual)}&senha=${encodeURIComponent(senhaHubAtual)}`);
     avaliacoesHubAtual = resp.avaliacoes || [];
-    if (avaliacoesHubAtual.length) {
+    const direitoHtml = htmlDireitoAvaliacao(resp.direito);
+    if (!avaliacoesHubAtual.length && direitoHtml) {
+      cardAvaliacao.classList.remove('oculto');
+      botaoVer.classList.add('oculto');
+      resumo.innerHTML = direitoHtml;
+    } else if (avaliacoesHubAtual.length) {
       cardAvaliacao.classList.remove('oculto');
       botaoVer.classList.remove('oculto');
       const ultima = avaliacoesHubAtual[avaliacoesHubAtual.length - 1];
@@ -782,7 +796,7 @@ async function carregarAvaliacoesHub() {
       } else if (diasParaVencer <= AVISO_AVALIACAO_ANTECEDENCIA_DIAS) {
         avisoHtml = `<strong style="color:#fbbf24">⏳ Sua avaliação vence em ${diasParaVencer} dia${diasParaVencer === 1 ? '' : 's'} — hora de renovar.</strong><br>`;
       }
-      resumo.innerHTML = `${avisoHtml}Última avaliação em ${formatarData(ultima.data)}. Toque para ver sua evolução.`;
+      resumo.innerHTML = `${avisoHtml}Última avaliação em ${formatarData(ultima.data)}. Toque para ver sua evolução.${direitoHtml ? '<br>' + direitoHtml : ''}`;
     } else {
       botaoVer.classList.add('oculto');
     }
@@ -1851,7 +1865,7 @@ function htmlCartoesRecorrencia(opcoes) {
     const desconto = p.desconto_centavos > 0 ? '<small style="display:block;color:#64748b">De ' + formatarMoeda(p.valor_centavos) + ' por mês</small>' : '';
     return '<div style="background:#0f172a;border-radius:10px;padding:12px;margin:10px 0"><strong>' + escapeHtml(p.nome) +
       '</strong><div data-preco-de="' + escapeHtml(p.id) + '" style="font-size:23px;font-weight:800;color:#10b981">' + mensal + '/mês</div>' + desconto +
-      '<small>' + escapeHtml(detalhe) + '</small>' + seletorComboHtml(p) +
+      '<small>' + escapeHtml(detalhe) + '</small>' + (p.limite_cobrancas >= 12 ? '<small style="display:block;margin-top:4px;color:#fbbf24">Compromisso de ' + p.limite_cobrancas + ' meses: cancelando antes do fim, devolve-se o desconto recebido (' + (p.desconto_centavos > 0 ? formatarMoeda(p.desconto_centavos) + ' por mês cobrado' : 'conforme contrato') + '). Sem custo nos 7 primeiros dias.</small>' : '') + seletorComboHtml(p) +
       '<button type="button" data-modalidade="' + escapeHtml(p.id) + '" data-rotulo="' + escapeHtml(p.nome) + '" class="botao-grande secundario" style="margin-top:8px">Escolher ' + escapeHtml(p.nome) + '</button></div>';
   }).join('');
 }

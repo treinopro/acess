@@ -511,6 +511,13 @@ let bibliotecaPortal = [];
 let bibGrupo = 'todos';
 function normalizarBibPortal(t) { return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim(); }
 
+// Miniatura: a imagem cadastrada no exercício; se não houver, a capa do vídeo do YouTube.
+function miniaturaBibliotecaPortal(e) {
+  if (e.imagem_url) return e.imagem_url;
+  const m = String(e.video_url || '').match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([A-Za-z0-9_-]{6,})/);
+  return m ? 'https://i.ytimg.com/vi/' + m[1] + '/mqdefault.jpg' : '';
+}
+
 function renderizarBibliotecaPortal() {
   const termos = normalizarBibPortal(document.getElementById('bib-busca').value).split(/\s+/).filter(Boolean);
   const lista = bibliotecaPortal
@@ -521,17 +528,24 @@ function renderizarBibliotecaPortal() {
   if (!lista.length) { alvo.innerHTML = '<p style="color:#94a3b8">Nenhum exercício encontrado.</p>'; return; }
   alvo.innerHTML = lista.map((e) => {
     const tags = (e.equipamento ? '<span class="tag">' + escapeHtml(e.equipamento) + '</span>' : '') + (e.dificuldade ? '<span class="tag">' + escapeHtml(e.dificuldade) + '</span>' : '');
-    return '<div class="item-conta" style="display:block"><div style="font-weight:700">' + escapeHtml(e.nome) + '</div>' +
-      '<div style="font-size:13px;color:#94a3b8">' + escapeHtml(e.grupo_muscular) + tags + '</div>' +
-      (e.video_url ? '<button type="button" class="botao-grande secundario" data-bib-video="' + escapeHtml(e.id) + '" style="margin:10px 0 0">▶ Ver execução</button><div id="bibv-' + escapeHtml(e.id) + '"></div>' : '') +
+    const miniatura = miniaturaBibliotecaPortal(e);
+    // A miniatura é o botão que abre o vídeo (carregado só no toque). Sem vídeo, só a imagem, se houver.
+    const thumb = miniatura
+      ? '<button type="button" ' + (e.video_url ? 'data-bib-video="' + escapeHtml(e.id) + '" aria-label="Ver execução"' : 'disabled') + ' style="position:relative;flex:0 0 112px;width:112px;height:68px;border:none;padding:0;border-radius:8px;overflow:hidden;background:#000;cursor:' + (e.video_url ? 'pointer' : 'default') + '">' +
+        '<img src="' + escapeHtml(miniatura) + '" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block">' +
+        (e.video_url ? '<span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center"><span style="background:rgba(0,0,0,.6);color:#fff;border-radius:50%;width:30px;height:30px;display:flex;align-items:center;justify-content:center;font-size:13px">&#9654;</span></span>' : '') + '</button>'
+      : '';
+    return '<div class="item-conta" style="display:block"><div style="display:flex;gap:12px;align-items:center">' + thumb +
+      '<div style="min-width:0"><div style="font-weight:700">' + escapeHtml(e.nome) + '</div>' +
+      '<div style="font-size:13px;color:#94a3b8">' + escapeHtml(e.grupo_muscular) + tags + '</div></div></div>' +
+      (e.video_url ? '<div id="bibv-' + escapeHtml(e.id) + '"></div>' : '') +
       (e.instrucoes ? '<div style="font-size:14px;color:#cbd5e1;margin-top:8px">' + escapeHtml(e.instrucoes) + '</div>' : '') + '</div>';
   }).join('');
   // O vídeo só é carregado quando o aluno toca em "Ver execução" (nada pesado abre junto com a lista).
   alvo.querySelectorAll('[data-bib-video]').forEach((btn) => btn.addEventListener('click', () => {
     const ex = bibliotecaPortal.find((x) => x.id === btn.dataset.bibVideo);
     const box = document.getElementById('bibv-' + btn.dataset.bibVideo);
-    if (box.innerHTML) { box.innerHTML = ''; btn.textContent = '▶ Ver execução'; }
-    else { box.innerHTML = videoPreviewHtml(ex.video_url); btn.textContent = '▲ Fechar vídeo'; }
+    box.innerHTML = box.innerHTML ? '' : videoPreviewHtml(ex.video_url);
   }));
 }
 

@@ -506,11 +506,15 @@ if ('serviceWorker' in navigator) {
     <!-- Biblioteca de exercícios -->
     <div class="cartao oculto" id="painel-hub-biblioteca" style="text-align:left">
       <h3 style="margin-top:0">Biblioteca de exercícios</h3>
-      <input class="campo" id="bib-busca" type="search" placeholder="Pesquisar (ex.: rosca, costas)" autocomplete="off" style="text-align:left;margin-bottom:10px" />
+      <div style="display:flex;gap:8px;align-items:stretch;margin-bottom:10px">
+        <input class="campo" id="bib-busca" type="search" placeholder="Pesquisar exercício" autocomplete="off" style="text-align:left;margin-bottom:0;flex:1 1 auto;min-width:0" />
+        <button type="button" id="btn-bib-voz" class="oculto" aria-label="Pesquisar por voz" title="Pesquisar por voz" style="flex:0 0 60px;border:none;border-radius:10px;background:#10b981;color:#052e22;font-size:26px;cursor:pointer">&#127908;</button>
+      </div>
+      <div id="bib-voz-status" style="font-size:14px;color:#10b981;margin:-4px 0 10px;min-height:0"></div>
+      <div class="erro-msg" id="bib-erro"></div>
       <div id="bib-grupos" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px"></div>
       <div id="bib-contagem" style="font-size:13px;color:#94a3b8;margin-bottom:10px"></div>
       <div id="bib-lista"></div>
-      <div class="erro-msg" id="bib-erro"></div>
     </div>
 
     <!-- Minhas avaliações -->

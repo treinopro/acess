@@ -577,6 +577,42 @@ document.getElementById('btn-abrir-biblioteca').addEventListener('click', async 
 });
 document.getElementById('bib-busca').addEventListener('input', renderizarBibliotecaPortal);
 
+// Pesquisa por voz: usa o reconhecimento de voz do próprio navegador (pt-BR). Sem suporte, o botão nem aparece.
+(function ligarVozBiblioteca() {
+  const Reconhecimento = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const btn = document.getElementById('btn-bib-voz');
+  if (!Reconhecimento || !btn) return;
+  btn.classList.remove('oculto');
+  const campo = document.getElementById('bib-busca');
+  const status = document.getElementById('bib-voz-status');
+  let rec = null;
+  let ouvindo = false;
+  function parar() { try { rec && rec.stop(); } catch (e) { /* já parado */ } }
+  function fim() { ouvindo = false; btn.style.background = '#10b981'; btn.innerHTML = '&#127908;'; }
+  btn.addEventListener('click', () => {
+    if (ouvindo) { parar(); return; }
+    document.getElementById('bib-erro').textContent = '';
+    rec = new Reconhecimento();
+    rec.lang = 'pt-BR';
+    rec.interimResults = true;
+    rec.continuous = false;
+    rec.maxAlternatives = 1;
+    rec.onstart = () => { ouvindo = true; btn.style.background = '#ef4444'; btn.innerHTML = '&#9724;'; status.textContent = 'Ouvindo... fale o nome do exercício ou o grupo.'; };
+    rec.onresult = (ev) => {
+      let texto = '';
+      for (let i = 0; i < ev.results.length; i += 1) texto += ev.results[i][0].transcript;
+      campo.value = texto.replace(/[.,!?]+$/g, '').trim();
+      renderizarBibliotecaPortal();
+    };
+    rec.onerror = (ev) => {
+      const msgs = { 'not-allowed': 'Permita o uso do microfone no navegador para pesquisar por voz.', 'service-not-allowed': 'Permita o uso do microfone no navegador para pesquisar por voz.', 'no-speech': 'Não ouvi nada. Toque no microfone e tente de novo.', 'audio-capture': 'Não encontrei um microfone neste aparelho.', network: 'Sem conexão para reconhecer a voz. Digite a pesquisa.' };
+      document.getElementById('bib-erro').textContent = msgs[ev.error] || 'Não consegui reconhecer a voz agora. Digite a pesquisa.';
+    };
+    rec.onend = () => { fim(); status.textContent = ''; };
+    try { rec.start(); } catch (e) { fim(); }
+  });
+})();
+
 document.getElementById('btn-voltar-hub').addEventListener('click', () => {
   const SUBPAINEIS_HUB = ['painel-hub-conta', 'painel-hub-upgrade-escolha', 'painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-avaliacoes', 'painel-hub-notificacoes', 'painel-hub-biblioteca'];
   const painelAberto = SUBPAINEIS_HUB.find((id) => !document.getElementById(id).classList.contains('oculto'));

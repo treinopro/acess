@@ -1012,6 +1012,14 @@
               <option value="estornado">Estornado</option>
             </select>
           </div>
+          <div style="flex:1;min-width:160px">
+            <label>Tipo de plano</label>
+            <select id="filtro-conta-tipo">
+              <option value="">Todos</option>
+              <option value="recorrencia">💳 Recorrência (cartão)</option>
+              <option value="normal">Plano normal (Pix/balcão)</option>
+            </select>
+          </div>
         </div>
         <p style="margin:0 0 12px;color:#667085;font-size:13px">Mostrando contas do período selecionado acima. O período escolhido fica valendo até você trocar por outro.</p>
 
@@ -1251,6 +1259,14 @@
                 <option value="pix">Pix</option>
                 <option value="cartao">Cartão</option>
                 <option value="dinheiro">Dinheiro</option>
+              </select>
+            </div>
+            <div>
+              <label>Tipo de plano</label>
+              <select id="rel-fin-tipo-plano">
+                <option value="">Todos</option>
+                <option value="recorrencia">Recorrência (cartão)</option>
+                <option value="normal">Plano normal</option>
               </select>
             </div>
             <div>
@@ -1494,6 +1510,10 @@
           </div>
         </form>
 
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:14px 0 0">
+          <input type="search" id="lib-busca" placeholder="Pesquisar por nome ou grupo (ex.: rosca, costas, tríceps)" autocomplete="off" style="flex:1 1 280px;min-width:0" />
+          <span id="lib-contagem" style="color:#667085;font-size:13px"></span>
+        </div>
         <div class="chip-group" id="lib-filtro-grupos" style="display:flex;gap:6px;flex-wrap:wrap;margin:14px 0"></div>
         <div class="lib-grid" id="lib-grid"></div>
       </section>
@@ -2191,6 +2211,26 @@
           </form>
         </div>
 
+        <form class="form-painel" id="form-planos-recorrencia-cadastro">
+          <h3 style="margin-top:0">📋 Modalidades recorrentes para novos cadastros</h3>
+          <p style="margin-top:0;color:#667085;font-size:13px">Cadastre as opções que aparecem depois que o aluno conclui o cadastro. O valor informado é mensal; deixe o número de cobranças vazio para uma assinatura sem prazo definido. Descontos e condições são congelados no contrato de cada aluno.</p>
+          <div id="lista-planos-recorrencia-cadastro"></div>
+          <div class="form-acoes">
+            <button type="button" class="btn-secundario" id="btn-adicionar-plano-recorrencia">+ Adicionar modalidade</button>
+            <button type="submit" class="btn-primario">Salvar modalidades recorrentes</button>
+          </div>
+        </form>
+
+        <form class="form-painel" id="form-combos-recorrencia">
+          <h3 style="margin-top:0">🎁 Combos (adicional mensal)</h3>
+          <p style="margin-top:0;color:#667085;font-size:13px">Opções que o aluno pode somar à modalidade, como a avaliação física. O adicional é mensal e entra no valor da assinatura (ex.: avaliação de R$ 120 em 3 meses = R$ 40 por mês). Mudar um combo vale só para novas adesões.</p>
+          <div id="lista-combos-recorrencia"></div>
+          <div class="form-acoes">
+            <button type="button" class="btn-secundario" id="btn-adicionar-combo">+ Adicionar combo</button>
+            <button type="submit" class="btn-primario">Salvar combos</button>
+          </div>
+        </form>
+
         <form class="form-painel" id="form-oferta-assinatura">
           <h3 style="margin-top:0">💳 Pagamento automático — oferta e desconto</h3>
           <p style="margin-top:0;color:#667085;font-size:13px">
@@ -2201,9 +2241,9 @@
             O recurso ainda está desligado no servidor (variável <code>MERCADOPAGO_ASSINATURAS=1</code>). Você já pode editar a oferta; o botão só aparece para os alunos depois que ele for ligado.
           </p>
 
-          <h3>Desconto para quem assinar</h3>
+          <h3>Desconto legado para assinaturas sem modalidade específica</h3>
           <label style="display:flex;gap:8px;align-items:center;font-weight:600">
-            <input type="checkbox" id="oferta-desc-ativo" style="width:auto" /> Dar desconto a quem optar pelo pagamento automático
+            <input type="checkbox" id="oferta-desc-ativo" style="width:auto" /> Aplicar desconto às assinaturas criadas sem modalidade cadastrada
           </label>
           <div id="oferta-desc-bloco" class="oculto" style="display:none;gap:10px;flex-wrap:wrap;margin-top:8px">
             <div>

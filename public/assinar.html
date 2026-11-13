@@ -197,8 +197,14 @@
     if (temDesconto) filhos.push(el('div', { className: 'antes', text: 'De ' + brl(o.valor_cheio_centavos) }));
     filhos.push(el('div', { className: 'valor' }, [el('strong', { text: brl(o.valor_centavos) }), el('span', { text: rotulo })]));
     if (temDesconto) filhos.push(el('span', { className: 'eco', text: '🎉 Você economiza ' + brl(o.desconto_centavos) + (meses === 1 ? ' todo mês' : ' a cada cobrança') }));
-    filhos.push(el('span', { className: 'dia', text: 'Só ' + brl(Math.round(porDia)) + ' por dia para treinar' }));
-    if (meses > 1) filhos.push(el('p', { className: 'nota', text: 'Equivale a ' + brl(Math.round(porMes)) + ' por mês.' }));
+    if (o.modalidade === '12_meses') {
+      filhos.push(el('p', { className: 'nota', text: 'Compromisso de 12 mensalidades de ' + brl(o.valor_centavos) + ', uma por mês, durante 12 meses.' }));
+    } else if (o.modalidade === 'mensal_livre') {
+      filhos.push(el('p', { className: 'nota', text: 'Sem fidelidade ou permanência mínima. Cobrança mensal automática.' }));
+    } else if (meses > 1) {
+      filhos.push(el('p', { className: 'nota', text: 'Equivale a ' + brl(Math.round(porMes)) + ' por mês.' }));
+    }
+    filhos.push(el('span', { className: 'dia', text: 'Pagamento automático no cartão, sem comprometer o limite total de vários meses.' }));
     return el('section', { className: 'preco' }, filhos);
   }
 
@@ -265,16 +271,26 @@
       });
   }
 
+  // Pede ao servidor para CONFIRMAR no Mercado Pago agora (não depende do aviso automático).
+  function verificar() {
+    return fetch('/api/pagamentos/assinaturas/oferta/' + encodeURIComponent(id) + '/verificar', { method: 'POST', cache: 'no-store' })
+      .then(function (r) {
+        if (r.status === 404) return null;
+        if (!r.ok) throw new Error('falha');
+        return r.json();
+      });
+  }
+
   function confirmarAtivacao(o, tentativa) {
     // Voltou do Mercado Pago: o aviso (webhook) pode levar alguns segundos.
     estado('⏳', 'Confirmando seu cadastro…', 'Só um instante, estamos finalizando.');
     var timer = setInterval(function () {
       tentativa += 1;
-      buscar().then(function (n) {
+      verificar().then(function (n) {
         if (n && n.status === 'authorized') { clearInterval(timer); ativo(n); }
-        else if (tentativa >= 20) { clearInterval(timer); estado('✅', 'Recebemos seu cadastro!', 'A confirmação pode levar alguns minutos. Se tiver dúvida, fale com a recepção.', o.whatsapp_contato); }
+        else if (tentativa >= 40) { clearInterval(timer); estado('✅', 'Recebemos seu cadastro!', 'A confirmação pode levar alguns minutos. Se tiver dúvida, fale com a recepção.', o.whatsapp_contato); }
       }).catch(function () { /* tenta de novo */ });
-    }, 4500);
+    }, 3000);
   }
 
   function ativo(o) {
@@ -286,6 +302,7 @@
     if (o.preview) return renderOferta(o);
     if (o.status === 'authorized') return ativo(o);
     if (o.status === 'cancelled') return estado('ℹ️', 'Esta oferta não está mais disponível', 'Fale com a recepção para gerar um novo link.', o.whatsapp_contato);
+    if (o.status === 'completed') return estado('✅', 'Contrato concluído!', 'As 12 cobranças foram concluídas. Para continuar treinando, fale com a recepção sobre a renovação.', o.whatsapp_contato);
     if (o.status === 'paused') return estado('⏸️', 'Assinatura pausada', 'Fale com a recepção para retomar.', o.whatsapp_contato);
     if (voltouDoCartao) return confirmarAtivacao(o, 0);
     if (!o.init_point) return estado('ℹ️', 'Link indisponível', 'Fale com a recepção para gerar um novo link.', o.whatsapp_contato);

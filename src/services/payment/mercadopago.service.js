@@ -5,6 +5,10 @@
 
 const BASE_URL = 'https://api.mercadopago.com';
 
+// Toda chamada ao MP tem limite de tempo: sem isso, uma resposta que nunca chega deixaria a requisição (e a tela do aluno) pendurada.
+const fetch = (url, opts = {}) => globalThis.fetch(url, { signal: AbortSignal.timeout(15000), ...opts });
+
+
 function getToken() {
   const token = process.env.MERCADOPAGO_ACCESS_TOKEN;
   if (!token) throw new Error('MERCADOPAGO_ACCESS_TOKEN não configurado no .env');
@@ -145,7 +149,16 @@ async function consultarOrder(orderId) {
 // cadastra o cartão no ambiente do Mercado Pago (nenhum dado de cartão passa
 // pelo nosso servidor) e a partir daí o MP cobra sozinho a cada ciclo.
 // Docs: https://www.mercadopago.com.br/developers/pt/docs/subscriptions/integration-configuration/subscription-no-associated-plan/pending-payments
-async function criarAssinaturaPendente({ razao, valorCentavos, frequenciaMeses, emailPagador, referenciaExterna, urlRetorno }) {
+async function criarAssinaturaPendente({ razao, valorCentavos, frequenciaMeses, emailPagador, referenciaExterna, urlRetorno, dataInicio, limiteCobrancas = null }) {
+  // Trava de segurança no próprio MP: para contratos com número fixo de cobranças,
+  // define end_date logo após a última (a n-ésima sai em início + (n-1) meses).
+  let dataFim = null;
+  if (limiteCobrancas && Number(limiteCobrancas) > 0) {
+    const fim = new Date(dataInicio || Date.now());
+    fim.setUTCMonth(fim.getUTCMonth() + (Number(limiteCobrancas) - 1) * Number(frequenciaMeses || 1));
+    fim.setUTCDate(fim.getUTCDate() + 20);
+    dataFim = fim.toISOString();
+  }
   const resp = await fetch(`${BASE_URL}/preapproval`, {
     method: 'POST',
     headers: {
@@ -161,6 +174,8 @@ async function criarAssinaturaPendente({ razao, valorCentavos, frequenciaMeses, 
       auto_recurring: {
         frequency: frequenciaMeses,
         frequency_type: 'months',
+        ...(dataInicio ? { start_date: dataInicio } : {}),
+        ...(dataFim ? { end_date: dataFim } : {}),
         transaction_amount: valorCentavos / 100,
         currency_id: 'BRL',
       },
@@ -207,6 +222,29 @@ async function consultarPagamentoAutorizado(authorizedPaymentId) {
   return resp.json();
 }
 
+// Cobranças (invoices) de uma assinatura — usado na reconciliação periódica, que
+// cobre o caso de o webhook não chegar. Devolve a lista (mais antigas primeiro).
+async function listarCobrancasDaAssinatura(preapprovalId) {
+  const resp = await fetch(`${BASE_URL}/authorized_payments/search?preapproval_id=${encodeURIComponent(preapprovalId)}`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  });
+  if (!resp.ok) throw new Error(`Erro ao listar cobranças da assinatura no Mercado Pago (${resp.status})`);
+  const dados = await resp.json();
+  const lista = Array.isArray(dados?.results) ? dados.results : [];
+  return lista.sort((a, b) => String(a.debit_date || a.date_created || '').localeCompare(String(b.debit_date || b.date_created || '')));
+}
+
+// Pagamentos gerados por uma assinatura trazem o external_reference dela (= id local da assinatura).
+// Segunda forma de achar o pagamento aprovado, caso a lista de cobranças da assinatura não o traga.
+async function buscarPagamentosPorReferencia(externalReference) {
+  const resp = await fetch(`${BASE_URL}/v1/payments/search?external_reference=${encodeURIComponent(externalReference)}&sort=date_created&criteria=desc&limit=30`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  });
+  if (!resp.ok) throw new Error(`Erro ao buscar pagamentos da assinatura no Mercado Pago (${resp.status})`);
+  const dados = await resp.json();
+  return Array.isArray(dados?.results) ? dados.results : [];
+}
+
 module.exports = {
   criarPreferencia,
   criarPagamentoPix,
@@ -217,4 +255,6 @@ module.exports = {
   consultarAssinatura,
   cancelarAssinatura,
   consultarPagamentoAutorizado,
+  listarCobrancasDaAssinatura,
+  buscarPagamentosPorReferencia,
 };

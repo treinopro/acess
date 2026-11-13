@@ -8,6 +8,7 @@ const { normalizarCpf } = require('../utils/cpf');
 const acessoTerminal = require('../services/acessoTerminal.service');
 const faceGaleria = require('../services/faceGaleria.service');
 const catracaGateway = require('../services/catracaGateway.service');
+const assinaturas = require('../services/assinaturas.service');
 const dbResiliente = require('../services/dbResiliente.service');
 const filaCadastroOffline = require('../services/filaCadastroOffline.service');
 const emailBoasVindas = require('../services/emailBoasVindas.service');
@@ -333,6 +334,19 @@ router.post('/pendencias-sincronizacao/:pendenciaId/resolver', async (req, res, 
 });
 
 // GET /api/alunos/:id — mesmo fallback offline da busca acima.
+// GET /api/alunos/:id/foto — só a foto de perfil (uma linha, uma coluna). Usado pela janela "Acessos ao vivo", que
+// busca a foto de cada aluno uma única vez (o navegador guarda) em vez de a lista inteira carregar fotos.
+router.get('/:id/foto', async (req, res, next) => {
+  try {
+    const r = await db.execute({ sql: 'SELECT foto_url FROM alunos WHERE id = ?', args: [req.params.id] });
+    if (!r.rows[0]) return res.status(404).json({ erro: 'Aluno não encontrado.' });
+    res.set('Cache-Control', 'private, max-age=600');
+    res.json({ foto_url: r.rows[0].foto_url || null });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/:id', async (req, res, next) => {
   try {
     let usouEspelho = false;
@@ -922,6 +936,14 @@ router.get('/:id/perfil', async (req, res, next) => {
                 WHERE av.origem='academia' AND av.externo_id = ?
                 ORDER BY ax.data DESC, ax.created_at DESC`,
           args: [alunoId],
+        }).catch((err) => {
+          // Avaliações são armazenadas pelo AvaliaPro e podem não existir em
+          // instalações locais que não compartilham o banco desse módulo.
+          // Nesse caso, o perfil continua carregando sem o histórico de avaliações.
+          if (/no such table: (avaliacoes|avaliandos)/i.test(String(err.message || err))) {
+            return { rows: [] };
+          }
+          throw err;
         }),
         db.execute({
           sql: `SELECT m.*, p.nome as plano_nome, p.tipo as plano_tipo FROM matriculas m JOIN planos p ON p.id = m.plano_id
@@ -978,6 +1000,11 @@ router.get('/:id/perfil', async (req, res, next) => {
     const resultado = await dbResiliente.comFallback('buscarPerfilAluno', buscarOnline, buscarOffline, { timeoutMs: TIMEOUT_PAINEL_MS });
     if (modoOffline) res.setHeader('X-Dados-Offline', '1');
     if (!resultado) return res.status(404).json({ erro: 'Aluno não encontrado.' });
+    // Marca matrículas/contas que são de recorrência no cartão (o painel distingue do plano normal).
+    if (!modoOffline) {
+      await assinaturas.anexarRecorrencia(resultado.matriculas, 'id').catch(() => {});
+      await assinaturas.anexarRecorrencia(resultado.cobrancas, 'matricula_id').catch(() => {});
+    }
     res.json({ ...resultado, modo_offline: modoOffline });
   } catch (err) {
     next(err);

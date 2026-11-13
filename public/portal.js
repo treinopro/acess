@@ -53,6 +53,30 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+// Combos (ex.: avaliação física a cada 90 dias): o aluno escolhe junto com a modalidade e o valor mensal já inclui o adicional.
+function seletorComboHtml(p) {
+  const combos = Array.isArray(p.combos) ? p.combos : [];
+  if (!combos.length) return '';
+  const base = '<option value="nenhum" data-total="' + p.valor_final_centavos + '">Só o plano</option>';
+  const opcoes = combos.map((c) => '<option value="' + escapeHtml(c.id) + '" data-total="' + c.valor_total_centavos + '">' + escapeHtml((function (n) { return n.charAt(0).toUpperCase() + n.slice(1); })(String(c.nome).replace(/^Plano \+ /i, ''))) + ' (+' + formatarMoeda(c.adicional_centavos) + ')</option>').join('');
+  return '<label style="display:block;font-size:12px;margin:10px 0 4px;color:inherit;opacity:.8">Quer incluir uma avaliação física?</label>' +
+    '<select data-combo-de="' + escapeHtml(p.id) + '" style="width:100%;padding:10px;border-radius:8px;font-size:16px">' + base + opcoes + '</select>' +
+    '<small style="display:block;margin-top:4px;opacity:.75">O adicional entra no valor mensal. A liberação da avaliação segue a regra da modalidade.</small>';
+}
+function ligarSeletoresCombo(container) {
+  container.querySelectorAll('select[data-combo-de]').forEach((sel) => {
+    sel.addEventListener('change', () => {
+      const alvo = container.querySelector('[data-preco-de="' + sel.dataset.comboDe + '"]');
+      const total = Number(sel.selectedOptions[0] && sel.selectedOptions[0].dataset.total);
+      if (alvo && Number.isFinite(total)) alvo.textContent = formatarMoeda(total) + '/mês';
+    });
+  });
+}
+function comboEscolhido(container, modalidade) {
+  const sel = container.querySelector('select[data-combo-de="' + modalidade + '"]');
+  return sel ? sel.value : undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Banners/avisos do admin (2026-08-14, ver Recuperação de Clientes >
 // Banners) — mostrados como um feed no topo do dashboard. "Some 1h depois
@@ -95,30 +119,50 @@ async function carregarCardAssinaturaHub() {
   try {
     const d = await api(`/api/portal/assinatura?cpf=${encodeURIComponent(cpfHubAtual)}&senha=${encodeURIComponent(senhaHubAtual)}`);
     if (!d.disponivel) return;
+    const resposta = await api('/api/portal/cadastro/recorrencia/planos?cpf=' + encodeURIComponent(String(cpfHubAtual || '').replace(/\D/g, '')));
+    const opcoes = Array.isArray(resposta.opcoes) ? resposta.opcoes : [];
+    if (!opcoes.length) return;
+    const cards = opcoes.map((p, i) => {
+      const mensal = formatarMoeda(p.valor_final_centavos);
+      const detalhe = p.limite_cobrancas
+        ? String(p.limite_cobrancas) + ' cobranças mensais de ' + mensal
+        : 'Cobrança mensal contínua • Sem permanência mínima';
+      const desconto = p.desconto_centavos > 0
+        ? '<small style="display:block;color:#64748b">De ' + formatarMoeda(p.valor_centavos) + ' por mês</small>' : '';
+      const cor = i === 0 ? '#166534' : '#1d4ed8';
+      return '<div style="background:#fff;color:#0f172a;border-radius:12px;padding:14px"><strong style="font-size:16px">' +
+        escapeHtml(p.nome) + '</strong><div data-preco-de="' + escapeHtml(p.id) + '" style="font-size:27px;font-weight:900;margin:4px 0;color:' + cor + '">' +
+        mensal + '/mês</div>' + desconto + '<div style="font-size:13px;color:#475569">' + escapeHtml(detalhe) +
+        '</div>' + seletorComboHtml(p) + '<button type="button" data-modalidade="' + escapeHtml(p.id) + '" data-rotulo="' + escapeHtml(p.nome) +
+        '" style="width:100%;margin-top:12px;border:0;border-radius:9px;padding:12px;font-size:15px;font-weight:800;color:#fff;background:' +
+        (i === 0 ? '#15803d' : '#1d4ed8') + ';cursor:pointer">Escolher ' + escapeHtml(p.nome) + '</button></div>';
+    }).join('');
     container.innerHTML = `
       <div class="cartao" style="text-align:left;background:linear-gradient(135deg,#0f172a,#1d4ed8);color:#fff;border:0;box-shadow:0 10px 30px rgba(29,78,216,.35)">
-        <div style="display:inline-block;background:rgba(250,204,21,.18);color:#facc15;border:1px solid rgba(250,204,21,.5);border-radius:999px;padding:4px 10px;font-size:11px;font-weight:800;letter-spacing:.06em">⚡ OFERTA PARA VOCÊ</div>
-        <h3 style="margin:10px 0 4px;color:#fff;font-size:20px">Deixe a mensalidade no automático</h3>
-        <p style="margin:0 0 12px;color:#dbeafe">Sem vencimento pra lembrar, sem fila no totem. ${escapeHtml(d.plano)}${d.desconto_centavos > 0
-          ? ` de <s>${formatarMoeda(d.valor_cheio_centavos)}</s> por <strong style="color:#facc15">${formatarMoeda(d.valor_centavos)}</strong> — você economiza ${formatarMoeda(d.desconto_centavos)} a cada cobrança`
-          : ` por ${formatarMoeda(d.valor_centavos)}`}, cobrado sozinho no cartão.</p>
-        <button type="button" id="btn-assinar-automatico" style="width:100%;border:0;border-radius:12px;padding:14px;font-size:16px;font-weight:900;color:#052e16;background:linear-gradient(180deg,#4ade80,#22c55e);box-shadow:0 6px 20px rgba(34,197,94,.45);cursor:pointer">Quero o pagamento automático →</button>
+        <div style="display:inline-block;background:rgba(250,204,21,.18);color:#facc15;border:1px solid rgba(250,204,21,.5);border-radius:999px;padding:4px 10px;font-size:11px;font-weight:800;letter-spacing:.06em">⚡ PAGAMENTO AUTOMÁTICO</div>
+        <h3 style="margin:10px 0 4px;color:#fff;font-size:20px">Escolha como prefere pagar</h3>
+        <p style="margin:0 0 14px;color:#dbeafe">A cobrança acontece automaticamente no cartão. Consulte as condições de cada modalidade antes de confirmar.</p>
+        <div style="display:grid;gap:12px">${cards}</div>
+        <p style="font-size:11px;color:#dbeafe;margin:12px 0 0">O cartão é cadastrado diretamente no Mercado Pago.</p>
       </div>`;
-    document.getElementById('btn-assinar-automatico').addEventListener('click', async (ev) => {
-      const btn = ev.currentTarget;
-      btn.disabled = true;
-      btn.textContent = 'Abrindo…';
-      try {
-        const r = await api('/api/portal/assinatura', {
-          method: 'POST',
-          body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual }),
-        });
-        window.location.href = r.oferta_url;
-      } catch (err) {
-        btn.disabled = false;
-        btn.textContent = 'Quero o pagamento automático →';
-        alert(err.message || 'Não foi possível abrir agora. Tente de novo em instantes.');
-      }
+    ligarSeletoresCombo(container);
+    container.querySelectorAll('[data-modalidade]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const modalidade = btn.dataset.modalidade;
+        const combo = comboEscolhido(container, modalidade);
+        const botoes = Array.from(container.querySelectorAll('[data-modalidade]'));
+        botoes.forEach((b) => { b.disabled = true; b.textContent = 'Abrindo…'; });
+        try {
+          const r = await api('/api/portal/assinatura', {
+            method: 'POST',
+            body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, modalidade, combo }),
+          });
+          window.location.href = r.oferta_url;
+        } catch (err) {
+          botoes.forEach((b) => { b.disabled = false; b.textContent = 'Escolher ' + b.dataset.rotulo; });
+          alert(err.message || 'Não foi possível abrir agora. Tente novamente em instantes.');
+        }
+      });
     });
   } catch {
     // Não é crítico: sem card, o resto do hub segue normal.
@@ -447,7 +491,7 @@ function resetHub() {
   document.getElementById('input-senha-hub').classList.add('oculto');
   document.getElementById('hub-cpf-erro').textContent = '';
   document.getElementById('painel-hub-cpf').classList.remove('oculto');
-  ['painel-hub-primeiro-acesso', 'painel-hub-dashboard', 'painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-comprovante', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-avaliacoes']
+  ['painel-hub-primeiro-acesso', 'painel-hub-dashboard', 'painel-hub-contas', 'painel-hub-conta', 'painel-hub-upgrade-escolha', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-comprovante', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-avaliacoes']
     .forEach((id) => document.getElementById(id).classList.add('oculto'));
   const avisoVencimento = document.getElementById('aviso-vencimento-hub');
   avisoVencimento.classList.add('oculto');
@@ -462,14 +506,134 @@ function resetHub() {
 // facial), fecha esse painel e volta pro menu principal (painel-hub-
 // dashboard); só faz o reset completo pro início quando já está no menu
 // principal (ou na tela de CPF).
+// ---- Biblioteca de exercícios (consulta; só matrícula ativa) ----
+let bibliotecaPortal = [];
+let bibGrupo = 'todos';
+function normalizarBibPortal(t) { return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim(); }
+
+// Miniatura: a imagem cadastrada no exercício; se não houver, a capa do vídeo do YouTube.
+function miniaturaBibliotecaPortal(e) {
+  const idVideo = (String(e.video_url || '').match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([A-Za-z0-9_-]{6,})/) || [])[1];
+  if (e.imagem_url) {
+    // capa que é miniatura do YouTube de OUTRO vídeo (o antigo, antes da troca) não vale: usa a do vídeo atual
+    const antiga = String(e.imagem_url).match(/(?:ytimg\.com|img\.youtube\.com)\/vi(?:_webp)?\/([A-Za-z0-9_-]{6,})\//);
+    if (!(antiga && idVideo && antiga[1] !== idVideo)) return e.imagem_url;
+  }
+  const m = String(e.video_url || '').match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([A-Za-z0-9_-]{6,})/);
+  return m ? 'https://i.ytimg.com/vi/' + m[1] + '/mqdefault.jpg' : '';
+}
+
+function renderizarBibliotecaPortal() {
+  const consulta = document.getElementById('bib-busca').value;
+  const doGrupo = bibliotecaPortal.filter((e) => bibGrupo === 'todos' || e.grupo_muscular === bibGrupo);
+  // Busca tolerante a pronúncia ("tríceps", "tri ceps", "lec pres", "esmite"...); sem o arquivo, cai na busca simples.
+  const lista = window.BuscaFonetica
+    ? window.BuscaFonetica.filtrar(doGrupo, consulta, (e) => e.nome + ' ' + e.grupo_muscular)
+    : doGrupo.filter((e) => { const alvo = normalizarBibPortal(e.nome + ' ' + e.grupo_muscular); return normalizarBibPortal(consulta).split(/\s+/).filter(Boolean).every((t) => alvo.includes(t)); });
+  document.getElementById('bib-contagem').textContent = lista.length + ' de ' + bibliotecaPortal.length + ' exercícios';
+  const alvo = document.getElementById('bib-lista');
+  if (!lista.length) { alvo.innerHTML = '<p style="color:#94a3b8">Nenhum exercício encontrado.</p>'; return; }
+  // Grade de cartões (miniatura 16:9 + título), como uma lista de vídeos. O vídeo só carrega ao tocar no cartão.
+  alvo.innerHTML = '<div class="bib-grid">' + lista.map((e) => {
+    const miniatura = miniaturaBibliotecaPortal(e);
+    const sub = [e.grupo_muscular, e.equipamento].filter(Boolean).map(escapeHtml).join(' · ');
+    return '<button type="button" class="bib-card" data-bib-id="' + escapeHtml(e.id) + '"' + ((e.video_url || e.instrucoes) ? '' : ' disabled') + '>' +
+      '<span class="bib-thumb">' + (miniatura ? '<img src="' + escapeHtml(miniatura) + '" alt="" loading="lazy">' : '') +
+      (e.video_url ? '<span class="bib-play"><span>&#9654;</span></span>' : '') + '</span>' +
+      '<span class="bib-titulo">' + escapeHtml(e.nome) + '</span><span class="bib-sub">' + sub + '</span></button>';
+  }).join('') + '</div>';
+  alvo.querySelectorAll('[data-bib-id]').forEach((card) => card.addEventListener('click', () => abrirVideoBibliotecaPortal(bibliotecaPortal.find((x) => x.id === card.dataset.bibId))));
+}
+
+function abrirVideoBibliotecaPortal(e) {
+  if (!e) return;
+  document.getElementById('bib-modal-titulo').textContent = e.nome;
+  document.getElementById('bib-modal-sub').textContent = [e.grupo_muscular, e.equipamento, e.dificuldade].filter(Boolean).join(' · ');
+  document.getElementById('bib-modal-video').innerHTML = videoPreviewHtml(e.video_url);
+  document.getElementById('bib-modal-instrucoes').textContent = e.instrucoes || '';
+  document.getElementById('bib-modal').classList.remove('oculto');
+}
+function fecharVideoBibliotecaPortal() {
+  document.getElementById('bib-modal').classList.add('oculto');
+  document.getElementById('bib-modal-video').innerHTML = ''; // para o vídeo
+}
+document.getElementById('bib-modal-fechar').addEventListener('click', fecharVideoBibliotecaPortal);
+document.getElementById('bib-modal').addEventListener('click', (ev) => { if (ev.target.id === 'bib-modal') fecharVideoBibliotecaPortal(); });
+document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') fecharVideoBibliotecaPortal(); });
+
+function renderizarGruposBibliotecaPortal() {
+  const grupos = ['todos', ...new Set(bibliotecaPortal.map((e) => e.grupo_muscular))];
+  const box = document.getElementById('bib-grupos');
+  box.innerHTML = grupos.map((g) => '<button type="button" class="tag" data-bib-grupo="' + escapeHtml(g) + '" style="border:none;cursor:pointer;margin:0;padding:8px 12px;font-size:14px' + (g === bibGrupo ? ';background:#10b981;color:#052e22;font-weight:700' : '') + '">' + (g === 'todos' ? 'Todos' : escapeHtml(g)) + '</button>').join('');
+  box.querySelectorAll('[data-bib-grupo]').forEach((b) => b.addEventListener('click', () => { bibGrupo = b.dataset.bibGrupo; renderizarGruposBibliotecaPortal(); renderizarBibliotecaPortal(); }));
+}
+
+document.getElementById('btn-abrir-biblioteca').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-abrir-biblioteca');
+  btn.disabled = true;
+  document.getElementById('bib-card-erro').textContent = '';
+  try {
+    const resp = await api('/api/portal/biblioteca?cpf=' + encodeURIComponent(cpfHubAtual) + '&senha=' + encodeURIComponent(senhaHubAtual));
+    bibliotecaPortal = resp.exercicios || [];
+    bibGrupo = 'todos';
+    ocultarPaineisHub();
+    document.getElementById('painel-hub-biblioteca').classList.remove('oculto');
+    document.getElementById('bib-erro').textContent = '';
+    document.getElementById('bib-busca').value = '';
+    renderizarGruposBibliotecaPortal();
+    renderizarBibliotecaPortal();
+  } catch (err) {
+    document.getElementById('bib-card-erro').textContent = err.message || 'Não foi possível abrir a biblioteca agora.';
+  }
+  btn.disabled = false;
+});
+document.getElementById('bib-busca').addEventListener('input', renderizarBibliotecaPortal);
+
+// Pesquisa por voz: usa o reconhecimento de voz do próprio navegador (pt-BR). Sem suporte, o botão nem aparece.
+(function ligarVozBiblioteca() {
+  const Reconhecimento = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const btn = document.getElementById('btn-bib-voz');
+  if (!Reconhecimento || !btn) return;
+  btn.classList.remove('oculto');
+  const campo = document.getElementById('bib-busca');
+  const status = document.getElementById('bib-voz-status');
+  let rec = null;
+  let ouvindo = false;
+  function parar() { try { rec && rec.stop(); } catch (e) { /* já parado */ } }
+  function fim() { ouvindo = false; btn.style.background = '#10b981'; btn.innerHTML = '&#127908;'; }
+  btn.addEventListener('click', () => {
+    if (ouvindo) { parar(); return; }
+    document.getElementById('bib-erro').textContent = '';
+    rec = new Reconhecimento();
+    rec.lang = 'pt-BR';
+    rec.interimResults = true;
+    rec.continuous = false;
+    rec.maxAlternatives = 1;
+    rec.onstart = () => { ouvindo = true; btn.style.background = '#ef4444'; btn.innerHTML = '&#9724;'; status.textContent = 'Ouvindo... fale o nome do exercício ou o grupo.'; };
+    rec.onresult = (ev) => {
+      let texto = '';
+      for (let i = 0; i < ev.results.length; i += 1) texto += ev.results[i][0].transcript;
+      campo.value = texto.replace(/[.,!?]+$/g, '').trim();
+      renderizarBibliotecaPortal();
+    };
+    rec.onerror = (ev) => {
+      const msgs = { 'not-allowed': 'Permita o uso do microfone no navegador para pesquisar por voz.', 'service-not-allowed': 'Permita o uso do microfone no navegador para pesquisar por voz.', 'no-speech': 'Não ouvi nada. Toque no microfone e tente de novo.', 'audio-capture': 'Não encontrei um microfone neste aparelho.', network: 'Sem conexão para reconhecer a voz. Digite a pesquisa.' };
+      document.getElementById('bib-erro').textContent = msgs[ev.error] || 'Não consegui reconhecer a voz agora. Digite a pesquisa.';
+    };
+    rec.onend = () => { fim(); status.textContent = ''; };
+    try { rec.start(); } catch (e) { fim(); }
+  });
+})();
+
 document.getElementById('btn-voltar-hub').addEventListener('click', () => {
-  const SUBPAINEIS_HUB = ['painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-avaliacoes', 'painel-hub-notificacoes'];
+  const SUBPAINEIS_HUB = ['painel-hub-conta', 'painel-hub-upgrade-escolha', 'painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-avaliacoes', 'painel-hub-notificacoes', 'painel-hub-biblioteca'];
   const painelAberto = SUBPAINEIS_HUB.find((id) => !document.getElementById(id).classList.contains('oculto'));
   if (painelAberto) {
     if (painelAberto === 'painel-hub-pix') pararPollPixHub();
     if (painelAberto === 'painel-hub-facial') pararCamera();
     ocultarPaineisHub();
-    document.getElementById('painel-hub-dashboard').classList.remove('oculto');
+    // Da página de uma conta, volta para a lista de contas; da escolha de pagamento do plano, para a lista de planos.
+    document.getElementById(painelAberto === 'painel-hub-conta' ? 'painel-hub-contas' : (painelAberto === 'painel-hub-upgrade-escolha' ? 'painel-hub-upgrade' : 'painel-hub-dashboard')).classList.remove('oculto');
     return;
   }
   resetHub();
@@ -717,6 +881,15 @@ let avaliacoesHubAtual = [];
 const CADENCIA_AVALIACAO_DIAS = 90;
 const AVISO_AVALIACAO_ANTECEDENCIA_DIAS = 15;
 
+function htmlDireitoAvaliacao(d) {
+  if (!d || !d.tem_combo) return '';
+  const nome = escapeHtml(String(d.combo_nome || 'avaliação').replace(/^Plano \+ /i, ''));
+  if (d.disponivel) return '<strong style="color:#10b981">✅ Sua ' + nome + ' está liberada.</strong> Fale com a recepção para agendar.';
+  if (d.motivo === 'aguardando_terceira_cobranca') return '🔒 Sua ' + nome + ' é liberada após a 3ª mensalidade paga (faltam ' + d.faltam_cobrancas + ').';
+  if (d.disponivel_em) return '⏳ Sua ' + nome + ' será liberada em ' + formatarData(d.disponivel_em) + ' (a avaliação atual ainda está válida).';
+  return '';
+}
+
 async function carregarAvaliacoesHub() {
   const cardAvaliacao = document.getElementById('card-avaliacao');
   const botaoVer = document.getElementById('btn-ver-avaliacoes-hub');
@@ -724,7 +897,12 @@ async function carregarAvaliacoesHub() {
   try {
     const resp = await api(`/api/portal/avaliacoes?cpf=${encodeURIComponent(cpfHubAtual)}&senha=${encodeURIComponent(senhaHubAtual)}`);
     avaliacoesHubAtual = resp.avaliacoes || [];
-    if (avaliacoesHubAtual.length) {
+    const direitoHtml = htmlDireitoAvaliacao(resp.direito);
+    if (!avaliacoesHubAtual.length && direitoHtml) {
+      cardAvaliacao.classList.remove('oculto');
+      botaoVer.classList.add('oculto');
+      resumo.innerHTML = direitoHtml;
+    } else if (avaliacoesHubAtual.length) {
       cardAvaliacao.classList.remove('oculto');
       botaoVer.classList.remove('oculto');
       const ultima = avaliacoesHubAtual[avaliacoesHubAtual.length - 1];
@@ -737,7 +915,7 @@ async function carregarAvaliacoesHub() {
       } else if (diasParaVencer <= AVISO_AVALIACAO_ANTECEDENCIA_DIAS) {
         avisoHtml = `<strong style="color:#fbbf24">⏳ Sua avaliação vence em ${diasParaVencer} dia${diasParaVencer === 1 ? '' : 's'} — hora de renovar.</strong><br>`;
       }
-      resumo.innerHTML = `${avisoHtml}Última avaliação em ${formatarData(ultima.data)}. Toque para ver sua evolução.`;
+      resumo.innerHTML = `${avisoHtml}Última avaliação em ${formatarData(ultima.data)}. Toque para ver sua evolução.${direitoHtml ? '<br>' + direitoHtml : ''}`;
     } else {
       botaoVer.classList.add('oculto');
     }
@@ -1290,7 +1468,7 @@ function atualizarAvisoVencimento(contas) {
 }
 
 function ocultarPaineisHub() {
-  ['painel-hub-dashboard', 'painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-comprovante', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-notificacoes', 'painel-hub-avaliacoes']
+  ['painel-hub-dashboard', 'painel-hub-contas', 'painel-hub-conta', 'painel-hub-upgrade-escolha', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-comprovante', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-notificacoes', 'painel-hub-avaliacoes', 'painel-hub-biblioteca']
     .forEach((id) => document.getElementById(id).classList.add('oculto'));
   irParaTopo();
 }
@@ -1311,15 +1489,19 @@ function renderizarContasHub(contas) {
   contasSelecionadasHub = {};
   const alvo = document.getElementById('lista-contas-hub');
   alvo.innerHTML = contas.map((c) => `
-    <label class="item-conta">
-      <input type="checkbox" data-id="${c.id}" data-valor="${c.valor_centavos}" checked />
-      <div class="info">
-        <div class="desc">${c.descricao || 'Conta'}</div>
+    <div class="item-conta">
+      <input type="checkbox" data-id="${c.id}" data-valor="${c.valor_centavos}" checked aria-label="Incluir no pagamento" />
+      <div class="info" data-abrir-conta="${c.id}" role="button" tabindex="0">
+        <div class="desc">${escapeHtml(String(c.descricao || 'Conta').replace(/[\s-]+$/, ''))}</div>
         <div class="venc">${c.vencimento ? `Vencimento: ${formatarData(c.vencimento)}` : ''}</div>
       </div>
-      <div class="valor">${formatarMoeda(c.valor_centavos)}</div>
-    </label>
+      <div class="valor" data-abrir-conta="${c.id}" role="button">${formatarMoeda(c.valor_centavos)}</div>
+      <span class="abrir" data-abrir-conta="${c.id}" aria-hidden="true">&rsaquo;</span>
+    </div>
   `).join('');
+  alvo.querySelectorAll('[data-abrir-conta]').forEach((el) => {
+    el.addEventListener('click', () => abrirPaginaContaHub(contas.find((x) => x.id === el.dataset.abrirConta)));
+  });
   contas.forEach((c) => { contasSelecionadasHub[c.id] = c.valor_centavos; });
 
   alvo.querySelectorAll('input[type=checkbox]').forEach((chk) => {
@@ -1330,6 +1512,26 @@ function renderizarContasHub(contas) {
     });
   });
   atualizarTotalContasHub();
+  mostrarBannerCartaoContas(contas);
+}
+
+// Destaque na lista de contas: oferece o cartão automático (se o aluno puder) e abre a página da mensalidade.
+async function mostrarBannerCartaoContas(contas) {
+  const banner = document.getElementById('banner-cartao-contas');
+  if (!banner) return;
+  banner.classList.add('oculto');
+  const alvo = contas.find((c) => /^Mensalidade/i.test(c.descricao || ''));
+  if (!alvo) return;
+  try {
+    const d = await api('/api/portal/assinatura?cpf=' + encodeURIComponent(cpfHubAtual) + '&senha=' + encodeURIComponent(senhaHubAtual));
+    if (!d.disponivel) return;
+    banner.classList.remove('oculto');
+    document.getElementById('btn-banner-cartao').onclick = async () => {
+      await abrirPaginaContaHub(alvo);
+      const b = document.getElementById('btn-conta-cartao');
+      if (b && !b.classList.contains('oculto')) b.click();
+    };
+  } catch (e) { /* sem cartão: só Pix */ }
 }
 
 function atualizarTotalContasHub() {
@@ -1789,25 +1991,196 @@ document.getElementById('btn-abrir-upgrade').addEventListener('click', async () 
   }
 });
 
+// ---------------------------------------------------------------------------
+// Cartão automático (recorrência) nas telas do Meu espaço: cartões das modalidades com escolha de combo.
+// Usado pela página da conta e pela escolha de pagamento ao assinar um plano.
+// ---------------------------------------------------------------------------
+function htmlCartoesRecorrencia(opcoes) {
+  return opcoes.map((p) => {
+    const mensal = formatarMoeda(p.valor_final_centavos);
+    const detalhe = p.limite_cobrancas
+      ? p.limite_cobrancas + ' cobranças mensais (uma por mês, durante ' + p.limite_cobrancas + ' meses)'
+      : 'Cobrança automática todo mês • Sem permanência mínima';
+    const desconto = p.desconto_centavos > 0 ? '<small style="display:block;color:#64748b">De ' + formatarMoeda(p.valor_centavos) + ' por mês</small>' : '';
+    return '<div style="background:#0f172a;border-radius:10px;padding:12px;margin:10px 0"><strong>' + escapeHtml(p.nome) +
+      '</strong><div data-preco-de="' + escapeHtml(p.id) + '" style="font-size:23px;font-weight:800;color:#10b981">' + mensal + '/mês</div>' + desconto +
+      '<small>' + escapeHtml(detalhe) + '</small>' + (p.limite_cobrancas >= 12 ? '<small style="display:block;margin-top:4px;color:#fbbf24">Compromisso de ' + p.limite_cobrancas + ' meses: cancelando antes do fim, devolve-se o desconto recebido (' + (p.desconto_centavos > 0 ? formatarMoeda(p.desconto_centavos) + ' por mês cobrado' : 'conforme contrato') + '). Sem custo nos 7 primeiros dias.</small>' : '') + seletorComboHtml(p) +
+      '<button type="button" data-modalidade="' + escapeHtml(p.id) + '" data-rotulo="' + escapeHtml(p.nome) + '" class="botao-grande secundario" style="margin-top:8px">Escolher ' + escapeHtml(p.nome) + '</button></div>';
+  }).join('');
+}
+
+const TEXTO_RECORRENCIA_HUB = '<div style="background:#0f172a;border:1px solid #10b981;border-radius:10px;padding:12px;margin:10px 0;font-size:14px;line-height:1.45">' +
+  '<div style="font-weight:800;color:#10b981">🔁 Como funciona o pagamento automático</div>' +
+  '<div style="margin-top:6px">Na próxima página você cadastra o cartão uma única vez. A mensalidade passa a ser <strong>cobrada automaticamente no cartão</strong> todo mês, sem você precisar lembrar.</div>' +
+  '<div style="margin-top:6px">💳 <strong>Não ocupa o limite do cartão:</strong> é cobrado só o valor de cada mês.</div>' +
+  '<div style="margin-top:6px">🙋 Para cancelar, é só falar com a <strong>recepção</strong>.</div></div>';
+
+// Carrega e mostra as opções de recorrência em `container`. `aoEscolher({ modalidade, combo })` devolve uma Promise
+// com a URL do Mercado Pago. Retorna false se não houver nenhuma opção disponível para este aluno.
+async function mostrarRecorrenciaHub(container, aoEscolher, erroEl) {
+  let opcoes = [];
+  try {
+    const dados = await api('/api/portal/cadastro/recorrencia/planos?cpf=' + encodeURIComponent(String(cpfHubAtual || '').replace(/\D/g, '')));
+    opcoes = Array.isArray(dados.opcoes) ? dados.opcoes : [];
+  } catch (e) { /* sem recorrência: só o Pix */ }
+  if (!opcoes.length) { container.innerHTML = ''; return false; }
+  container.innerHTML = TEXTO_RECORRENCIA_HUB + htmlCartoesRecorrencia(opcoes);
+  ligarSeletoresCombo(container);
+  container.querySelectorAll('[data-modalidade]').forEach((btn) => btn.addEventListener('click', async () => {
+    const modalidade = btn.dataset.modalidade;
+    const combo = comboEscolhido(container, modalidade);
+    const botoes = Array.from(container.querySelectorAll('button'));
+    botoes.forEach((b) => { b.disabled = true; });
+    btn.textContent = 'Abrindo Mercado Pago…';
+    if (erroEl) erroEl.textContent = '';
+    try {
+      const url = await aoEscolher({ modalidade, combo });
+      if (!url) throw new Error('O Mercado Pago não retornou o endereço da oferta.');
+      window.location.href = url;
+    } catch (err) {
+      if (erroEl) erroEl.textContent = err.message || 'Não foi possível abrir o cartão agora.';
+      botoes.forEach((b) => { b.disabled = false; });
+      btn.textContent = 'Escolher ' + btn.dataset.rotulo;
+    }
+  }));
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Página de uma conta em aberto: detalhes, valor em destaque e formas de pagamento (Pix e cartão automático).
+// ---------------------------------------------------------------------------
+async function abrirPaginaContaHub(conta) {
+  if (!conta) return;
+  ocultarPaineisHub();
+  const $ = (id) => document.getElementById(id);
+  const painel = $('painel-hub-conta');
+  painel.classList.remove('oculto');
+  const hoje = new Date().toISOString().slice(0, 10);
+  const venc = String(conta.vencimento || '').slice(0, 10);
+  const atrasada = !!venc && venc < hoje;
+  const dias = atrasada ? Math.round((new Date(hoje) - new Date(venc)) / 86400000) : 0;
+  const partes = String(conta.descricao || 'Conta').split(' - ');
+  $('conta-titulo').textContent = partes[0] || 'Conta';
+  $('conta-subtitulo').textContent = partes.slice(1).join(' - ').replace(/[\s-]+$/, '').trim();
+  const selo = $('conta-vencimento');
+  selo.textContent = venc ? formatarData(venc) : '—';
+  selo.className = 'conta-selo' + (atrasada ? ' atrasada' : '');
+  $('conta-situacao').textContent = atrasada ? (dias === 1 ? 'Venceu há 1 dia' : 'Venceu há ' + dias + ' dias') : 'Em dia';
+  $('conta-valor').textContent = formatarMoeda(conta.valor_centavos);
+  $('conta-erro').textContent = '';
+  $('conta-recorrencia').innerHTML = '';
+  $('conta-aviso').innerHTML = '';
+  const btnPix = $('btn-conta-pix'), btnCartao = $('btn-conta-cartao');
+  btnPix.disabled = false;
+  btnCartao.classList.add('oculto');
+  $('conta-destaque-cartao').classList.add('oculto');
+  btnPix.classList.remove('primario'); btnPix.classList.add('secundario');
+
+  btnPix.onclick = async () => {
+    btnPix.disabled = true;
+    try {
+      const resp = await api('/api/portal/contas/pagar', { method: 'POST', body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, cobranca_ids: [conta.id] }) });
+      abrirPagamentoPixHub({
+        titulo: 'Pagar ' + formatarMoeda(resp.valor_centavos),
+        qrCodePix: resp.qr_code_pix,
+        qrCodePixImagem: resp.qr_code_pix_imagem,
+        statusUrl: '/api/portal/contas/status/' + resp.pagamento_id,
+        aoConfirmar: (statusResp) => {
+          mostrarComprovanteHub({ saudacao: 'Pagamento aprovado, ' + (statusResp.aluno_nome || '') + '!', itens: statusResp.itens, total: statusResp.valor_centavos });
+          carregarResumoContasHub();
+        },
+      });
+    } catch (err) { $('conta-erro').textContent = err.message; }
+    btnPix.disabled = false;
+  };
+
+  // O cartão automático só aparece para quem pode (plano mensal, sem assinatura ativa) e com modalidades disponíveis.
+  try {
+    const d = await api('/api/portal/assinatura?cpf=' + encodeURIComponent(cpfHubAtual) + '&senha=' + encodeURIComponent(senhaHubAtual));
+    if (d.disponivel) { $('conta-destaque-cartao').classList.remove('oculto'); btnPix.textContent = 'Pagar só esta conta com Pix'; }
+    if (!d.disponivel && d.motivo === 'mensalidades_anteriores' && (d.mensalidades_anteriores || []).length) {
+      // Mês anterior em aberto: essa conta só por Pix. O cartão automático cobre a mensalidade do mês corrente.
+      const ant = d.mensalidades_anteriores;
+      const box = $('conta-aviso');
+      box.innerHTML = '<div style="background:#1e293b;border:1px solid #f59e0b;border-radius:12px;padding:14px;margin-top:12px;font-size:14px;line-height:1.5">' +
+        '<div style="font-weight:800;color:#f59e0b">Cartão automático indisponível por enquanto</div>' +
+        '<div style="margin-top:6px">Você tem <strong>' + ant.length + (ant.length === 1 ? ' mensalidade' : ' mensalidades') + ' de mês anterior em aberto</strong> (' + formatarMoeda(d.total_anteriores_centavos) + '). Essas contas são pagas somente por <strong>Pix</strong>. Depois de quitá-las, você pode ativar o cartão automático para a mensalidade do mês corrente.</div>' +
+        '<button type="button" id="btn-pagar-anteriores" class="btn" style="margin-top:10px;width:100%">Pagar mensalidades anteriores por Pix</button></div>';
+      $('btn-pagar-anteriores').onclick = async () => {
+        try {
+          const resp = await api('/api/portal/contas/pagar', { method: 'POST', body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, cobranca_ids: ant.map((c) => c.id) }) });
+          abrirPagamentoPixHub({
+            titulo: 'Pagar ' + formatarMoeda(resp.valor_centavos),
+            qrCodePix: resp.qr_code_pix,
+            qrCodePixImagem: resp.qr_code_pix_imagem,
+            statusUrl: '/api/portal/contas/status/' + resp.pagamento_id,
+            aoConfirmar: (statusResp) => {
+              mostrarComprovanteHub({ saudacao: 'Pagamento aprovado, ' + (statusResp.aluno_nome || '') + '!', itens: statusResp.itens, total: statusResp.valor_centavos });
+              carregarResumoContasHub();
+            },
+          });
+        } catch (err) { $('conta-erro').textContent = err.message; }
+      };
+      return;
+    }
+    if (!d.disponivel) { btnPix.textContent = 'Pagar com Pix'; btnPix.classList.remove('secundario'); btnPix.classList.add('primario'); return; }
+    btnCartao.classList.remove('oculto');
+    btnCartao.onclick = async () => {
+      btnCartao.classList.add('oculto');
+      const ok = await mostrarRecorrenciaHub($('conta-recorrencia'), async ({ modalidade, combo }) => {
+        const r = await api('/api/portal/assinatura', { method: 'POST', body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, modalidade, combo }) });
+        return r.oferta_url;
+      }, $('conta-erro'));
+      if (!ok) { $('conta-erro').textContent = 'No momento não há opções de cartão automático disponíveis. Você pode pagar com Pix.'; }
+    };
+  } catch (e) { /* sem cartão automático: segue só com o Pix */ }
+}
+
+// ---------------------------------------------------------------------------
+// Assinar / trocar de plano: cria a pré-matrícula e deixa o aluno escolher entre Pix e cartão automático.
+// ---------------------------------------------------------------------------
 async function assinarPlanoHub(planoId) {
   try {
     const resp = await api('/api/portal/upgrade', {
       method: 'POST',
-      body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, plano_id: planoId }),
+      body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, plano_id: planoId, escolher: true }),
     });
-    abrirPagamentoPixHub({
-      titulo: `Assinar plano — ${formatarMoeda(resp.valor_centavos)}`,
-      qrCodePix: resp.qr_code_pix,
-      qrCodePixImagem: resp.qr_code_pix_imagem,
-      statusUrl: `/api/portal/upgrade/status/${resp.cobranca_id}`,
-      aoConfirmar: (statusResp) => {
-        mostrarComprovanteHub({
-          saudacao: `Plano ativado, ${statusResp.aluno_nome || ''}! Bem-vindo(a).`,
-          itens: null,
-          total: null,
-        });
-      },
-    });
+    const aoConfirmarPlano = (statusResp) => {
+      mostrarComprovanteHub({ saudacao: `Plano ativado, ${statusResp.aluno_nome || ''}! Bem-vindo(a).`, itens: null, total: null });
+    };
+    const iniciarPix = async () => {
+      const pix = await api('/api/portal/cadastro/pix', { method: 'POST', body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, cobranca_id: resp.cobranca_id }) });
+      abrirPagamentoPixHub({
+        titulo: `Assinar plano — ${formatarMoeda(pix.valor_centavos)}`,
+        qrCodePix: pix.qr_code_pix,
+        qrCodePixImagem: pix.qr_code_pix_imagem,
+        statusUrl: `/api/portal/upgrade/status/${resp.cobranca_id}`,
+        aoConfirmar: aoConfirmarPlano,
+      });
+    };
+
+    // Só plano mensal tem cartão automático; os demais vão direto para o Pix, como antes.
+    if (resp.plano_tipo !== 'mensal') return await iniciarPix();
+
+    ocultarPaineisHub();
+    const $ = (id) => document.getElementById(id);
+    $('painel-hub-upgrade-escolha').classList.remove('oculto');
+    $('upg-escolha-titulo').textContent = 'Assinar ' + (resp.plano_nome || 'plano');
+    $('upg-escolha-texto').textContent = 'Escolha como prefere pagar. Seu plano é ativado assim que o pagamento for confirmado.';
+    $('upg-escolha-erro').textContent = '';
+    const btnPix = $('btn-upg-pix');
+    btnPix.textContent = 'Pagar com Pix — ' + formatarMoeda(resp.valor_centavos);
+    btnPix.disabled = false;
+    btnPix.onclick = async () => {
+      btnPix.disabled = true;
+      try { await iniciarPix(); } catch (err) { $('upg-escolha-erro').textContent = err.message; }
+      btnPix.disabled = false;
+    };
+    const ok = await mostrarRecorrenciaHub($('upg-recorrencia'), async ({ modalidade, combo }) => {
+      const r = await api('/api/portal/cadastro/recorrencia', { method: 'POST', body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual, matricula_id: resp.matricula_id, modalidade, combo }) });
+      return r.oferta_url;
+    }, $('upg-escolha-erro'));
+    if (!ok) $('upg-escolha-texto').textContent = 'Seu plano é ativado assim que o pagamento por Pix for confirmado.';
   } catch (err) {
     alert(err.message);
   }
@@ -1978,12 +2351,18 @@ document.getElementById('btn-abrir-facial-hub').addEventListener('click', () => 
 let cadastroPortalCpfAtual = null;
 let cadastroPortalSenhaAtual = null; // senha do portal já gerada no cadastro (ver POST /api/portal/cadastro)
 let cadastroPortalPollTimer = null;
+let cadastroPortalCobrancaId = null;
+let cadastroPortalMatriculaId = null;
+let cadastroPortalCronograma = null;
 
 function resetCadastroPortal() {
   pararPollCadastroPortal();
   pararCamera();
   cadastroPortalCpfAtual = null;
   cadastroPortalSenhaAtual = null;
+  cadastroPortalCobrancaId = null;
+  cadastroPortalMatriculaId = null;
+  cadastroPortalCronograma = null;
   document.getElementById('portal-cadastro-nome').value = '';
   document.getElementById('portal-cadastro-cpf').value = '';
   document.getElementById('portal-cadastro-telefone').value = '';
@@ -1992,8 +2371,12 @@ function resetCadastroPortal() {
   document.getElementById('portal-cadastro-indicado-cpf').value = '';
   document.getElementById('portal-cadastro-erro').textContent = '';
   document.getElementById('portal-cadastro-senha-caixa').textContent = '';
+  document.getElementById('portal-cadastro-senha-pendente').textContent = '';
   document.getElementById('painel-cadastro-portal-form').classList.remove('oculto');
   document.getElementById('painel-cadastro-portal-pagamento').classList.add('oculto');
+  document.getElementById('cadastro-pix-conteudo').classList.add('oculto');
+  document.getElementById('oferta-recorrencia-novo-aluno').classList.remove('oculto');
+  document.getElementById('oferta-recorrencia-novo-aluno').innerHTML = '';
   document.getElementById('painel-cadastro-portal-sucesso').classList.add('oculto');
   document.getElementById('painel-cadastro-portal-facial').classList.add('oculto');
   document.getElementById('btn-copiar-pix-cadastro-portal').classList.add('oculto');
@@ -2020,102 +2403,90 @@ document.getElementById('btn-voltar-cadastro-portal').addEventListener('click', 
   mostrarPagina('pagina-inicio');
 });
 
+
 document.getElementById('btn-portal-cadastro-continuar').addEventListener('click', async () => {
-  const nome = document.getElementById('portal-cadastro-nome').value.trim();
-  const cpf = document.getElementById('portal-cadastro-cpf').value.trim();
-  const telefone = document.getElementById('portal-cadastro-telefone').value.trim();
-  const email = document.getElementById('portal-cadastro-email').value.trim();
-  const dataNascimento = document.getElementById('portal-cadastro-nascimento').value;
-  const planoId = document.getElementById('portal-cadastro-plano').value;
-  const indicadoPorCpf = document.getElementById('portal-cadastro-indicado-cpf').value.trim();
-  const erroEl = document.getElementById('portal-cadastro-erro');
-  erroEl.textContent = '';
-
-  if (!nome || !cpf || !telefone || !email || !dataNascimento || !planoId) {
-    erroEl.textContent = 'Preencha nome, CPF, telefone, e-mail, data de nascimento e escolha um plano.';
-    return;
-  }
-
-  try {
-    const resp = await api('/api/portal/cadastro', {
-      method: 'POST',
-      body: JSON.stringify({
-        nome, cpf, telefone, email, data_nascimento: dataNascimento, plano_id: planoId, indicado_por_cpf: indicadoPorCpf || null,
-      }),
-    });
-    cadastroPortalCpfAtual = cpf;
-
-    // Fluxo "visitante" (2026-07): sem Pix/matrícula — o próprio POST já
-    // devolve o cadastro concluído. Sem senha própria ainda (será gerada no
-    // primeiro login via "Já sou aluno", ver GET /api/portal/aluno).
-    if (resp.visitante) {
-      document.getElementById('painel-cadastro-portal-form').classList.add('oculto');
-      document.getElementById('painel-cadastro-portal-sucesso').classList.remove('oculto');
-      document.getElementById('portal-cadastro-sucesso-msg').textContent = `Cadastro de visitante concluído! Bem-vindo(a), ${resp.aluno_nome || ''}. Use "Já sou aluno" com seu CPF para acessar o portal e ver sua senha.`;
-      document.getElementById('portal-cadastro-senha-caixa').textContent = '';
-      return;
-    }
-
-    cadastroPortalSenhaAtual = resp.senha_acesso;
-    document.getElementById('painel-cadastro-portal-form').classList.add('oculto');
-    document.getElementById('painel-cadastro-portal-pagamento').classList.remove('oculto');
-    document.getElementById('portal-cadastro-valor').textContent = `Valor: ${formatarMoeda(resp.valor_centavos)}`;
-    document.getElementById('portal-cadastro-status').textContent = 'Aguardando pagamento...';
-
-    const alvo = document.getElementById('qrcode-cadastro-portal');
-    alvo.innerHTML = '';
-    const btnCopiar = document.getElementById('btn-copiar-pix-cadastro-portal');
-
-    if (resp.qr_code_pix_imagem) {
-      const img = document.createElement('img');
-      img.src = `data:image/png;base64,${resp.qr_code_pix_imagem}`;
-      img.style.width = '220px';
-      img.style.height = '220px';
-      img.style.borderRadius = '12px';
-      alvo.appendChild(img);
-    } else if (resp.qr_code_pix) {
-      // eslint-disable-next-line no-new
-      new QRCode(alvo, { text: resp.qr_code_pix, width: 220, height: 220, colorDark: '#0f172a', colorLight: '#ffffff' });
-    }
-
-    if (resp.qr_code_pix) {
-      btnCopiar.classList.remove('oculto');
-      btnCopiar.onclick = async () => {
-        try {
-          await navigator.clipboard.writeText(resp.qr_code_pix);
-          btnCopiar.textContent = 'Código copiado!';
-          setTimeout(() => { btnCopiar.textContent = 'Copiar código Pix'; }, 2000);
-        } catch {
-          alert(`Não foi possível copiar automaticamente. Código Pix:\n${resp.qr_code_pix}`);
-        }
-      };
-    } else {
-      btnCopiar.classList.add('oculto');
-    }
-
-    iniciarPollCadastroPortal(resp.cobranca_id);
-  } catch (err) {
-    erroEl.textContent = err.message;
-  }
+  const nome=document.getElementById('portal-cadastro-nome').value.trim(),cpf=document.getElementById('portal-cadastro-cpf').value.trim();
+  const telefone=document.getElementById('portal-cadastro-telefone').value.trim(),email=document.getElementById('portal-cadastro-email').value.trim();
+  const dataNascimento=document.getElementById('portal-cadastro-nascimento').value,planoId=document.getElementById('portal-cadastro-plano').value;
+  const indicadoPorCpf=document.getElementById('portal-cadastro-indicado-cpf').value.trim(),erroEl=document.getElementById('portal-cadastro-erro');
+  const btn=document.getElementById('btn-portal-cadastro-continuar');erroEl.textContent='';
+  if(!nome||!cpf||!telefone||!email||!dataNascimento||!planoId){erroEl.textContent='Preencha nome, CPF, telefone, e-mail, data de nascimento e escolha um plano.';return;}
+  btn.disabled=true;btn.textContent='Salvando cadastro…';
+  try{
+    const resp=await api('/api/portal/cadastro',{method:'POST',body:JSON.stringify({nome,cpf,telefone,email,data_nascimento:dataNascimento,plano_id:planoId,indicado_por_cpf:indicadoPorCpf||null})});
+    cadastroPortalCpfAtual=cpf;
+    if(resp.visitante){document.getElementById('painel-cadastro-portal-form').classList.add('oculto');document.getElementById('painel-cadastro-portal-sucesso').classList.remove('oculto');document.getElementById('portal-cadastro-sucesso-msg').textContent='Cadastro de visitante concluído! Bem-vindo(a), '+(resp.aluno_nome||'')+'. Use "Já sou aluno" com seu CPF para acessar o portal e ver sua senha.';document.getElementById('portal-cadastro-senha-caixa').textContent='';return;}
+    cadastroPortalSenhaAtual=resp.senha_acesso;cadastroPortalCobrancaId=resp.cobranca_id;cadastroPortalMatriculaId=resp.matricula_id;cadastroPortalCronograma=resp.cronograma_recorrencia||null;
+    document.getElementById('painel-cadastro-portal-form').classList.add('oculto');document.getElementById('painel-cadastro-portal-pagamento').classList.remove('oculto');
+    document.getElementById('portal-cadastro-valor').textContent='Plano escolhido: '+formatarMoeda(resp.valor_centavos);
+    document.getElementById('portal-cadastro-senha-pendente').textContent=cadastroPortalSenhaAtual||'';
+    document.getElementById('portal-cadastro-senha-caixa').textContent=cadastroPortalSenhaAtual||'';
+    document.getElementById('cadastro-pix-conteudo').classList.add('oculto');
+    carregarOfertaRecorrenciaNovoAluno();
+  }catch(err){erroEl.textContent=err.message;}finally{btn.disabled=false;btn.textContent='Continuar';}
 });
 
-function iniciarPollCadastroPortal(cobrancaId) {
-  pararPollCadastroPortal();
-  const statusEl = document.getElementById('portal-cadastro-status');
-  cadastroPortalPollTimer = setInterval(async () => {
-    try {
-      const resp = await api(`/api/portal/cadastro/status/${cobrancaId}`);
-      if (resp.pago) {
-        pararPollCadastroPortal();
-        document.getElementById('painel-cadastro-portal-pagamento').classList.add('oculto');
-        document.getElementById('painel-cadastro-portal-sucesso').classList.remove('oculto');
-        document.getElementById('portal-cadastro-sucesso-msg').textContent = `Pagamento confirmado! Bem-vindo(a), ${resp.aluno_nome || ''}. Sua matrícula já está ativa.`;
-        document.getElementById('portal-cadastro-senha-caixa').textContent = cadastroPortalSenhaAtual || '';
-      }
-    } catch (err) {
-      statusEl.textContent = `Erro ao consultar pagamento: ${err.message}`;
-    }
-  }, 4000);
+function formatarDataBR(iso){const m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso||''));return m?m[3]+'/'+m[2]+'/'+m[1]:'';}
+function blocoExplicativoRecorrencia(){
+ const c=cadastroPortalCronograma;
+ const prox=c&&c.proxima_cobranca?formatarDataBR(c.proxima_cobranca):'';
+ const primeira='A primeira cobrança acontece assim que você cadastrar o cartão, na próxima página, e a matrícula é ativada na hora.';
+ const proxima=prox?'<div style="margin-top:6px">📅 <strong>Próxima cobrança automática: dia '+prox+'</strong>, e depois todo mês no mesmo dia da sua adesão.</div>':'<div style="margin-top:6px">📅 <strong>As próximas cobranças são automáticas, todo mês, no mesmo dia da sua adesão.</strong></div>';
+ return '<div style="background:#0f172a;border:1px solid #10b981;border-radius:10px;padding:12px;margin:10px 0;font-size:14px;line-height:1.45">'
+  +'<div style="font-weight:800;color:#10b981">🔁 Como funciona o pagamento recorrente</div>'
+  +'<div style="margin-top:6px">Na próxima página você cadastra o cartão uma única vez. A mensalidade passa a ser <strong>cobrada automaticamente no cartão</strong> a cada vencimento — você não precisa se preocupar nem lembrar de pagar.</div>'
+  +'<div style="margin-top:6px">'+primeira+'</div>'
+  +proxima
+  +'<div style="margin-top:6px">💳 <strong>Não ocupa o limite do cartão:</strong> é cobrado somente o valor de cada mês, não o total do contrato.</div>'
+  +'<div style="margin-top:6px">🙋 Quer cancelar? É só falar com a <strong>recepção</strong>.</div>'
+  +'</div>';
+}
+async function carregarOfertaRecorrenciaNovoAluno(){
+ const container=document.getElementById('oferta-recorrencia-novo-aluno');if(!container)return;
+ let opcoes=[];
+ try{const dados=await api('/api/portal/cadastro/recorrencia/planos?cpf='+encodeURIComponent(String(cadastroPortalCpfAtual||'').replace(/\D/g,'')));opcoes=Array.isArray(dados.opcoes)?dados.opcoes:[];}catch(e){/* Pix continua disponível mesmo se a lista não carregar. */}
+ const cards=opcoes.map((p,i)=>{
+  const mensal=formatarMoeda(p.valor_final_centavos);
+  const detalhe=p.limite_cobrancas?String(p.limite_cobrancas)+' cobranças mensais de '+mensal+' (uma por mês, durante '+p.limite_cobrancas+' meses)':'Cobrança automática todo mês, por tempo indeterminado • Sem permanência mínima';
+  const desconto=p.desconto_centavos>0?'<small style="display:block;color:#64748b">De '+formatarMoeda(p.valor_centavos)+' por mês</small>':'';
+  const classe=i===0?'primario':'secundario';
+  return '<div style="background:#0f172a;border-radius:10px;padding:12px;margin:10px 0"><strong>'+escapeHtml(p.nome)+'</strong><div data-preco-de="'+escapeHtml(p.id)+'" style="font-size:23px;font-weight:800;color:#10b981">'+mensal+'/mês</div>'+desconto+'<small>'+escapeHtml(detalhe)+'</small>'+seletorComboHtml(p)+'<button type="button" data-modalidade="'+escapeHtml(p.id)+'" data-rotulo="'+escapeHtml(p.nome)+'" class="botao-grande '+classe+'" style="margin-top:8px">Escolher '+escapeHtml(p.nome)+'</button></div>';
+ }).join('');
+ container.innerHTML=`
+  <div style="text-align:left"><div style="font-weight:800;color:#10b981">⚡ ESCOLHA COMO DESEJA PAGAR</div>
+  <h3 style="margin:8px 0">Pagamento automático no cartão</h3>
+  <p>Seu cadastro e sua matrícula foram registrados, mas ainda não ativados. Escolha uma opção:</p>
+  ${cards?blocoExplicativoRecorrencia():''}
+  ${cards||'<p>No momento não há modalidades de recorrência disponíveis.</p>'}
+  <button type="button" data-escolher-pix class="botao-grande primario" style="width:100%;margin-top:12px">Continuar com Pix do plano escolhido</button>
+  <small>Se sair agora, seu cadastro ficará salvo como pendente, sem cobrança nem ativação.</small><div class="erro-msg" data-erro-recorrencia></div></div>`;
+ // Sem modalidades (recurso desligado ou todas inativas): segue direto para o Pix.
+ if(!opcoes.length)setTimeout(()=>container.querySelector('[data-escolher-pix]')?.click(),0);
+ ligarSeletoresCombo(container);
+ container.querySelectorAll('[data-modalidade]').forEach(btn=>btn.addEventListener('click',async()=>{
+  const modalidade=btn.dataset.modalidade,combo=comboEscolhido(container,modalidade),botoes=Array.from(container.querySelectorAll('button'));botoes.forEach(b=>b.disabled=true);btn.textContent='Abrindo Mercado Pago…';
+  try{const r=await api('/api/portal/cadastro/recorrencia',{method:'POST',body:JSON.stringify({cpf:cadastroPortalCpfAtual,senha:cadastroPortalSenhaAtual,matricula_id:cadastroPortalMatriculaId,modalidade,combo})});if(!r.oferta_url)throw new Error('O Mercado Pago não retornou o endereço da oferta.');window.location.href=r.oferta_url;}
+  catch(err){container.querySelector('[data-erro-recorrencia]').textContent=err.message||'Não foi possível abrir a recorrência.';botoes.forEach(b=>b.disabled=false);btn.textContent='Escolher '+btn.dataset.rotulo;}
+ }));
+ container.querySelector('[data-escolher-pix]').addEventListener('click',async ev=>{
+  const btn=ev.currentTarget;btn.disabled=true;btn.textContent='Gerando Pix…';
+  try{
+   const pix=await api('/api/portal/cadastro/pix',{method:'POST',body:JSON.stringify({cpf:cadastroPortalCpfAtual,senha:cadastroPortalSenhaAtual,cobranca_id:cadastroPortalCobrancaId})});
+   container.classList.add('oculto');document.getElementById('cadastro-pix-conteudo').classList.remove('oculto');
+   document.getElementById('portal-cadastro-valor').textContent='Valor: '+formatarMoeda(pix.valor_centavos);
+   document.getElementById('portal-cadastro-status').textContent='Aguardando pagamento…';
+   const alvo=document.getElementById('qrcode-cadastro-portal');alvo.innerHTML='';const copiar=document.getElementById('btn-copiar-pix-cadastro-portal');
+   if(pix.qr_code_pix_imagem){const img=document.createElement('img');img.src='data:image/png;base64,'+pix.qr_code_pix_imagem;img.style.width='220px';img.style.height='220px';img.style.borderRadius='12px';alvo.appendChild(img);}
+   else if(pix.qr_code_pix)new QRCode(alvo,{text:pix.qr_code_pix,width:220,height:220,colorDark:'#0f172a',colorLight:'#ffffff'});
+   if(pix.qr_code_pix){copiar.classList.remove('oculto');copiar.onclick=async()=>{try{await navigator.clipboard.writeText(pix.qr_code_pix);copiar.textContent='Código copiado!';setTimeout(()=>{copiar.textContent='Copiar código Pix';},2000);}catch{alert('Não foi possível copiar automaticamente. Código Pix:\\n'+pix.qr_code_pix);}};}else copiar.classList.add('oculto');
+   iniciarPollCadastroPortal(pix.cobranca_id);
+  }catch(err){btn.disabled=false;btn.textContent='Continuar com Pix do plano escolhido';container.querySelector('[data-erro-recorrencia]').textContent=err.message||'Não foi possível gerar o Pix.';}
+ });
+}
+
+function iniciarPollCadastroPortal(cobrancaId){
+ pararPollCadastroPortal();const statusEl=document.getElementById('portal-cadastro-status');
+ cadastroPortalPollTimer=setInterval(async()=>{try{const resp=await api('/api/portal/cadastro/status/'+cobrancaId);if(resp.pago){pararPollCadastroPortal();document.getElementById('painel-cadastro-portal-pagamento').classList.add('oculto');document.getElementById('painel-cadastro-portal-sucesso').classList.remove('oculto');document.getElementById('portal-cadastro-sucesso-msg').textContent='Pagamento confirmado! Bem-vindo(a), '+(resp.aluno_nome||'')+'. Sua matrícula já está ativa.';document.getElementById('portal-cadastro-senha-caixa').textContent=cadastroPortalSenhaAtual||'';}}catch(err){statusEl.textContent='Erro ao consultar pagamento: '+err.message;}},4000);
 }
 
 function pararPollCadastroPortal() {
@@ -2157,5 +2528,70 @@ document.getElementById('btn-portal-cadastro-concluir').addEventListener('click'
 // <meta viewport> (ver portal.html) — com a causa raiz corrigida, o zoom
 // trava em 100% de forma estável sem precisar desse reset manual.
 
+// ---------------- Retorno do pagamento no cartão ----------------
+// O Mercado Pago devolve o aluno para portal.html?cartao=<id da assinatura>. Esta tela confirma o pagamento NA HORA
+// (o servidor consulta o Mercado Pago) e mostra o aviso certo: confirmado, aguardando (quantos minutos) ou não concluído.
+function tratarRetornoCartao() {
+  const idAssinatura = new URLSearchParams(location.search).get('cartao');
+  if (!idAssinatura) return false;
+  const $ = (id) => document.getElementById(id);
+  const mostrar = (icone, titulo, texto, contato) => {
+    $('retorno-cartao-icone').textContent = icone;
+    $('retorno-cartao-titulo').textContent = titulo;
+    $('retorno-cartao-texto').textContent = texto;
+    $('retorno-cartao-contato').textContent = contato || '';
+  };
+  $('btn-retorno-cartao-portal').addEventListener('click', () => { history.replaceState(null, '', location.pathname); mostrarPagina('pagina-inicio'); });
+  mostrarPagina('pagina-retorno-cartao');
+  mostrar('⏳', 'Confirmando seu pagamento…', 'Só um instante: estamos conferindo com o Mercado Pago. Isso costuma levar menos de 2 minutos.');
+
+  const formatarData = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return m ? `${m[3]}/${m[2]}/${m[1]}` : ''; };
+  let tentativas = 0, terminou = false, rodando = false, ultimaResposta = 'sem resposta';
+  const verificarAgora = async () => {
+    if (terminou || rodando) return;
+    rodando = true;
+    tentativas += 1;
+    try {
+      // Limite de 12s por consulta: se uma não responder, não trava as próximas.
+      const ctrl = new AbortController(); // (AbortSignal.timeout não existe em iPhones mais antigos)
+      const limite = setTimeout(() => ctrl.abort(), 12000);
+      let o;
+      const pre = new URLSearchParams(location.search).get('preapproval_id'); // o Mercado Pago acrescenta este código na volta
+      try { o = await api('/api/pagamentos/assinaturas/oferta/' + encodeURIComponent(idAssinatura) + '/verificar' + (pre ? '?preapproval_id=' + encodeURIComponent(pre) : ''), { method: 'POST', signal: ctrl.signal }); }
+      finally { clearTimeout(limite); }
+      ultimaResposta = `${o.status}, ${Number(o.cobrancas_processadas || 0)} cobrança(s) baixada(s)`;
+      const contato = 'Dúvidas? Fale com a recepção da academia.';
+      if (['authorized', 'completed'].includes(o.status) && Number(o.cobrancas_processadas || 0) > 0) {
+        terminou = true; clearInterval(timer);
+        return mostrar('✅', `Pagamento confirmado${o.aluno ? ', ' + o.aluno : ''}!`, 'Sua matrícula está ativa e seu acesso foi liberado. Pode treinar. As próximas mensalidades serão cobradas automaticamente no cartão, e para cancelar é só falar com a recepção.', contato);
+      }
+      if (o.status === 'authorized' && o.primeira_cobranca && String(o.primeira_cobranca).slice(0, 10) > new Date().toISOString().slice(0, 10)) {
+        terminou = true; clearInterval(timer);
+        return mostrar('✅', 'Cartão cadastrado!', `Sua primeira cobrança no cartão será em ${formatarData(o.primeira_cobranca)}. Até lá, seu acesso segue como está.`, contato);
+      }
+      if (o.status === 'cancelled') {
+        terminou = true; clearInterval(timer);
+        return mostrar('⚠️', 'O pagamento não foi concluído', 'O cartão foi recusado ou o cadastro foi cancelado, e nada foi cobrado. Volte ao portal para tentar outro cartão ou pagar com Pix.', contato);
+      }
+      if (o.status === 'paused') {
+        terminou = true; clearInterval(timer);
+        return mostrar('⏸️', 'Assinatura pausada', 'Fale com a recepção para retomar.', contato);
+      }
+    } catch (err) { ultimaResposta = 'erro: ' + (err.message || 'falha de conexão'); }
+    finally { rodando = false; }
+    if (tentativas >= 40 && !terminou) { // ~2 minutos de consulta ativa
+      terminou = true; clearInterval(timer);
+      mostrar('🕒', 'Recebemos seu cadastro no cartão', 'A confirmação do Mercado Pago ainda está chegando e pode levar até 5 minutos. Assim que confirmar, sua matrícula é ativada e seu acesso liberado automaticamente. Se passar desse tempo, fale com a recepção. Você também pode reabrir esta página para conferir.', `Última resposta: ${ultimaResposta}`);
+    }
+  };
+  const timer = setInterval(verificarAgora, 3000);
+  verificarAgora(); // já confere na abertura, sem esperar o primeiro ciclo de 3s
+  // Navegadores de celular congelam a página em segundo plano (ex.: voltando do Mercado Pago): ao reaparecer, confere de novo.
+  const reconferir = () => { if (!terminou) verificarAgora(); };
+  window.addEventListener('pageshow', reconferir);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reconferir(); });
+  return true;
+}
+
 carregarConfigPublica();
-tentarAutoLoginHub();
+if (!tratarRetornoCartao()) tentarAutoLoginHub();

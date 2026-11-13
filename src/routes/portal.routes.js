@@ -562,7 +562,8 @@ router.get('/avaliacoes', limitadorSenhaPortal, async (req, res, next) => {
       sql: `SELECT id FROM avaliandos WHERE origem='academia' AND externo_id=?`,
       args: [aluno.id],
     });
-    if (!espelho.rows.length) return res.json({ avaliacoes: [] });
+    const direito = await assinaturas.direitoAvaliacao({ alunoId: aluno.id }).catch(() => ({ tem_combo: false }));
+    if (!espelho.rows.length) return res.json({ avaliacoes: [], direito });
 
     const linhas = await db.execute({
       sql: `SELECT tipo, protocolo, data, fields_json, computed_json, origem
@@ -571,6 +572,7 @@ router.get('/avaliacoes', limitadorSenhaPortal, async (req, res, next) => {
     });
 
     res.json({
+      direito,
       avaliacoes: linhas.rows.map((r) => ({
         tipo: r.tipo,
         protocolo: r.protocolo,
@@ -580,6 +582,33 @@ router.get('/avaliacoes', limitadorSenhaPortal, async (req, res, next) => {
         computed: JSON.parse(r.computed_json || '{}'),
       })),
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/portal/biblioteca?cpf=...&senha=... — biblioteca de exercícios para consulta do aluno.
+// Só quem tem matrícula com status 'ativa' (mesmo com contas em aberto: o que importa é ser aluno atual).
+// A lista é pequena (~100 linhas, ~34 KB) e muda raramente, então fica em cache de memória por 5 minutos:
+// quase nenhuma leitura nova no banco por acesso. Só campos de consulta (sem dados internos).
+let bibliotecaPortalCache = { em: 0, dados: null };
+router.get('/biblioteca', limitadorSenhaPortal, async (req, res, next) => {
+  try {
+    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(req.query);
+    const autenticado = await autenticarAlunoPortal(cpf, senha);
+    if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
+    const ativa = await db.execute({ sql: "SELECT 1 FROM matriculas WHERE aluno_id = ? AND status = 'ativa' LIMIT 1", args: [autenticado.aluno.id] });
+    if (!ativa.rows.length) return res.status(403).json({ erro: 'A biblioteca de exercícios é exclusiva para alunos com matrícula ativa. Fale com a recepção.' });
+    if (!bibliotecaPortalCache.dados || Date.now() - bibliotecaPortalCache.em > 5 * 60 * 1000) {
+      const r = await db.execute({
+        sql: `SELECT id, grupo_muscular, nome, video_url, imagem_url, equipamento, dificuldade, musculos_secundarios, instrucoes
+              FROM exercicio_biblioteca ORDER BY grupo_muscular, nome`,
+        args: [],
+      });
+      bibliotecaPortalCache = { em: Date.now(), dados: r.rows };
+    }
+    res.set('Cache-Control', 'private, max-age=60');
+    res.json({ exercicios: bibliotecaPortalCache.dados });
   } catch (err) {
     next(err);
   }
@@ -811,27 +840,6 @@ router.post('/cadastro', async (req, res, next) => {
     const cobrancaId = uuid();
     const descricao = `Matrícula - ${p.nome}`;
 
-    const emailTeste = process.env.MERCADOPAGO_TEST_PAYER_EMAIL;
-    const emailPagador = emailTeste || dados.email || `aluno-${dados.cpf.replace(/\D/g, '')}@academia-gestao.com`;
-    const firstNamePagador = emailTeste ? 'APRO' : undefined;
-
-    let order;
-    try {
-      order = await mercadopago.criarOrderPix({
-        descricao,
-        valorCentavos: p.valor_centavos,
-        referenciaExterna: cobrancaId,
-        email: emailPagador,
-        firstName: firstNamePagador,
-      });
-    } catch (err) {
-      // Desfaz o cadastro pra não deixar o CPF "preso" (cadastrado, mas sem
-      // nenhuma cobrança pra pagar) — a pessoa tenta de novo do zero.
-      await db.execute({ sql: 'DELETE FROM alunos WHERE id = ?', args: [alunoId] }).catch(() => {});
-      throw err;
-    }
-    const metodoPix = order.transactions?.payments?.[0]?.payment_method || {};
-
     // E-mail de boas-vindas automático (2026-07) — best-effort, nunca atrasa
     // nem quebra o cadastro/pagamento em si (ver emailBoasVindas.service.js).
     emailBoasVindas.enviarBoasVindasSeguro({ id: alunoId, nome: dados.nome, email: dados.email }).catch(() => {});
@@ -851,9 +859,9 @@ router.post('/cadastro', async (req, res, next) => {
     // verdade — ver mesmo comentário em planos.routes.js.
     const vencimentoCobranca = ehRecorrente(p.tipo) ? primeiroVencimento(hoje) : hoje;
     await db.execute({
-      sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, provedor, provedor_referencia, descricao, vencimento)
-            VALUES (?, ?, ?, ?, 'mercadopago', ?, ?, ?)`,
-      args: [cobrancaId, alunoId, matriculaId, p.valor_centavos, String(order.id), descricao, vencimentoCobranca],
+      sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, provedor, descricao, vencimento)
+            VALUES (?, ?, ?, ?, 'mercadopago', ?, ?)`,
+      args: [cobrancaId, alunoId, matriculaId, p.valor_centavos, descricao, vencimentoCobranca],
     });
 
     // Senha do portal (2026-07): já gera o código sequencial de uma vez
@@ -865,11 +873,11 @@ router.post('/cadastro', async (req, res, next) => {
 
     res.status(201).json({
       cobranca_id: cobrancaId,
-      qr_code_pix: metodoPix.qr_code || null,
-      qr_code_pix_imagem: metodoPix.qr_code_base64 || null,
+      matricula_id: matriculaId,
       valor_centavos: p.valor_centavos,
       aluno_nome: dados.nome,
       senha_acesso: senhaAcesso,
+      cronograma_recorrencia: assinaturas.cronogramaCobrancaAutomatica(),
     });
     } finally {
       acessoTerminal.liberarCpfDoCadastro(dados.cpf);
@@ -877,6 +885,46 @@ router.post('/cadastro', async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+
+router.post('/cadastro/pix', limitadorSenhaPortal, async (req,res,next) => {
+ try {
+  const d=z.object({cpf:z.string().min(1),senha:z.string().min(1),cobranca_id:z.string().min(1)}).parse(req.body);
+  const auth=await autenticarAlunoPortal(d.cpf,d.senha); if(auth.erro)return res.status(auth.status).json({erro:auth.erro});
+  const q=await db.execute({sql:`SELECT c.*,p.nome AS plano_nome FROM cobrancas c JOIN matriculas m ON m.id=c.matricula_id JOIN planos p ON p.id=m.plano_id WHERE c.id=? AND c.aluno_id=? AND m.status='pendente'`,args:[d.cobranca_id,auth.aluno.id]});
+  const c=q.rows[0]; if(!c||c.status!=='pendente')return res.status(404).json({erro:'Matrícula pendente não encontrada.'});
+  // Escolheu Pix: cancela a tentativa de cartão que estava pendente (se houver) antes de seguir.
+  await assinaturas.cancelarPendentesDasMatriculas([c.matricula_id]).catch(()=>{});
+  // Só consulta assinaturas com o recurso ligado; se a tabela ainda não existir (migração pendente), o Pix segue normalmente.
+  let assinaturaPendente={rows:[]};
+  if(assinaturas.habilitado()){try{assinaturaPendente=await db.execute({sql:"SELECT id FROM assinaturas_mp WHERE matricula_id=? AND status IN ('pending','authorized','paused') LIMIT 1",args:[c.matricula_id]});}catch(e){if(!/no such table: assinaturas_mp/i.test(String(e.message||e)))throw e;}}
+  if(assinaturaPendente.rows[0])return res.status(409).json({erro:'Já existe uma assinatura aguardando confirmação. Conclua ou cancele a etapa no Mercado Pago antes de escolher Pix.'});
+  if(c.provedor_referencia){const o=await mercadopago.consultarOrder(c.provedor_referencia);const pm=o.transactions?.payments?.[0]?.payment_method||{};return res.json({cobranca_id:c.id,valor_centavos:c.valor_centavos,qr_code_pix:pm.qr_code||null,qr_code_pix_imagem:pm.qr_code_base64||null});}
+  const teste=process.env.MERCADOPAGO_TEST_PAYER_EMAIL;
+  const o=await mercadopago.criarOrderPix({descricao:c.descricao||`Matrícula - ${c.plano_nome}`,valorCentavos:Number(c.valor_centavos),referenciaExterna:c.id,email:teste||auth.aluno.email||`aluno-${String(auth.aluno.cpf).replace(/\\D/g,'')}@academia-gestao.com`,firstName:teste?'APRO':undefined});
+  await db.execute({sql:'UPDATE cobrancas SET provedor_referencia=? WHERE id=? AND provedor_referencia IS NULL',args:[String(o.id),c.id]});
+  const pm=o.transactions?.payments?.[0]?.payment_method||{};res.json({cobranca_id:c.id,valor_centavos:c.valor_centavos,qr_code_pix:pm.qr_code||null,qr_code_pix_imagem:pm.qr_code_base64||null});
+ }catch(e){next(e);}
+});
+router.get('/cadastro/recorrencia/planos', async (req, res, next) => {
+ try {
+  res.set('Cache-Control', 'no-store');
+  // O CPF (só dígitos) libera modalidades restritas a alunos específicos (ex.: teste); sem ele, só as públicas.
+  res.json({ opcoes: await assinaturas.listarPlanosCadastroPublicos({ cpf: req.query.cpf }) });
+ } catch (e) { next(e); }
+});
+
+router.post('/cadastro/recorrencia', limitadorSenhaPortal, async(req,res,next)=>{
+ try{
+  const d=z.object({cpf:z.string().min(1),senha:z.string().min(1),matricula_id:z.string().min(1),modalidade:z.string().min(1).max(40),combo:z.string().max(40).optional()}).parse(req.body);
+  const auth=await autenticarAlunoPortal(d.cpf,d.senha);if(auth.erro)return res.status(auth.status).json({erro:auth.erro});
+  const m=await db.execute({sql:"SELECT id FROM matriculas WHERE id=? AND aluno_id=? AND status='pendente'",args:[d.matricula_id,auth.aluno.id]});
+  if(!m.rows[0])return res.status(404).json({erro:'Matrícula pendente não encontrada.'});
+  const c=await db.execute({sql:"SELECT id,provedor_referencia FROM cobrancas WHERE matricula_id=? AND status='pendente'",args:[d.matricula_id]});
+  if(!c.rows.length||c.rows.some(x=>x.provedor_referencia))return res.status(409).json({erro:'O Pix já foi iniciado ou a cobrança não está disponível.'});
+  res.json(await assinaturas.obterOuCriarParaNovoCadastro({alunoId:auth.aluno.id,matriculaId:d.matricula_id,modalidade:d.modalidade,combo:d.combo,baseUrl:assinaturas.baseUrlDaRequisicao(req)}));
+ }catch(e){next(e);}
 });
 
 // Ativa a matrícula ligada a uma cobrança quando o pagamento é confirmado —
@@ -939,6 +987,8 @@ router.post('/upgrade', limitadorSenhaPortal, async (req, res, next) => {
       cpf: z.string().min(1),
       senha: z.string().min(1),
       plano_id: z.string().min(1),
+      // escolher=true: cria a matrícula e a conta SEM gerar o Pix, para o aluno escolher entre Pix e cartão automático.
+      escolher: z.boolean().optional(),
     }).parse(req.body);
     const autenticado = await autenticarAlunoPortal(dados.cpf, dados.senha);
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
@@ -949,11 +999,47 @@ router.post('/upgrade', limitadorSenhaPortal, async (req, res, next) => {
     if (!p) return res.status(404).json({ erro: 'Plano não encontrado ou inativo.' });
 
     const existente = await db.execute({
-      sql: `SELECT id FROM matriculas WHERE aluno_id = ? AND plano_id = ? AND status IN ('ativa', 'pendente')`,
+      sql: `SELECT id, status FROM matriculas WHERE aluno_id = ? AND plano_id = ? AND status IN ('ativa', 'pendente')`,
       args: [aluno.id, dados.plano_id],
     });
     if (existente.rows[0]) {
+      // Pré-matrícula que o aluno deixou pela metade (sem Pix iniciado): retoma a mesma, sem duplicar.
+      if (dados.escolher && existente.rows[0].status === 'pendente') {
+        const aberta = await db.execute({
+          sql: `SELECT id, valor_centavos, vencimento, provedor_referencia FROM cobrancas WHERE matricula_id = ? AND status = 'pendente' ORDER BY criado_em DESC LIMIT 1`,
+          args: [existente.rows[0].id],
+        });
+        const c0 = aberta.rows[0];
+        if (c0 && !c0.provedor_referencia) {
+          return res.status(200).json({
+            retomada: true, matricula_id: existente.rows[0].id, cobranca_id: c0.id, valor_centavos: Number(c0.valor_centavos),
+            vencimento: c0.vencimento, aluno_nome: aluno.nome, plano_nome: p.nome, plano_tipo: p.tipo,
+          });
+        }
+      }
       return res.status(409).json({ erro: 'Você já tem uma matrícula ativa ou pendente neste plano.' });
+    }
+
+    if (dados.escolher) {
+      const hojeE = new Date().toISOString().slice(0, 10);
+      const dataFimE = p.duracao_dias ? new Date(Date.now() + p.duracao_dias * 86400000).toISOString().slice(0, 10) : null;
+      const matriculaIdE = uuid();
+      const cobrancaIdE = uuid();
+      await db.execute({
+        sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, data_fim, status, renovacao_automatica)
+              VALUES (?, ?, ?, ?, ?, 'pendente', 1)`,
+        args: [matriculaIdE, aluno.id, p.id, hojeE, dataFimE],
+      });
+      const vencimentoE = ehRecorrente(p.tipo) ? primeiroVencimento(hojeE) : hojeE;
+      await db.execute({
+        sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, provedor, descricao, vencimento)
+              VALUES (?, ?, ?, ?, 'mercadopago', ?, ?)`,
+        args: [cobrancaIdE, aluno.id, matriculaIdE, p.valor_centavos, `Matrícula - ${p.nome}`, vencimentoE],
+      });
+      return res.status(201).json({
+        matricula_id: matriculaIdE, cobranca_id: cobrancaIdE, valor_centavos: Number(p.valor_centavos),
+        vencimento: vencimentoE, aluno_nome: aluno.nome, plano_nome: p.nome, plano_tipo: p.tipo,
+      });
     }
 
     const cobrancaId = uuid();
@@ -1160,6 +1246,8 @@ router.get('/assinatura', limitadorSenhaPortal, async (req, res, next) => {
     const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(req.query);
     const autenticado = await autenticarAlunoPortal(cpf, senha);
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
+    // O aluno voltou ao portal: se deixou um cartão pela metade há mais de 15 min, desfaz (conta volta ao normal).
+    await assinaturas.cancelarPendentesOciosasDoAluno(autenticado.aluno.id, 15).catch(() => {});
     res.set('Cache-Control', 'no-store');
     res.json(await assinaturas.disponibilidadeParaAluno({
       alunoId: autenticado.aluno.id,
@@ -1172,11 +1260,17 @@ router.get('/assinatura', limitadorSenhaPortal, async (req, res, next) => {
 
 router.post('/assinatura', limitadorSenhaPortal, async (req, res, next) => {
   try {
-    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(req.body);
+    const { cpf, senha, modalidade, combo } = z.object({
+      cpf: z.string().min(1), senha: z.string().min(1),
+      modalidade: z.string().min(1).max(40),
+      combo: z.string().max(40).optional(),
+    }).parse(req.body);
     const autenticado = await autenticarAlunoPortal(cpf, senha);
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
     res.json(await assinaturas.obterOuCriarParaAluno({
       alunoId: autenticado.aluno.id,
+      modalidade,
+      combo,
       baseUrl: assinaturas.baseUrlDaRequisicao(req),
     }));
   } catch (err) {

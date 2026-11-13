@@ -6,7 +6,7 @@ const db = require('../db/client');
 const dbOffline = require('../db/clientOffline');
 const { autenticar, apenasAdmin } = require('../middleware/auth');
 const mercadopago = require('../services/payment/mercadopago.service');
-const { gerarCobrancasRecorrentes, ultimoDiaDoMes, resolverMatriculaDaConta } = require('../services/cobrancas.service');
+const { gerarCobrancasRecorrentes, ultimoDiaDoMes, resolverMatriculaDaConta, garantirVencidasAtualizadas } = require('../services/cobrancas.service');
 const assinaturas = require('../services/assinaturas.service');
 const { criarLimitador } = require('../middleware/rateLimit');
 const acessoTerminal = require('../services/acessoTerminal.service');
@@ -131,7 +131,9 @@ router.get('/cobrancas', autenticar, async (req, res, next) => {
       pagamento_de: pagamentoDe, pagamento_ate: pagamentoAte,
       tipo_pagamento: tipoPagamento,
       ordenar_por: ordenarPor, decrescente, incluir_inativos: incluirInativos,
+      tipo_plano: tipoPlano,
     } = req.query;
+    await garantirVencidasAtualizadas();
     const condicoes = [];
     const args = [];
     if (alunoId) { condicoes.push('c.aluno_id = ?'); args.push(alunoId); }
@@ -186,7 +188,11 @@ router.get('/cobrancas', autenticar, async (req, res, next) => {
             ORDER BY ${colunaOrdenacao} ${direcao}`,
       args,
     });
-    res.json(result.rows);
+    // Marca (e, se pedido, filtra) contas de recorrência no cartão x plano normal.
+    const linhas = await assinaturas.anexarRecorrencia(result.rows);
+    if (tipoPlano === 'recorrencia') return res.json(linhas.filter((c) => c.recorrencia));
+    if (tipoPlano === 'normal') return res.json(linhas.filter((c) => !c.recorrencia));
+    res.json(linhas);
   } catch (err) {
     next(err);
   }
@@ -229,6 +235,7 @@ router.put('/cobrancas/:id', autenticar, async (req, res, next) => {
 // DELETE /api/pagamentos/cobrancas/:id
 router.delete('/cobrancas/:id', autenticar, async (req, res, next) => {
   try {
+    await assinaturas.desvincularCobranca(req.params.id); // conta paga por assinatura: solta o vínculo do pagamento
     await db.execute({ sql: 'DELETE FROM cobrancas WHERE id = ?', args: [req.params.id] });
     res.json({ ok: true });
   } catch (err) {
@@ -590,8 +597,12 @@ router.post('/cobrancas/parceladas', autenticar, async (req, res, next) => {
 // com um aviso no log em vez de derrubar o webhook — assim o pagamento
 // continua funcionando normalmente até o segredo ser configurado.
 function verificarAssinaturaMercadoPago(req) {
-  const secret = process.env.MERCADOPAGO_WEBHOOK_SECRET;
-  if (!secret) {
+  // A mesma URL pode estar cadastrada em MAIS DE UMA aplicação do Mercado Pago, e cada aplicação tem o seu próprio
+  // segredo. MERCADOPAGO_WEBHOOK_SECRET aceita vários, separados por vírgula, ponto e vírgula ou quebra de linha
+  // (um por aplicação, sempre os de PRODUÇÃO); o aviso vale se bater com qualquer um. Tira espaços/aspas ao colar.
+  const secrets = String(process.env.MERCADOPAGO_WEBHOOK_SECRET || '')
+    .split(/[\s,;]+/).map((x) => x.trim().replace(/^["']|["']$/g, '').trim()).filter(Boolean);
+  if (!secrets.length) {
     return { valido: true, aviso: 'MERCADOPAGO_WEBHOOK_SECRET não configurado — assinatura do webhook NÃO está sendo verificada.' };
   }
 
@@ -599,28 +610,57 @@ function verificarAssinaturaMercadoPago(req) {
   const requestId = req.headers['x-request-id'];
   const dataId = req.query['data.id'] || req.body?.data?.id;
   if (!assinatura || !dataId) {
-    return { valido: false, aviso: 'Header x-signature ou data.id ausente.' };
+    return { valido: false, aviso: `Header x-signature ou data.id ausente (x-signature: ${assinatura ? 'sim' : 'não'}, data.id: ${dataId ? 'sim' : 'não'}).` };
   }
 
-  const partes = {};
+  // O x-signature pode vir com mais de um ts/v1 (headers combinados por proxies, reenvios): aceita QUALQUER v1 que case.
+  const tss = [];
+  const v1s = [];
   for (const par of String(assinatura).split(',')) {
-    const [chave, valor] = par.split('=').map((s) => (s || '').trim());
-    if (chave) partes[chave] = valor;
+    const i = par.indexOf('=');
+    if (i <= 0) continue;
+    const chave = par.slice(0, i).trim();
+    const valor = par.slice(i + 1).trim();
+    if (chave === 'ts') tss.push(valor);
+    else if (chave === 'v1') v1s.push(valor);
   }
-  const { ts, v1: v1Recebido } = partes;
-  if (!ts || !v1Recebido) {
-    return { valido: false, aviso: 'Formato de x-signature inesperado (esperado "ts=...,v1=...").' };
+  if (!tss.length || !v1s.length) {
+    return { valido: false, aviso: `Formato de x-signature inesperado (esperado "ts=...,v1=..."). x-signature bruto="${assinatura}"` };
   }
+  const ts = tss[0];
 
   // Mercado Pago pede o id em minúsculas quando ele é alfanumérico.
   const idParaManifest = /^[a-zA-Z0-9]+$/.test(String(dataId)) ? String(dataId).toLowerCase() : String(dataId);
-  const manifest = `id:${idParaManifest};${requestId ? `request-id:${requestId};` : ''}ts:${ts};`;
-  const hashCalculado = crypto.createHmac('sha256', secret).update(manifest).digest('hex');
+  // Proxies/CDN do host podem reescrever o x-request-id (a assinatura do MP usa o ORIGINAL).
+  // Por isso testa todo cabeçalho que pareça um request id e também o manifest sem ele.
+  const candidatos = new Set();
+  for (const [nome, valorHeader] of Object.entries(req.headers || {})) {
+    if (/request-?id/i.test(nome) && valorHeader) candidatos.add(String(valorHeader));
+  }
+  const manifests = [];
+  for (const t of tss) {
+    for (const rid of candidatos) manifests.push(`id:${idParaManifest};request-id:${rid};ts:${t};`);
+    manifests.push(`id:${idParaManifest};ts:${t};`);
+  }
 
-  const bufCalculado = Buffer.from(hashCalculado);
-  const bufRecebido = Buffer.from(String(v1Recebido));
-  const valido = bufCalculado.length === bufRecebido.length && crypto.timingSafeEqual(bufCalculado, bufRecebido);
-  return { valido, aviso: valido ? null : 'Assinatura do webhook inválida — requisição rejeitada.' };
+  const esperados = secrets.flatMap((secret) => manifests.map((m) => crypto.createHmac('sha256', secret).update(m).digest('hex')));
+  const valido = v1s.some((v1) => {
+    const bufRecebido = Buffer.from(String(v1));
+    return esperados.some((hex) => {
+      const buf = Buffer.from(hex);
+      return buf.length === bufRecebido.length && crypto.timingSafeEqual(buf, bufRecebido);
+    });
+  });
+  if (valido) return { valido, aviso: null };
+  const resumoSegredos = secrets.map((x) => `${x.slice(0, 4)}…${x.slice(-4)}(sha256=${crypto.createHash('sha256').update(x).digest('hex').slice(0, 12)})`).join(' | ');
+  return {
+    valido,
+    aviso: `Assinatura do webhook inválida — requisição rejeitada. DADOS PARA O SUPORTE: url="${req.originalUrl}", `
+      + `application_id=${req.body?.application_id ?? 'ausente'}, user_id=${req.body?.user_id ?? 'ausente'}, live_mode=${req.body?.live_mode ?? 'ausente'}, type=${req.body?.type ?? req.query?.type ?? 'ausente'}, `
+      + `x-request-id=${requestId || 'ausente'}, x-signature="${assinatura}". `
+      + `Segredos configurados (${secrets.length}): ${resumoSegredos}. Textos testados=${JSON.stringify(manifests)}. `
+      + 'Causas comuns: o segredo da aplicação que originou o pagamento não está na lista (cada aplicação tem o seu; use os de PRODUÇÃO), ou segredo de teste/produção trocado.',
+  };
 }
 
 // Webhook do Mercado Pago (configurar a URL no painel do app / preferência)
@@ -629,12 +669,26 @@ router.post('/webhook/mercadopago', limitadorWebhook, express.json(), async (req
   try {
     const { valido, aviso } = verificarAssinaturaMercadoPago(req);
     if (!valido) {
-      console.warn('[webhook/mercadopago] rejeitado:', aviso);
-      return res.sendStatus(401);
+      // Modo tolerante (MERCADOPAGO_WEBHOOK_ESTRITO=0), aprovado pelo dono: a assinatura x-signature do Mercado Pago
+      // falha nas contas dele mesmo com o segredo certo (mesmo sintoma em todas as aplicações testadas e no Encaixaí).
+      // Aqui só registra o alerta e segue. Isso é seguro porque NENHUMA baixa confia no corpo do aviso: o servidor
+      // sempre reconsulta o pagamento/assinatura na API do MP (com o Access Token) e só baixa o que ela confirma.
+      // O padrão continua estrito (401) quando a variável não está definida.
+      if (process.env.MERCADOPAGO_WEBHOOK_ESTRITO === '0') {
+        console.warn('[webhook/mercadopago] ASSINATURA INVÁLIDA, processando mesmo assim (MERCADOPAGO_WEBHOOK_ESTRITO=0; a baixa é conferida na API do MP):', aviso);
+      } else {
+        console.warn('[webhook/mercadopago] rejeitado:', aviso);
+        return res.sendStatus(401);
+      }
     }
     if (aviso) console.warn('[webhook/mercadopago]', aviso);
 
-    const { type, data } = req.body;
+    // O MP pode entregar o tipo no corpo (type) ou na query (type/topic).
+    // Normaliza ambos os formatos usados pelo simulador e pelos webhooks reais.
+    const tipoRecebido = req.body?.type || req.query?.type || req.query?.topic;
+    const type = ({ preapproval: 'subscription_preapproval', authorized_payment: 'subscription_authorized_payment' })[tipoRecebido] || tipoRecebido;
+    const data = req.body?.data || { id: req.query?.['data.id'] };
+    console.info('[webhook/mercadopago] notificação recebida:', { type, dataId: data?.id || null, requestId: req.headers['x-request-id'] || null });
 
     // Assinaturas (recurso opcional, MERCADOPAGO_ASSINATURAS=1): parcela cobrada
     // ou mudança de status da assinatura. Sem a flag, retorna null e segue.
@@ -679,11 +733,15 @@ router.post('/webhook/mercadopago', limitadorWebhook, express.json(), async (req
 // O init_point é o link que o aluno abre para cadastrar o cartão no Mercado Pago.
 router.post('/assinaturas', autenticar, apenasAdmin, async (req, res, next) => {
   try {
-    const { matricula_id } = z.object({ matricula_id: z.string().min(1) }).parse(req.body);
-    res.status(201).json(await assinaturas.criarAssinatura({
-      matriculaId: matricula_id,
-      baseUrl: assinaturas.baseUrlDaRequisicao(req),
-    }));
+    const { matricula_id, modalidade, combo } = z.object({ matricula_id: z.string().min(1), modalidade: z.string().min(1).max(40).optional(), combo: z.string().max(40).optional() }).parse(req.body);
+    const baseUrl = assinaturas.baseUrlDaRequisicao(req);
+    if (modalidade) {
+      // Modalidade escolhida no painel (mesmas condições que o aluno vê no portal).
+      const m = (await db.execute({ sql: 'SELECT aluno_id FROM matriculas WHERE id = ?', args: [matricula_id] })).rows[0];
+      if (!m) return res.status(404).json({ erro: 'Matrícula não encontrada.' });
+      return res.status(201).json(await assinaturas.obterOuCriarParaAluno({ alunoId: m.aluno_id, baseUrl, modalidade, combo, admin: true }));
+    }
+    res.status(201).json(await assinaturas.criarAssinatura({ matriculaId: matricula_id, baseUrl }));
   } catch (err) {
     next(err);
   }
@@ -735,6 +793,59 @@ router.put('/assinaturas/oferta-config', autenticar, apenasAdmin, async (req, re
   }
 });
 
+
+// Modalidades, preços e descontos dos novos cadastros. Os valores são lidos
+// do banco pelo portal e congelados na assinatura quando o aluno contrata.
+const planoCadastroSchema = z.object({
+  id: z.string().min(1).max(40).regex(/^[a-z0-9_-]+$/),
+  nome: z.string().trim().min(1).max(80),
+  valor_centavos: z.number().int().min(100).max(1000000),
+  limite_cobrancas: z.number().int().min(1).max(120).nullable(),
+  ativo: z.boolean(),
+  restrito: z.boolean().optional(),
+  cpfs_permitidos: z.array(z.string().max(20)).max(50).optional(),
+  categorias_permitidas: z.array(z.enum(['aluno', 'professor', 'visitante', 'colaborador', 'bolsista'])).max(5).optional(),
+  desconto: z.object({
+    ativo: z.boolean(),
+    tipo: z.enum(['percentual', 'valor']),
+    percentual: z.number().min(0).max(90),
+    valor_centavos: z.number().int().min(0).max(1000000),
+  }),
+});
+
+// Combos (adicional mensal, ex.: avaliação física a cada 90 dias): configuráveis pelo admin.
+const comboSchema = z.object({
+  id: z.string().min(1).max(40).regex(/^[a-z0-9_-]+$/),
+  nome: z.string().trim().min(1).max(80),
+  adicional_centavos: z.number().int().min(0).max(1000000),
+  ativo: z.boolean(),
+  restrito: z.boolean().optional(),
+  cpfs_permitidos: z.array(z.string().max(20)).max(50).optional(),
+  categorias_permitidas: z.array(z.enum(['aluno', 'professor', 'visitante', 'colaborador', 'bolsista'])).max(5).optional(),
+});
+router.get('/assinaturas/combos', autenticar, apenasAdmin, async (req, res, next) => {
+  try { res.json({ combos: await assinaturas.obterCombos() }); }
+  catch (err) { next(err); }
+});
+router.put('/assinaturas/combos', autenticar, apenasAdmin, async (req, res, next) => {
+  try {
+    const dados = z.object({ combos: z.array(comboSchema).max(6) }).parse(req.body);
+    res.json({ combos: await assinaturas.salvarCombos(dados.combos) });
+  } catch (err) { next(err); }
+});
+
+router.get('/assinaturas/planos-cadastro', autenticar, apenasAdmin, async (req, res, next) => {
+  try { res.json({ planos: await assinaturas.obterPlanosCadastro() }); }
+  catch (err) { next(err); }
+});
+
+router.put('/assinaturas/planos-cadastro', autenticar, apenasAdmin, async (req, res, next) => {
+  try {
+    const dados = z.object({ planos: z.array(planoCadastroSchema).min(1).max(12) }).parse(req.body);
+    res.json({ planos: await assinaturas.salvarPlanosCadastro(dados.planos) });
+  } catch (err) { next(err); }
+});
+
 // GET /api/pagamentos/assinaturas/oferta/:id — PÚBLICO (é o que a página /assinar/:id
 // consulta). Limitado por IP; o id é um UUID e a resposta não traz dados pessoais.
 const limitadorOferta = criarLimitador({
@@ -753,6 +864,25 @@ router.get('/assinaturas/oferta/:id', limitadorOferta, async (req, res, next) =>
   }
 });
 
+// POST /api/pagamentos/assinaturas/oferta/:id/verificar — PÚBLICO. A página /assinar/:id chama isto em loop
+// quando o aluno volta do Mercado Pago: confirma o pagamento na hora (sem depender do webhook).
+const limitadorVerificar = criarLimitador({
+  janelaMs: 5 * 60 * 1000,
+  maximo: 400, // vários alunos podem estar no mesmo Wi-Fi da academia
+  mensagem: 'Muitas requisições. Aguarde alguns minutos.',
+});
+router.post('/assinaturas/oferta/:id/verificar', limitadorVerificar, async (req, res, next) => {
+  try {
+    const r = await assinaturas.verificarOferta(req.params.id, { preapprovalId: String(req.query.preapproval_id || '').slice(0, 64) || null });
+    if (!r?.oferta) return res.status(404).json({ erro: 'Oferta não encontrada.' });
+    for (const alunoId of new Set(r.alunosAtualizados)) acessoTerminal.notificarAgenteAtualizacaoAluno(alunoId); // libera a catraca já
+    res.set('Cache-Control', 'no-store');
+    res.json(r.oferta);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/pagamentos/assinaturas?matricula_id=...
 router.get('/assinaturas', autenticar, async (req, res, next) => {
   try {
@@ -764,10 +894,26 @@ router.get('/assinaturas', autenticar, async (req, res, next) => {
   }
 });
 
+// POST /api/pagamentos/assinaturas/:id/sincronizar — consulta o MP agora e dá baixa no que já foi pago.
+router.post('/assinaturas/:id/sincronizar', autenticar, apenasAdmin, async (req, res, next) => {
+  try {
+    const r = await assinaturas.sincronizarAgora({ assinaturaId: req.params.id });
+    for (const alunoId of new Set(r.alunosAtualizados)) acessoTerminal.notificarAgenteAtualizacaoAluno(alunoId);
+    res.json({ status: r.status, baixas: r.baixas, status_mp: r.status_mp, cobrancas_vistas: r.cobrancas_vistas, pagamentos_vistos: r.pagamentos_vistos });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/pagamentos/assinaturas/:id/cancelamento-previa — quanto custaria cancelar agora (fidelidade).
+router.get('/assinaturas/:id/cancelamento-previa', autenticar, apenasAdmin, async (req, res, next) => {
+  try { res.json(await assinaturas.previaCancelamentoPorId(req.params.id)); } catch (err) { next(err); }
+});
+
 // DELETE /api/pagamentos/assinaturas/:id — cancela no Mercado Pago e localmente.
 router.delete('/assinaturas/:id', autenticar, apenasAdmin, async (req, res, next) => {
   try {
-    res.json(await assinaturas.cancelar({ assinaturaId: req.params.id }));
+    res.json(await assinaturas.cancelar({ assinaturaId: req.params.id, encerrarMatricula: req.query.encerrar === '1', isentarMulta: req.query.isentar_multa === '1' }));
   } catch (err) {
     next(err);
   }
@@ -841,4 +987,5 @@ router.post('/gerar-recorrentes', autenticar, apenasAdmin, async (req, res, next
   }
 });
 
+router.verificarAssinaturaMercadoPago = verificarAssinaturaMercadoPago; // exposto para teste
 module.exports = router;

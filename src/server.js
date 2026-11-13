@@ -31,6 +31,8 @@ const { rodar: rodarMensagensAgendadas } = require('./jobs/mensagensAgendadas');
 const { rodar: rodarAvisoVencimento } = require('./jobs/avisoVencimento');
 const { rodar: rodarAvisoRenovacaoAvaliacao } = require('./jobs/avisoRenovacaoAvaliacao');
 const { rodar: rodarReconciliarPagamentosPix } = require('./jobs/reconciliarPagamentosPix');
+const { rodar: rodarExpirarCheckoutsRecorrencia } = require('./jobs/expirarCheckoutsRecorrencia');
+const { rodar: rodarReconciliarAssinaturas } = require('./jobs/reconciliarAssinaturas');
 const { atualizarCobrancasVencidas } = require('./services/cobrancas.service');
 const agenteGateway = require('./services/agenteGateway.service');
 const dbResiliente = require('./services/dbResiliente.service');
@@ -356,6 +358,28 @@ server.listen(PORT, () => {
     rodarReconciliarPagamentosPix().catch((err) => console.error('[reconciliarPagamentosPix] erro na execução inicial:', err));
     setInterval(() => {
       rodarReconciliarPagamentosPix().catch((err) => console.error('[reconciliarPagamentosPix] erro na execução agendada:', err));
+    }, 10 * 60 * 1000);
+  }
+
+  // Primeiro pagamento no cartão: quem acabou de pagar quer entrar na academia, então as assinaturas
+  // AGUARDANDO o 1º pagamento são conferidas a cada 2 min (poucas por vez, consulta leve).
+  if (EXECUTAR_JOBS_AGENDADOS) {
+    setInterval(() => {
+      rodarReconciliarAssinaturas({ somentePendentes: true }).catch((err) => console.error('[reconciliarAssinaturas] erro (pendentes):', err));
+    }, 2 * 60 * 1000);
+  }
+
+  // Reconciliação das assinaturas (rede de segurança do webhook): a cada 15 min.
+  if (EXECUTAR_JOBS_AGENDADOS) {
+    setInterval(() => {
+      rodarReconciliarAssinaturas().catch((err) => console.error('[reconciliarAssinaturas] erro:', err));
+    }, 15 * 60 * 1000);
+  }
+
+  // Checkouts de recorrência abandonados (cartão nunca cadastrado): confere a cada 10 min (portal: 60 min parado; recepção: 48 h).
+  if (EXECUTAR_JOBS_AGENDADOS) {
+    setInterval(() => {
+      rodarExpirarCheckoutsRecorrencia().catch((err) => console.error('[expirarCheckoutsRecorrencia] erro:', err));
     }, 10 * 60 * 1000);
   }
 

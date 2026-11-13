@@ -267,13 +267,26 @@ async function gerarCobrancasRecorrentes({ ateData } = {}) {
 // date('now') no SQLite/Turso é UTC. Se quiserem que o corte do dia siga o
 // horário de Brasília (evitando marcar como atrasado ~3h antes da meia-noite
 // local), troquem "date('now')" por "date('now', '-3 hours')" abaixo.
+// Corte do dia no horário de Brasília (UTC-3): uma conta que vence dia 10 só vira "atrasado" a partir de 11/11 00:00 BRT.
 async function atualizarCobrancasVencidas() {
-  const resultado = await db.execute(`
-    UPDATE cobrancas
-    SET status = 'atrasado'
-    WHERE status = 'pendente' AND vencimento < date('now')
-  `);
+  const resultado = await db.execute({
+    sql: `UPDATE cobrancas
+          SET status = 'atrasado'
+          WHERE status = 'pendente' AND vencimento < date('now', '-3 hours')`,
+    args: [],
+  });
   return { atualizadas: resultado.rowsAffected || 0 };
+}
+
+// Versão para chamar ao listar contas: no máximo 1 vez por minuto por processo. Garante que a lista
+// nunca mostre "pendente" uma conta já vencida, mesmo que o job de hora em hora não tenha rodado.
+let ultimaAtualizacaoVencidas = 0;
+async function garantirVencidasAtualizadas() {
+  const agora = Date.now();
+  if (agora - ultimaAtualizacaoVencidas < 60 * 1000) return;
+  ultimaAtualizacaoVencidas = agora;
+  try { await atualizarCobrancasVencidas(); }
+  catch (err) { console.error('[cobrancas] não foi possível atualizar vencidas ao listar:', err.message); }
 }
 
 module.exports = {
@@ -282,6 +295,7 @@ module.exports = {
   gerarCobrancasRecorrentes,
   ultimoDiaDoMes,
   atualizarCobrancasVencidas,
+  garantirVencidasAtualizadas,
   primeiroVencimento,
   resolverMatriculaDaConta,
   MESES_POR_TIPO,

@@ -21,18 +21,30 @@ async function consultarContasAbertas(cpf, { semCobrancaAutomaticaFutura = false
   if (!aluno) return null;
 
   const result = await db.execute({
-    sql: `SELECT id, descricao, valor_centavos, vencimento, status, provedor FROM cobrancas
+    // com_recorrencia: a matrícula da conta tem cartão automático ativo (qualquer que seja o provedor registrado na conta)
+    sql: `SELECT id, descricao, valor_centavos, vencimento, status, provedor,
+                 CASE WHEN matricula_id IS NOT NULL AND matricula_id IN (SELECT matricula_id FROM assinaturas_mp WHERE status IN ('authorized', 'paused')) THEN 1 ELSE 0 END AS com_recorrencia
+          FROM cobrancas
           WHERE aluno_id = ? AND status IN ('pendente', 'atrasado')
           ORDER BY vencimento ASC`,
     args: [aluno.id],
+  }).catch(async (err) => {
+    // bancos sem a tabela de assinaturas (antes da migração): consulta simples
+    if (!/assinaturas_mp/i.test(String(err && err.message))) throw err;
+    return db.execute({
+      sql: `SELECT id, descricao, valor_centavos, vencimento, status, provedor, 0 AS com_recorrencia FROM cobrancas
+            WHERE aluno_id = ? AND status IN ('pendente', 'atrasado') ORDER BY vencimento ASC`,
+      args: [aluno.id],
+    });
   });
-  if (!semCobrancaAutomaticaFutura) return { aluno, contas: result.rows.map(({ provedor, ...c }) => c) };
+  if (!semCobrancaAutomaticaFutura) return { aluno, contas: result.rows.map(({ provedor, com_recorrencia, ...c }) => c) };
 
   const hoje = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
   const contas = [];
   let proxima = null;
-  for (const { provedor, ...c } of result.rows) {
-    if (provedor === 'assinatura_mp' && c.status === 'pendente' && String(c.vencimento || '').slice(0, 10) > hoje) {
+  for (const { provedor, com_recorrencia, ...c } of result.rows) {
+    const automatica = provedor === 'assinatura_mp' || (Number(com_recorrencia) === 1 && !/^\s*(Servi[cç]o|Produto)\s*-/i.test(String(c.descricao || '')));
+    if (automatica && c.status === 'pendente' && String(c.vencimento || '').slice(0, 10) > hoje) {
       if (!proxima) proxima = { vencimento: c.vencimento, valor_centavos: Number(c.valor_centavos) };
       continue;
     }

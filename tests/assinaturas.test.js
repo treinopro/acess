@@ -1377,3 +1377,14 @@ test('portal: cobrança automática futura não conta como "em aberto" (vem sepa
   const geral = await pagamentoContas.consultarContasAbertas('84848484848'); // outros usos (totem) não mudam
   assert.strictEqual(geral.contas.length, 2);
 });
+
+test('portal: com cartão automático ativo, a próxima mensalidade futura também sai de "em aberto" (mesmo com outro provedor na conta)', async () => {
+  const pagamentoContas = require('../src/services/pagamentoContas.service');
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('al-auto2', 'Auto2', 'a2@t.com', '85858585858')`, args: [] });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-auto2', 'al-auto2', 'p1', date('now','-20 days'), 'ativa')`, args: [] });
+  await db.execute({ sql: `INSERT INTO assinaturas_mp (id, matricula_id, aluno_id, preapproval_id, status, valor_centavos, valor_cheio_centavos, desconto_centavos, frequencia_meses, modalidade) VALUES ('s-auto2', 'm-auto2', 'al-auto2', 'pre-auto2', 'authorized', 7000, 7000, 0, 1, 'mensal_livre')`, args: [] });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-auto2', 'al-auto2', 'm-auto2', 7000, 'pendente', 'manual', 'Mensalidade - MUSC', date('now','+20 days'))`, args: [] });
+  const r = await pagamentoContas.consultarContasAbertas('85858585858', { semCobrancaAutomaticaFutura: true });
+  assert.strictEqual(r.contas.length, 0);
+  assert.ok(r.proxima_cobranca_automatica);
+});

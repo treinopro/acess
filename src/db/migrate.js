@@ -446,6 +446,33 @@ async function limparImagensDosVideosDoCanal() {
   return limpas;
 }
 
+// 2026-11-13, pedido do dono: os treinos JÁ EXISTENTES (fichas dos alunos e modelos salvos) passam a usar o vídeo atual da
+// biblioteca nos exercícios que têm vídeo do canal @Rjunior_lima. A cópia do vídeo é trocada (mesmo que tenha sido colocada à
+// mão) e a capa antiga é apagada. Também casa por NOME os exercícios sem vínculo com a biblioteca. Roda UMA vez (configuracoes).
+async function sincronizarVideosDoCanalNosTreinos() {
+  const chave = 'migracao_sync_videos_canal_treinos_v1';
+  const feita = await db.execute({ sql: 'SELECT 1 FROM configuracoes WHERE chave = ?', args: [chave] });
+  if (feita.rows.length) return 0;
+  const norm = (t) => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+  const lib = (await db.execute({ sql: "SELECT id, nome, video_url FROM exercicio_biblioteca WHERE video_url IS NOT NULL AND video_url != ''", args: [] })).rows
+    .filter((l) => VIDEOS_DO_CANAL.has(idYoutube(l.video_url)));
+  let n = 0;
+  for (const tabela of ['treino_exercicios', 'treino_template_exercicios']) {
+    // eslint-disable-next-line no-await-in-loop
+    const linhas = (await db.execute({ sql: `SELECT id, exercicio, biblioteca_id, video_url FROM ${tabela}`, args: [] })).rows;
+    for (const l of linhas) {
+      let alvo = l.biblioteca_id ? lib.find((x) => x.id === l.biblioteca_id) : null;
+      if (!alvo && !l.biblioteca_id) alvo = lib.find((x) => norm(x.nome) === norm(l.exercicio));
+      if (!alvo || String(l.video_url || '') === String(alvo.video_url)) continue;
+      // eslint-disable-next-line no-await-in-loop
+      await db.execute({ sql: `UPDATE ${tabela} SET video_url = ?, imagem_url = NULL, biblioteca_id = ? WHERE id = ?`, args: [alvo.video_url, alvo.id, l.id] });
+      n += 1;
+    }
+  }
+  await db.execute({ sql: "INSERT INTO configuracoes (chave, valor) VALUES (?, datetime('now')) ON CONFLICT(chave) DO NOTHING", args: [chave] });
+  return n;
+}
+
 async function seedBibliotecaExercicios() {
   let criados = 0;
   for (const [grupoMuscular, nome, videoUrl, equipamento, dificuldade, musculosSecundarios, instrucoes] of BIBLIOTECA_SEED) {
@@ -553,6 +580,8 @@ async function migrate() {
                       AND id IN (SELECT cobranca_inicial_id FROM assinaturas_mp WHERE status = 'authorized' AND cobranca_inicial_id IS NOT NULL)`).catch(() => {});
   const imagensDoCanalLimpas = await limparImagensDosVideosDoCanal();
   if (imagensDoCanalLimpas) console.log(`Imagens apagadas de exercícios com vídeo do canal: ${imagensDoCanalLimpas}`);
+  const treinosSincronizados = await sincronizarVideosDoCanalNosTreinos();
+  if (treinosSincronizados) console.log(`Exercícios de treinos atualizados com o vídeo do canal: ${treinosSincronizados}`);
   const seriesPadronizadas = await padronizarSeriesModelos();
   if (seriesPadronizadas) console.log(`Modelos de treino ajustados para 3x10: ${seriesPadronizadas}`);
 

@@ -321,6 +321,15 @@ const LIMITE_REPETICOES_SEM_AJUSTE = 13;
 // treinos.routes.js, que sempre grava por cima) — o mesmo campo, só que
 // agora com duas fontes de escrita: o aluno concluindo o exercício, e o
 // professor ajustando manualmente.
+// Métodos e cargas com mais de um valor (drop-set, tri-set, pirâmide, ex.: "20/15/10") não são sobrescritos pelo peso que o
+// aluno reporta: um número só não representa a prescrição. Nesses o peso fica só em "Aluno reportou" e no histórico.
+const METODOS_MULTI_CARGA = /drop|tri\s*-?\s*set|bi\s*-?\s*set|super\s*-?\s*set|pir[aâ]mide|rest\s*-?\s*pause|circuito/i;
+function prescricaoTemVariasCargas({ metodo, carga }) {
+  if (metodo && METODOS_MULTI_CARGA.test(String(metodo))) return true;
+  const numeros = String(carga || '').match(/\d+(?:[.,]\d+)?/g) || [];
+  return numeros.length > 1;
+}
+
 router.post('/treino/exercicio/:id/concluir', limitadorSenhaPortal, async (req, res, next) => {
   try {
     const dados = z.object({
@@ -336,7 +345,7 @@ router.post('/treino/exercicio/:id/concluir', limitadorSenhaPortal, async (req, 
     if (treinoOcultoParaAluno(aluno)) return res.status(403).json({ erro: 'Cadastro inativo ou trancado.', bloqueado: true });
 
     const dono = await db.execute({
-      sql: `SELECT te.id, t.id as treino_id FROM treino_exercicios te
+      sql: `SELECT te.id, te.metodo, te.carga, t.id as treino_id FROM treino_exercicios te
             JOIN treinos t ON t.id = te.treino_id
             WHERE te.id = ? AND t.aluno_id = ?`,
       args: [req.params.id, aluno.id],
@@ -354,7 +363,7 @@ router.post('/treino/exercicio/:id/concluir', limitadorSenhaPortal, async (req, 
     // banco — ver src/utils/data.js e o comentário de corrigirFormatoDatasAcessosAntigos em migrate.js.
     const concluidoInt = dados.concluido ? 1 : 0;
     const precisaAjuste = dados.concluido && dados.repeticoes_max != null && dados.repeticoes_max > LIMITE_REPETICOES_SEM_AJUSTE;
-    const atualizaCarga = dados.concluido && !!dados.peso_usado;
+    const atualizaCarga = dados.concluido && !!dados.peso_usado && !prescricaoTemVariasCargas(dono.rows[0]);
     await db.execute({
       sql: `UPDATE treino_exercicios
             SET concluido = ?, concluido_em = CASE WHEN ? = 1 THEN datetime('now') ELSE NULL END,

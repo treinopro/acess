@@ -1414,3 +1414,37 @@ test('assinatura ativa: a conta futura da cobrança automática passa a mostrar 
   const v = (await db.execute({ sql: `SELECT valor_centavos FROM cobrancas WHERE id = 'c-val'`, args: [] })).rows[0].valor_centavos;
   assert.strictEqual(Number(v), 200);
 });
+
+test('portal: peso reportado pelo aluno sobrescreve a carga, exceto em drop-set/pirâmide ou carga com vários valores', async () => {
+  const express = require('express');
+  const http = require('http');
+  const portal = require('../src/routes/portal.routes');
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf, biometria_id) VALUES ('al-carga', 'Carga', 'cg@t.com', '74747474747', '9191')`, args: [] });
+  await db.execute({ sql: `INSERT INTO treinos (id, aluno_id, nome) VALUES ('tr-carga', 'al-carga', 'A')`, args: [] });
+  const ex = [['ex-simples', 'Rosca', '20', null], ['ex-drop', 'Supino', '30', 'Drop-set'], ['ex-pira', 'Agacho', '40', 'Pirâmide'], ['ex-multi', 'Remada', '20/15/10', null], ['ex-metodo-livre', 'Stiff', '40', 'Bi-set']];
+  for (const [id, nome, carga, metodo] of ex) await db.execute({ sql: `INSERT INTO treino_exercicios (id, treino_id, exercicio, carga, metodo) VALUES (?, ?, ?, ?, ?)`, args: [id, 'tr-carga', nome, carga, metodo] });
+  const app = express();
+  app.use(express.json());
+  app.use('/api/portal', portal);
+  app.use((err, req, res, next) => res.status(err.status || 500).json({ erro: err.message }));
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, resolve));
+  const porta = server.address().port;
+  const concluir = (id, peso) => new Promise((resolve, reject) => {
+    const txt = JSON.stringify({ cpf: '74747474747', senha: '9191', concluido: true, peso_usado: peso, repeticoes_max: 10 });
+    const r = http.request({ port: porta, path: '/api/portal/treino/exercicio/' + id + '/concluir', method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(txt) } },
+      (res) => { let d = ''; res.on('data', (c) => { d += c; }); res.on('end', () => resolve(res.statusCode)); });
+    r.on('error', reject); r.end(txt);
+  });
+  try {
+    for (const [id] of ex) assert.strictEqual(await concluir(id, '12'), 200);
+    const r = Object.fromEntries((await db.execute({ sql: `SELECT id, carga, ultimo_peso_usado FROM treino_exercicios WHERE treino_id = 'tr-carga'`, args: [] })).rows.map((x) => [x.id, [x.carga, x.ultimo_peso_usado]]));
+    assert.deepStrictEqual(r['ex-simples'], ['12', '12']);      // simples: sobrescreve
+    assert.deepStrictEqual(r['ex-drop'], ['30', '12']);          // drop-set: mantém a prescrição
+    assert.deepStrictEqual(r['ex-pira'], ['40', '12']);
+    assert.deepStrictEqual(r['ex-multi'], ['20/15/10', '12']);   // várias cargas no texto
+    assert.deepStrictEqual(r['ex-metodo-livre'], ['40', '12']);  // bi-set
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

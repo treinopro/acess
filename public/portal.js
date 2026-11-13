@@ -524,10 +524,12 @@ function miniaturaBibliotecaPortal(e) {
 }
 
 function renderizarBibliotecaPortal() {
-  const termos = normalizarBibPortal(document.getElementById('bib-busca').value).split(/\s+/).filter(Boolean);
-  const lista = bibliotecaPortal
-    .filter((e) => bibGrupo === 'todos' || e.grupo_muscular === bibGrupo)
-    .filter((e) => { const alvo = normalizarBibPortal(e.nome + ' ' + e.grupo_muscular); return termos.every((t) => alvo.includes(t)); });
+  const consulta = document.getElementById('bib-busca').value;
+  const doGrupo = bibliotecaPortal.filter((e) => bibGrupo === 'todos' || e.grupo_muscular === bibGrupo);
+  // Busca tolerante a pronúncia ("tríceps", "tri ceps", "lec pres", "esmite"...); sem o arquivo, cai na busca simples.
+  const lista = window.BuscaFonetica
+    ? window.BuscaFonetica.filtrar(doGrupo, consulta, (e) => e.nome + ' ' + e.grupo_muscular)
+    : doGrupo.filter((e) => { const alvo = normalizarBibPortal(e.nome + ' ' + e.grupo_muscular); return normalizarBibPortal(consulta).split(/\s+/).filter(Boolean).every((t) => alvo.includes(t)); });
   document.getElementById('bib-contagem').textContent = lista.length + ' de ' + bibliotecaPortal.length + ' exercícios';
   const alvo = document.getElementById('bib-lista');
   if (!lista.length) { alvo.innerHTML = '<p style="color:#94a3b8">Nenhum exercício encontrado.</p>'; return; }

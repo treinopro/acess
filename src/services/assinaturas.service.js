@@ -722,6 +722,16 @@ async function atualizarStatus(preapprovalId, status) {
     sql: `UPDATE assinaturas_mp SET status = ?, atualizado_em = datetime('now') WHERE preapproval_id = ? AND (status != 'completed' OR ? = 'completed')`,
     args: [status, String(preapprovalId), status],
   });
+  // Cartão cadastrado (assinatura ativa): a conta que ele vai cobrar passa a mostrar o valor da assinatura, e não o
+  // valor antigo do plano. Só mexe em conta ainda pendente com vencimento futuro (a de hoje segue a regra da baixa).
+  if (status === 'authorized') {
+    await db.execute({
+      sql: `UPDATE cobrancas SET valor_centavos = (SELECT s.valor_centavos FROM assinaturas_mp s WHERE s.preapproval_id = ?)
+            WHERE id = (SELECT s.cobranca_inicial_id FROM assinaturas_mp s WHERE s.preapproval_id = ?)
+              AND status = 'pendente' AND vencimento > date('now')`,
+      args: [String(preapprovalId), String(preapprovalId)],
+    }).catch(() => {});
+  }
 }
 
 // ── Baixa automática ────────────────────────────────────────────────────────

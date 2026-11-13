@@ -547,6 +547,10 @@ async function migrate() {
   const videosTreinosAtualizados = await atualizarVideosTreinosExistentes();
   const miniaturasLimpas = await limparMiniaturasDeVideosAntigos();
   if (miniaturasLimpas) console.log(`Miniaturas de vídeos antigos removidas: ${miniaturasLimpas}`);
+  // Assinaturas já ativas cuja conta futura ainda mostra o valor antigo do plano: passa a mostrar o valor da assinatura.
+  await db.execute(`UPDATE cobrancas SET valor_centavos = (SELECT s.valor_centavos FROM assinaturas_mp s WHERE s.cobranca_inicial_id = cobrancas.id AND s.status = 'authorized' LIMIT 1)
+                    WHERE status = 'pendente' AND vencimento > date('now')
+                      AND id IN (SELECT cobranca_inicial_id FROM assinaturas_mp WHERE status = 'authorized' AND cobranca_inicial_id IS NOT NULL)`).catch(() => {});
   const imagensDoCanalLimpas = await limparImagensDosVideosDoCanal();
   if (imagensDoCanalLimpas) console.log(`Imagens apagadas de exercícios com vídeo do canal: ${imagensDoCanalLimpas}`);
   const seriesPadronizadas = await padronizarSeriesModelos();

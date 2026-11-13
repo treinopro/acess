@@ -1388,3 +1388,14 @@ test('portal: com cartão automático ativo, a próxima mensalidade futura tamb�
   assert.strictEqual(r.contas.length, 0);
   assert.ok(r.proxima_cobranca_automatica);
 });
+
+test('assinatura ativa: a conta futura da cobrança automática passa a mostrar o valor da assinatura (não o do plano)', async () => {
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('al-val', 'Val', 'v@t.com', '86868686868')`, args: [] });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-val', 'al-val', 'p1', date('now','-20 days'), 'ativa')`, args: [] });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-val', 'al-val', 'm-val', 7000, 'pendente', 'manual', 'Mensalidade - X', date('now','+25 days'))`, args: [] });
+  await db.execute({ sql: `INSERT INTO assinaturas_mp (id, matricula_id, aluno_id, preapproval_id, status, valor_centavos, valor_cheio_centavos, desconto_centavos, frequencia_meses, modalidade, cobranca_inicial_id) VALUES ('s-val', 'm-val', 'al-val', 'pre-val', 'pending', 200, 200, 0, 1, 'mensal_livre', 'c-val')`, args: [] });
+  estadoMp.assinaturas['pre-val'] = { id: 'pre-val', status: 'authorized' };
+  await assinaturas.sincronizarAgora({ assinaturaId: 's-val' });
+  const v = (await db.execute({ sql: `SELECT valor_centavos FROM cobrancas WHERE id = 'c-val'`, args: [] })).rows[0].valor_centavos;
+  assert.strictEqual(Number(v), 200);
+});

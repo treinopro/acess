@@ -1318,6 +1318,14 @@ test('portal: biblioteca de exercícios só para matrícula ativa (mesmo com con
     assert.strictEqual((await ler('cpf=87878787878&senha=8787')).status, 200);
     assert.strictEqual((await ler('cpf=88888888888&senha=8888')).status, 200);
     assert.strictEqual((await ler('cpf=89898989898&senha=8989')).status, 403);
+    // status inativo/inadimplente/trancado bloqueia mesmo com matrícula ativa (e também professor)
+    for (const [i, st] of [['1', 'inativo'], ['2', 'inadimplente'], ['3', 'trancado']]) {
+      await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf, biometria_id, status) VALUES (?, ?, ?, ?, ?, ?)`, args: ['bib-st' + i, 'St' + i, 'st' + i + '@t.com', '7770000000' + i, '90' + i + '0', st] });
+      await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES (?, ?, 'p-bib', date('now','-10 days'), 'ativa')`, args: ['m-bib-st' + i, 'bib-st' + i] });
+      assert.strictEqual((await ler('cpf=7770000000' + i + '&senha=90' + i + '0')).status, 403, st);
+    }
+    await db.execute({ sql: `UPDATE alunos SET status = 'trancado' WHERE id = 'bib-prof'`, args: [] });
+    assert.strictEqual((await ler('cpf=87878787878&senha=8787')).status, 403);
     assert.strictEqual((await ler('cpf=81818181818&senha=0000')).status, 401);
   } finally {
     await new Promise((resolve) => server.close(resolve));

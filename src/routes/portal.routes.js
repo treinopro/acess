@@ -597,6 +597,11 @@ router.get('/biblioteca', limitadorSenhaPortal, async (req, res, next) => {
     const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(req.query);
     const autenticado = await autenticarAlunoPortal(cpf, senha);
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
+    // Cadastro inativo, inadimplente ou trancado não vê a biblioteca, mesmo com matrícula (vale para todas as categorias).
+    const statusAluno = String(autenticado.aluno.status || 'ativo').toLowerCase();
+    if (['inativo', 'inadimplente', 'trancado'].includes(statusAluno)) {
+      return res.status(403).json({ erro: 'A biblioteca de exercícios está indisponível para o seu cadastro no momento (' + statusAluno + '). Fale com a recepção.' });
+    }
     // Professor e colaborador veem a biblioteca mesmo sem matrícula; os demais precisam de matrícula ativa.
     const categoriaLivre = ['professor', 'colaborador'].includes(String(autenticado.aluno.categoria || '').toLowerCase());
     const ativa = categoriaLivre ? { rows: [1] } : await db.execute({ sql: "SELECT 1 FROM matriculas WHERE aluno_id = ? AND status = 'ativa' LIMIT 1", args: [autenticado.aluno.id] });

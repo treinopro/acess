@@ -526,28 +526,33 @@ function renderizarBibliotecaPortal() {
   document.getElementById('bib-contagem').textContent = lista.length + ' de ' + bibliotecaPortal.length + ' exercícios';
   const alvo = document.getElementById('bib-lista');
   if (!lista.length) { alvo.innerHTML = '<p style="color:#94a3b8">Nenhum exercício encontrado.</p>'; return; }
-  alvo.innerHTML = lista.map((e) => {
-    const tags = (e.equipamento ? '<span class="tag">' + escapeHtml(e.equipamento) + '</span>' : '') + (e.dificuldade ? '<span class="tag">' + escapeHtml(e.dificuldade) + '</span>' : '');
+  // Grade de cartões (miniatura 16:9 + título), como uma lista de vídeos. O vídeo só carrega ao tocar no cartão.
+  alvo.innerHTML = '<div class="bib-grid">' + lista.map((e) => {
     const miniatura = miniaturaBibliotecaPortal(e);
-    // A miniatura é o botão que abre o vídeo (carregado só no toque). Sem vídeo, só a imagem, se houver.
-    const thumb = miniatura
-      ? '<button type="button" ' + (e.video_url ? 'data-bib-video="' + escapeHtml(e.id) + '" aria-label="Ver execução"' : 'disabled') + ' style="position:relative;flex:0 0 112px;width:112px;height:68px;border:none;padding:0;border-radius:8px;overflow:hidden;background:#000;cursor:' + (e.video_url ? 'pointer' : 'default') + '">' +
-        '<img src="' + escapeHtml(miniatura) + '" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block">' +
-        (e.video_url ? '<span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center"><span style="background:rgba(0,0,0,.6);color:#fff;border-radius:50%;width:30px;height:30px;display:flex;align-items:center;justify-content:center;font-size:13px">&#9654;</span></span>' : '') + '</button>'
-      : '';
-    return '<div class="item-conta" style="display:block"><div style="display:flex;gap:12px;align-items:center">' + thumb +
-      '<div style="min-width:0"><div style="font-weight:700">' + escapeHtml(e.nome) + '</div>' +
-      '<div style="font-size:13px;color:#94a3b8">' + escapeHtml(e.grupo_muscular) + tags + '</div></div></div>' +
-      (e.video_url ? '<div id="bibv-' + escapeHtml(e.id) + '"></div>' : '') +
-      (e.instrucoes ? '<div style="font-size:14px;color:#cbd5e1;margin-top:8px">' + escapeHtml(e.instrucoes) + '</div>' : '') + '</div>';
-  }).join('');
-  // O vídeo só é carregado quando o aluno toca em "Ver execução" (nada pesado abre junto com a lista).
-  alvo.querySelectorAll('[data-bib-video]').forEach((btn) => btn.addEventListener('click', () => {
-    const ex = bibliotecaPortal.find((x) => x.id === btn.dataset.bibVideo);
-    const box = document.getElementById('bibv-' + btn.dataset.bibVideo);
-    box.innerHTML = box.innerHTML ? '' : videoPreviewHtml(ex.video_url);
-  }));
+    const sub = [e.grupo_muscular, e.equipamento].filter(Boolean).map(escapeHtml).join(' · ');
+    return '<button type="button" class="bib-card" data-bib-id="' + escapeHtml(e.id) + '"' + ((e.video_url || e.instrucoes) ? '' : ' disabled') + '>' +
+      '<span class="bib-thumb">' + (miniatura ? '<img src="' + escapeHtml(miniatura) + '" alt="" loading="lazy">' : '') +
+      (e.video_url ? '<span class="bib-play"><span>&#9654;</span></span>' : '') + '</span>' +
+      '<span class="bib-titulo">' + escapeHtml(e.nome) + '</span><span class="bib-sub">' + sub + '</span></button>';
+  }).join('') + '</div>';
+  alvo.querySelectorAll('[data-bib-id]').forEach((card) => card.addEventListener('click', () => abrirVideoBibliotecaPortal(bibliotecaPortal.find((x) => x.id === card.dataset.bibId))));
 }
+
+function abrirVideoBibliotecaPortal(e) {
+  if (!e) return;
+  document.getElementById('bib-modal-titulo').textContent = e.nome;
+  document.getElementById('bib-modal-sub').textContent = [e.grupo_muscular, e.equipamento, e.dificuldade].filter(Boolean).join(' · ');
+  document.getElementById('bib-modal-video').innerHTML = videoPreviewHtml(e.video_url);
+  document.getElementById('bib-modal-instrucoes').textContent = e.instrucoes || '';
+  document.getElementById('bib-modal').classList.remove('oculto');
+}
+function fecharVideoBibliotecaPortal() {
+  document.getElementById('bib-modal').classList.add('oculto');
+  document.getElementById('bib-modal-video').innerHTML = ''; // para o vídeo
+}
+document.getElementById('bib-modal-fechar').addEventListener('click', fecharVideoBibliotecaPortal);
+document.getElementById('bib-modal').addEventListener('click', (ev) => { if (ev.target.id === 'bib-modal') fecharVideoBibliotecaPortal(); });
+document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') fecharVideoBibliotecaPortal(); });
 
 function renderizarGruposBibliotecaPortal() {
   const grupos = ['todos', ...new Set(bibliotecaPortal.map((e) => e.grupo_muscular))];

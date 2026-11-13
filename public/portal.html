@@ -252,6 +252,19 @@ if ('serviceWorker' in navigator) {
     align-items: center; justify-content: center; padding: 0;
   }
   .check-concluido.marcado { background: #10b981; border-color: #10b981; color: #06281e; }
+  .bib-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 10px; }
+  .bib-card { background: none; border: none; padding: 0; text-align: left; color: inherit; font: inherit; cursor: pointer; min-width: 0; }
+  .bib-card[disabled] { cursor: default; }
+  .bib-thumb { position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 10px; overflow: hidden; background: #0f172a; display: block; }
+  .bib-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .bib-thumb .bib-play { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+  .bib-thumb .bib-play span { background: rgba(0,0,0,.62); color: #fff; border-radius: 50%; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+  .bib-titulo { font-weight: 700; font-size: 15px; line-height: 1.25; margin-top: 8px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .bib-sub { font-size: 12.5px; color: #94a3b8; margin-top: 2px; }
+  .bib-modal { position: fixed; inset: 0; z-index: 1000; background: rgba(2,6,23,.92); display: flex; align-items: flex-start; justify-content: center; overflow-y: auto; padding: 16px; }
+  .bib-modal.oculto { display: none; }
+  .bib-modal-caixa { width: 100%; max-width: 560px; background: #1e293b; border-radius: 16px; padding: 16px; margin-top: 4vh; }
+  .bib-modal-caixa .video-embed iframe { height: auto; aspect-ratio: 16 / 9; }
   .video-embed { border-radius: 8px; overflow: hidden; margin-top: 8px; background: #000; }
   .video-embed iframe { width: 100%; height: 200px; border: none; display: block; }
   .video-embed video { width: 100%; max-height: 220px; display: block; background: #000; }
@@ -515,6 +528,17 @@ if ('serviceWorker' in navigator) {
       <div id="bib-grupos" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px"></div>
       <div id="bib-contagem" style="font-size:13px;color:#94a3b8;margin-bottom:10px"></div>
       <div id="bib-lista"></div>
+    </div>
+
+    <!-- Vídeo de um exercício da biblioteca (abre sobre a lista) -->
+    <div class="bib-modal oculto" id="bib-modal" role="dialog" aria-modal="true" aria-labelledby="bib-modal-titulo">
+      <div class="bib-modal-caixa">
+        <div id="bib-modal-titulo" style="font-weight:800;font-size:18px;margin-bottom:2px"></div>
+        <div id="bib-modal-sub" style="font-size:13px;color:#94a3b8;margin-bottom:10px"></div>
+        <div id="bib-modal-video"></div>
+        <div id="bib-modal-instrucoes" style="font-size:15px;color:#cbd5e1;margin-top:12px;line-height:1.45"></div>
+        <button type="button" class="botao-grande secundario" id="bib-modal-fechar" style="margin:16px 0 0">Fechar</button>
+      </div>
     </div>
 
     <!-- Minhas avaliações -->

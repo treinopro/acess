@@ -513,7 +513,12 @@ function normalizarBibPortal(t) { return String(t || '').normalize('NFD').replac
 
 // Miniatura: a imagem cadastrada no exercício; se não houver, a capa do vídeo do YouTube.
 function miniaturaBibliotecaPortal(e) {
-  if (e.imagem_url) return e.imagem_url;
+  const idVideo = (String(e.video_url || '').match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([A-Za-z0-9_-]{6,})/) || [])[1];
+  if (e.imagem_url) {
+    // capa que é miniatura do YouTube de OUTRO vídeo (o antigo, antes da troca) não vale: usa a do vídeo atual
+    const antiga = String(e.imagem_url).match(/(?:ytimg\.com|img\.youtube\.com)\/vi(?:_webp)?\/([A-Za-z0-9_-]{6,})\//);
+    if (!(antiga && idVideo && antiga[1] !== idVideo)) return e.imagem_url;
+  }
   const m = String(e.video_url || '').match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([A-Za-z0-9_-]{6,})/);
   return m ? 'https://i.ytimg.com/vi/' + m[1] + '/mqdefault.jpg' : '';
 }

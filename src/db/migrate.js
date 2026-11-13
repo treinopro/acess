@@ -396,6 +396,33 @@ async function atualizarVideosTreinosExistentes() {
   return total;
 }
 
+// 2026-11-13: quando o vídeo de um exercício foi trocado, a capa guardada continuava sendo a miniatura do vídeo
+// ANTIGO do YouTube. Limpa só a imagem que é miniatura do YouTube de OUTRO vídeo (id diferente do vídeo atual):
+// imagem própria (arquivo, foto enviada) nunca é tocada. Sem imagem, o portal usa a capa do vídeo atual.
+function idYoutube(url) {
+  const m = String(url || '').match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/|youtube\.com\/embed\/)([A-Za-z0-9_-]{6,})/);
+  return m ? m[1] : null;
+}
+async function limparMiniaturasDeVideosAntigos() {
+  let limpas = 0;
+  for (const tabela of ['exercicio_biblioteca', 'treino_exercicios', 'treino_template_exercicios']) {
+    // eslint-disable-next-line no-await-in-loop
+    const r = await db.execute({
+      sql: `SELECT id, video_url, imagem_url FROM ${tabela} WHERE imagem_url IS NOT NULL AND (imagem_url LIKE '%ytimg.com%' OR imagem_url LIKE '%img.youtube.com%')`,
+      args: [],
+    });
+    for (const l of r.rows) {
+      const idVideo = idYoutube(l.video_url);
+      const m = String(l.imagem_url).match(/\/vi(?:_webp)?\/([A-Za-z0-9_-]{6,})\//);
+      if (!idVideo || !m || m[1] === idVideo) continue;
+      // eslint-disable-next-line no-await-in-loop
+      await db.execute({ sql: `UPDATE ${tabela} SET imagem_url = NULL WHERE id = ?`, args: [l.id] });
+      limpas += 1;
+    }
+  }
+  return limpas;
+}
+
 async function seedBibliotecaExercicios() {
   let criados = 0;
   for (const [grupoMuscular, nome, videoUrl, equipamento, dificuldade, musculosSecundarios, instrucoes] of BIBLIOTECA_SEED) {
@@ -495,6 +522,8 @@ async function migrate() {
   const acessosCorrigidos = await corrigirFormatoDatasAcessosAntigos();
   const videosAtualizados = await atualizarVideosBibliotecaExercicios();
   const videosTreinosAtualizados = await atualizarVideosTreinosExistentes();
+  const miniaturasLimpas = await limparMiniaturasDeVideosAntigos();
+  if (miniaturasLimpas) console.log(`Miniaturas de vídeos antigos removidas: ${miniaturasLimpas}`);
   const seriesPadronizadas = await padronizarSeriesModelos();
   if (seriesPadronizadas) console.log(`Modelos de treino ajustados para 3x10: ${seriesPadronizadas}`);
 

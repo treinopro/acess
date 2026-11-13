@@ -1311,6 +1311,13 @@ test('portal: biblioteca de exercícios só para matrícula ativa (mesmo com con
     assert.ok(Array.isArray(ok.json.exercicios) && ok.json.exercicios.length > 50);
     assert.ok(ok.json.exercicios[0].nome && !('criado_em' in ok.json.exercicios[0]));
     assert.strictEqual((await ler('cpf=82828282828&senha=8282')).status, 403);
+    // professor e colaborador entram sem matrícula; aluno comum sem matrícula continua barrado
+    await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf, biometria_id, categoria) VALUES ('bib-prof', 'Prof', 'bp@t.com', '87878787878', '8787', 'professor')`, args: [] });
+    await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf, biometria_id, categoria) VALUES ('bib-colab', 'Colab', 'bc@t.com', '88888888888', '8888', 'colaborador')`, args: [] });
+    await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf, biometria_id, categoria) VALUES ('bib-visit', 'Visit', 'bv@t.com', '89898989898', '8989', 'visitante')`, args: [] });
+    assert.strictEqual((await ler('cpf=87878787878&senha=8787')).status, 200);
+    assert.strictEqual((await ler('cpf=88888888888&senha=8888')).status, 200);
+    assert.strictEqual((await ler('cpf=89898989898&senha=8989')).status, 403);
     assert.strictEqual((await ler('cpf=81818181818&senha=0000')).status, 401);
   } finally {
     await new Promise((resolve) => server.close(resolve));

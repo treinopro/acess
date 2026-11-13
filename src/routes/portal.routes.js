@@ -597,8 +597,10 @@ router.get('/biblioteca', limitadorSenhaPortal, async (req, res, next) => {
     const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(req.query);
     const autenticado = await autenticarAlunoPortal(cpf, senha);
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
-    const ativa = await db.execute({ sql: "SELECT 1 FROM matriculas WHERE aluno_id = ? AND status = 'ativa' LIMIT 1", args: [autenticado.aluno.id] });
-    if (!ativa.rows.length) return res.status(403).json({ erro: 'A biblioteca de exercícios é exclusiva para alunos com matrícula ativa. Fale com a recepção.' });
+    // Professor e colaborador veem a biblioteca mesmo sem matrícula; os demais precisam de matrícula ativa.
+    const categoriaLivre = ['professor', 'colaborador'].includes(String(autenticado.aluno.categoria || '').toLowerCase());
+    const ativa = categoriaLivre ? { rows: [1] } : await db.execute({ sql: "SELECT 1 FROM matriculas WHERE aluno_id = ? AND status = 'ativa' LIMIT 1", args: [autenticado.aluno.id] });
+    if (!ativa.rows.length) return res.status(403).json({ erro: 'A biblioteca de exercícios é exclusiva para alunos com matrícula ativa, professores e colaboradores. Fale com a recepção.' });
     if (!bibliotecaPortalCache.dados || Date.now() - bibliotecaPortalCache.em > 5 * 60 * 1000) {
       const r = await db.execute({
         sql: `SELECT id, grupo_muscular, nome, video_url, imagem_url, equipamento, dificuldade, musculos_secundarios, instrucoes

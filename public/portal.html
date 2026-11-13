@@ -479,6 +479,13 @@ if ('serviceWorker' in navigator) {
         <a class="botao-grande primario oculto" id="link-agendar-avaliacao" style="margin:0;display:block;text-decoration:none;text-align:center" target="_blank" rel="noopener">Agendar pelo WhatsApp</a>
       </div>
 
+      <div class="cartao" id="card-biblioteca">
+        <h3>Biblioteca de exercícios</h3>
+        <p>Pesquise qualquer exercício e veja o vídeo de execução.</p>
+        <button class="botao-grande secundario" id="btn-abrir-biblioteca" style="margin:0">Abrir biblioteca</button>
+        <div class="erro-msg" id="bib-card-erro"></div>
+      </div>
+
       <button type="button" id="btn-hub-sair" style="background:none;border:none;color:#94a3b8;font-size:15px;text-decoration:underline;cursor:pointer;display:block;margin:20px auto 0;padding:8px">Sair desta conta</button>
     </div>
 
@@ -495,6 +502,16 @@ if ('serviceWorker' in navigator) {
         <button type="submit" class="botao-grande primario" style="margin:0">Salvar</button>
       </div>
     </form>
+
+    <!-- Biblioteca de exercícios -->
+    <div class="cartao oculto" id="painel-hub-biblioteca" style="text-align:left">
+      <h3 style="margin-top:0">Biblioteca de exercícios</h3>
+      <input class="campo" id="bib-busca" type="search" placeholder="Pesquisar (ex.: rosca, costas)" autocomplete="off" style="text-align:left;margin-bottom:10px" />
+      <div id="bib-grupos" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px"></div>
+      <div id="bib-contagem" style="font-size:13px;color:#94a3b8;margin-bottom:10px"></div>
+      <div id="bib-lista"></div>
+      <div class="erro-msg" id="bib-erro"></div>
+    </div>
 
     <!-- Minhas avaliações -->
     <div class="cartao oculto" id="painel-hub-avaliacoes" style="text-align:left">

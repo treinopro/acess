@@ -1283,3 +1283,36 @@ test('cancelar com fidelidade gera a conta de multa (Serviço) e pode ser isenta
   const r2 = await assinaturas.cancelar({ assinaturaId: 'mul6', isentarMulta: true });
   assert.strictEqual(r2.multa, null);
 });
+
+test('portal: biblioteca de exercícios só para matrícula ativa (mesmo com conta em aberto) e exige a senha', async () => {
+  const express = require('express');
+  const http = require('http');
+  const portal = require('../src/routes/portal.routes');
+  await db.execute({ sql: `INSERT OR IGNORE INTO planos (id, nome, tipo, valor_centavos, ativo) VALUES ('p-bib', 'MUSC BIB', 'mensal', 7000, 1)`, args: [] });
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf, biometria_id) VALUES ('bib-ativo', 'Ativo', 'ba@t.com', '81818181818', '8181')`, args: [] });
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf, biometria_id) VALUES ('bib-inativo', 'Inativo', 'bi@t.com', '82828282828', '8282')`, args: [] });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-bib1', 'bib-ativo', 'p-bib', date('now','-40 days'), 'ativa')`, args: [] });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-bib2', 'bib-inativo', 'p-bib', date('now','-400 days'), 'encerrada')`, args: [] });
+  // conta em aberto do aluno ativo: não pode bloquear a biblioteca
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-bib', 'bib-ativo', 'm-bib1', 7000, 'atrasado', 'manual', 'Mensalidade - X', date('now','-20 days'))`, args: [] });
+  const app = express();
+  app.use(express.json());
+  app.use('/api/portal', portal);
+  app.use((err, req, res, next) => res.status(err.status || 500).json({ erro: err.message }));
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, resolve));
+  const porta = server.address().port;
+  const ler = (qs) => new Promise((resolve, reject) => {
+    http.get({ port: porta, path: '/api/portal/biblioteca?' + qs }, (res) => { let d = ''; res.on('data', (c) => { d += c; }); res.on('end', () => resolve({ status: res.statusCode, json: JSON.parse(d || '{}') })); }).on('error', reject);
+  });
+  try {
+    const ok = await ler('cpf=81818181818&senha=8181');
+    assert.strictEqual(ok.status, 200);
+    assert.ok(Array.isArray(ok.json.exercicios) && ok.json.exercicios.length > 50);
+    assert.ok(ok.json.exercicios[0].nome && !('criado_em' in ok.json.exercicios[0]));
+    assert.strictEqual((await ler('cpf=82828282828&senha=8282')).status, 403);
+    assert.strictEqual((await ler('cpf=81818181818&senha=0000')).status, 401);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

@@ -506,8 +506,65 @@ function resetHub() {
 // facial), fecha esse painel e volta pro menu principal (painel-hub-
 // dashboard); só faz o reset completo pro início quando já está no menu
 // principal (ou na tela de CPF).
+// ---- Biblioteca de exercícios (consulta; só matrícula ativa) ----
+let bibliotecaPortal = [];
+let bibGrupo = 'todos';
+function normalizarBibPortal(t) { return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim(); }
+
+function renderizarBibliotecaPortal() {
+  const termos = normalizarBibPortal(document.getElementById('bib-busca').value).split(/\s+/).filter(Boolean);
+  const lista = bibliotecaPortal
+    .filter((e) => bibGrupo === 'todos' || e.grupo_muscular === bibGrupo)
+    .filter((e) => { const alvo = normalizarBibPortal(e.nome + ' ' + e.grupo_muscular); return termos.every((t) => alvo.includes(t)); });
+  document.getElementById('bib-contagem').textContent = lista.length + ' de ' + bibliotecaPortal.length + ' exercícios';
+  const alvo = document.getElementById('bib-lista');
+  if (!lista.length) { alvo.innerHTML = '<p style="color:#94a3b8">Nenhum exercício encontrado.</p>'; return; }
+  alvo.innerHTML = lista.map((e) => {
+    const tags = (e.equipamento ? '<span class="tag">' + escapeHtml(e.equipamento) + '</span>' : '') + (e.dificuldade ? '<span class="tag">' + escapeHtml(e.dificuldade) + '</span>' : '');
+    return '<div class="item-conta" style="display:block"><div style="font-weight:700">' + escapeHtml(e.nome) + '</div>' +
+      '<div style="font-size:13px;color:#94a3b8">' + escapeHtml(e.grupo_muscular) + tags + '</div>' +
+      (e.video_url ? '<button type="button" class="botao-grande secundario" data-bib-video="' + escapeHtml(e.id) + '" style="margin:10px 0 0">▶ Ver execução</button><div id="bibv-' + escapeHtml(e.id) + '"></div>' : '') +
+      (e.instrucoes ? '<div style="font-size:14px;color:#cbd5e1;margin-top:8px">' + escapeHtml(e.instrucoes) + '</div>' : '') + '</div>';
+  }).join('');
+  // O vídeo só é carregado quando o aluno toca em "Ver execução" (nada pesado abre junto com a lista).
+  alvo.querySelectorAll('[data-bib-video]').forEach((btn) => btn.addEventListener('click', () => {
+    const ex = bibliotecaPortal.find((x) => x.id === btn.dataset.bibVideo);
+    const box = document.getElementById('bibv-' + btn.dataset.bibVideo);
+    if (box.innerHTML) { box.innerHTML = ''; btn.textContent = '▶ Ver execução'; }
+    else { box.innerHTML = videoPreviewHtml(ex.video_url); btn.textContent = '▲ Fechar vídeo'; }
+  }));
+}
+
+function renderizarGruposBibliotecaPortal() {
+  const grupos = ['todos', ...new Set(bibliotecaPortal.map((e) => e.grupo_muscular))];
+  const box = document.getElementById('bib-grupos');
+  box.innerHTML = grupos.map((g) => '<button type="button" class="tag" data-bib-grupo="' + escapeHtml(g) + '" style="border:none;cursor:pointer;margin:0;padding:8px 12px;font-size:14px' + (g === bibGrupo ? ';background:#10b981;color:#052e22;font-weight:700' : '') + '">' + (g === 'todos' ? 'Todos' : escapeHtml(g)) + '</button>').join('');
+  box.querySelectorAll('[data-bib-grupo]').forEach((b) => b.addEventListener('click', () => { bibGrupo = b.dataset.bibGrupo; renderizarGruposBibliotecaPortal(); renderizarBibliotecaPortal(); }));
+}
+
+document.getElementById('btn-abrir-biblioteca').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-abrir-biblioteca');
+  btn.disabled = true;
+  document.getElementById('bib-card-erro').textContent = '';
+  try {
+    const resp = await api('/api/portal/biblioteca?cpf=' + encodeURIComponent(cpfHubAtual) + '&senha=' + encodeURIComponent(senhaHubAtual));
+    bibliotecaPortal = resp.exercicios || [];
+    bibGrupo = 'todos';
+    ocultarPaineisHub();
+    document.getElementById('painel-hub-biblioteca').classList.remove('oculto');
+    document.getElementById('bib-erro').textContent = '';
+    document.getElementById('bib-busca').value = '';
+    renderizarGruposBibliotecaPortal();
+    renderizarBibliotecaPortal();
+  } catch (err) {
+    document.getElementById('bib-card-erro').textContent = err.message || 'Não foi possível abrir a biblioteca agora.';
+  }
+  btn.disabled = false;
+});
+document.getElementById('bib-busca').addEventListener('input', renderizarBibliotecaPortal);
+
 document.getElementById('btn-voltar-hub').addEventListener('click', () => {
-  const SUBPAINEIS_HUB = ['painel-hub-conta', 'painel-hub-upgrade-escolha', 'painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-avaliacoes', 'painel-hub-notificacoes'];
+  const SUBPAINEIS_HUB = ['painel-hub-conta', 'painel-hub-upgrade-escolha', 'painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-avaliacoes', 'painel-hub-notificacoes', 'painel-hub-biblioteca'];
   const painelAberto = SUBPAINEIS_HUB.find((id) => !document.getElementById(id).classList.contains('oculto'));
   if (painelAberto) {
     if (painelAberto === 'painel-hub-pix') pararPollPixHub();
@@ -1349,7 +1406,7 @@ function atualizarAvisoVencimento(contas) {
 }
 
 function ocultarPaineisHub() {
-  ['painel-hub-dashboard', 'painel-hub-contas', 'painel-hub-conta', 'painel-hub-upgrade-escolha', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-comprovante', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-notificacoes', 'painel-hub-avaliacoes']
+  ['painel-hub-dashboard', 'painel-hub-contas', 'painel-hub-conta', 'painel-hub-upgrade-escolha', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-comprovante', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-notificacoes', 'painel-hub-avaliacoes', 'painel-hub-biblioteca']
     .forEach((id) => document.getElementById(id).classList.add('oculto'));
   irParaTopo();
 }

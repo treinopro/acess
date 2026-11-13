@@ -587,6 +587,33 @@ router.get('/avaliacoes', limitadorSenhaPortal, async (req, res, next) => {
   }
 });
 
+// GET /api/portal/biblioteca?cpf=...&senha=... — biblioteca de exercícios para consulta do aluno.
+// Só quem tem matrícula com status 'ativa' (mesmo com contas em aberto: o que importa é ser aluno atual).
+// A lista é pequena (~100 linhas, ~34 KB) e muda raramente, então fica em cache de memória por 5 minutos:
+// quase nenhuma leitura nova no banco por acesso. Só campos de consulta (sem dados internos).
+let bibliotecaPortalCache = { em: 0, dados: null };
+router.get('/biblioteca', limitadorSenhaPortal, async (req, res, next) => {
+  try {
+    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(req.query);
+    const autenticado = await autenticarAlunoPortal(cpf, senha);
+    if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
+    const ativa = await db.execute({ sql: "SELECT 1 FROM matriculas WHERE aluno_id = ? AND status = 'ativa' LIMIT 1", args: [autenticado.aluno.id] });
+    if (!ativa.rows.length) return res.status(403).json({ erro: 'A biblioteca de exercícios é exclusiva para alunos com matrícula ativa. Fale com a recepção.' });
+    if (!bibliotecaPortalCache.dados || Date.now() - bibliotecaPortalCache.em > 5 * 60 * 1000) {
+      const r = await db.execute({
+        sql: `SELECT id, grupo_muscular, nome, video_url, imagem_url, equipamento, dificuldade, musculos_secundarios, instrucoes
+              FROM exercicio_biblioteca ORDER BY grupo_muscular, nome`,
+        args: [],
+      });
+      bibliotecaPortalCache = { em: Date.now(), dados: r.rows };
+    }
+    res.set('Cache-Control', 'private, max-age=60');
+    res.json({ exercicios: bibliotecaPortalCache.dados });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Limite dedicado e mais apertado pra /vincular/facial (além do limite geral
 // do portal acima): é a rota mais sensível — quem souber o CPF de outra
 // pessoa pode tentar vincular o PRÓPRIO rosto ao cadastro dela (ver análise de

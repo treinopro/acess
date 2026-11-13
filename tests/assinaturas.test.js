@@ -1316,3 +1316,51 @@ test('portal: biblioteca de exercícios só para matrícula ativa (mesmo com con
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test('troca de plano pelo portal: ao pagar o plano novo, a matrícula antiga é substituída (contas do mês cancelam, dívida antiga fica)', async () => {
+  const express = require('express');
+  const http = require('http');
+  const portal = require('../src/routes/portal.routes');
+  await db.execute({ sql: `INSERT OR IGNORE INTO planos (id, nome, tipo, valor_centavos, ativo) VALUES ('p-ant', 'MUSC TROCA', 'mensal', 7000, 1)`, args: [] });
+  await db.execute({ sql: `INSERT OR IGNORE INTO planos (id, nome, tipo, valor_centavos, duracao_dias, ativo) VALUES ('p-anual', 'Anual TROCA', 'anual', 57072, 365, 1)`, args: [] });
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf, biometria_id) VALUES ('al-troca', 'Troca', 'tr@t.com', '83838383838', '8383')`, args: [] });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-troca-ant', 'al-troca', 'p-ant', date('now','-60 days'), 'ativa')`, args: [] });
+  const mesAtual = new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 8);
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-troca-mes', 'al-troca', 'm-troca-ant', 7000, 'atrasado', 'manual', 'Mensalidade - X', ?)`, args: [mesAtual + '01'] });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-troca-velha', 'al-troca', 'm-troca-ant', 7000, 'atrasado', 'manual', 'Mensalidade - X', date('now','-50 days'))`, args: [] });
+  const app = express();
+  app.use(express.json());
+  app.use('/api/portal', portal);
+  app.use((err, req, res, next) => res.status(err.status || 500).json({ erro: err.message }));
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, resolve));
+  const porta = server.address().port;
+  const req = (metodo, caminho, corpo) => new Promise((resolve, reject) => {
+    const txt = corpo ? JSON.stringify(corpo) : '';
+    const r = http.request({ port: porta, path: caminho, method: metodo, headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(txt) } },
+      (res) => { let d = ''; res.on('data', (c) => { d += c; }); res.on('end', () => resolve({ status: res.statusCode, json: JSON.parse(d || '{}') })); });
+    r.on('error', reject); r.end(txt);
+  });
+  try {
+    const up = await req('POST', '/api/portal/upgrade', { cpf: '83838383838', senha: '8383', plano_id: 'p-anual', escolher: true });
+    assert.strictEqual(up.status, 201);
+    // Antes de pagar nada muda: a matrícula antiga segue ativa.
+    assert.strictEqual((await db.execute({ sql: `SELECT status FROM matriculas WHERE id = 'm-troca-ant'`, args: [] })).rows[0].status, 'ativa');
+    // Pagamento confirmado da conta do plano novo.
+    await db.execute({ sql: `UPDATE cobrancas SET status = 'pago', pago_em = datetime('now') WHERE id = ?`, args: [up.json.cobranca_id] });
+    const st = await req('GET', '/api/portal/upgrade/status/' + up.json.cobranca_id);
+    assert.strictEqual(st.json.pago, true);
+    const st2 = (await db.execute({ sql: `SELECT id, status FROM matriculas WHERE aluno_id = 'al-troca'`, args: [] })).rows;
+    const por = Object.fromEntries(st2.map((m) => [m.id, m.status]));
+    assert.strictEqual(por['m-troca-ant'], 'cancelada');
+    assert.strictEqual(por[up.json.matricula_id], 'ativa');
+    const contas = Object.fromEntries((await db.execute({ sql: `SELECT id, status FROM cobrancas WHERE id IN ('c-troca-mes','c-troca-velha')`, args: [] })).rows.map((c) => [c.id, c.status]));
+    assert.strictEqual(contas['c-troca-mes'], 'cancelado'); // do mês atual: substituída pelo plano novo
+    assert.strictEqual(contas['c-troca-velha'], 'atrasado'); // dívida de mês anterior continua
+    // Consultar de novo não repete nada.
+    await req('GET', '/api/portal/upgrade/status/' + up.json.cobranca_id);
+    assert.strictEqual((await db.execute({ sql: `SELECT status FROM matriculas WHERE id = ?`, args: [up.json.matricula_id] })).rows[0].status, 'ativa');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

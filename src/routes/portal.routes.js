@@ -927,6 +927,38 @@ router.post('/cadastro/recorrencia', limitadorSenhaPortal, async(req,res,next)=>
  }catch(e){next(e);}
 });
 
+// Troca de plano: quando a matrícula nova é ativada pelo pagamento e o aluno tinha UMA outra matrícula ativa (de outro
+// plano), a antiga é substituída: vira 'cancelada', a recorrência dela é cancelada e as contas em aberto do mês atual em
+// diante são canceladas. Contas de meses anteriores continuam (dívida real). Se o aluno tem mais de uma matrícula ativa,
+// não decide sozinho: a recepção resolve (pode ser uma segunda modalidade).
+async function substituirMatriculaAnterior(alunoId, matriculaNovaId) {
+  try {
+    const nova = (await db.execute({ sql: 'SELECT plano_id FROM matriculas WHERE id = ?', args: [matriculaNovaId] })).rows[0];
+    if (!nova) return;
+    const ativas = (await db.execute({
+      sql: `SELECT id, plano_id FROM matriculas WHERE aluno_id = ? AND status = 'ativa' AND id != ?`,
+      args: [alunoId, matriculaNovaId],
+    })).rows;
+    if (ativas.length !== 1 || ativas[0].plano_id === nova.plano_id) return;
+    const antiga = ativas[0];
+    const assinaturasAntigas = (await db.execute({
+      sql: `SELECT id FROM assinaturas_mp WHERE matricula_id = ? AND status IN ('pending', 'authorized', 'paused')`,
+      args: [antiga.id],
+    }).catch(() => ({ rows: [] }))).rows;
+    for (const a of assinaturasAntigas) {
+      try { await assinaturas.cancelar({ assinaturaId: a.id, encerrarMatricula: true }); } catch (e) { console.warn('[troca de plano] não cancelou a recorrência', a.id, e.message); }
+    }
+    const inicioDoMes = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 8) + '01';
+    await db.execute({
+      sql: `UPDATE cobrancas SET status = 'cancelado' WHERE matricula_id = ? AND status IN ('pendente', 'atrasado') AND vencimento >= ?`,
+      args: [antiga.id, inicioDoMes],
+    });
+    await db.execute({ sql: `UPDATE matriculas SET status = 'cancelada', renovacao_automatica = 0 WHERE id = ? AND status = 'ativa'`, args: [antiga.id] });
+  } catch (err) {
+    console.warn('[troca de plano] falha ao substituir a matrícula anterior:', err.message);
+  }
+}
+
 // Ativa a matrícula ligada a uma cobrança quando o pagamento é confirmado —
 // versão sem catraca, reaproveitada pelo /cadastro/status e pelo /upgrade/status.
 async function confirmarPagamentoEAtivarMatricula(cobrancaId) {
@@ -954,7 +986,8 @@ async function confirmarPagamentoEAtivarMatricula(cobrancaId) {
   if (c.status !== 'pago') return { pago: false };
 
   if (c.matricula_id) {
-    await db.execute({ sql: `UPDATE matriculas SET status = 'ativa' WHERE id = ? AND status = 'pendente'`, args: [c.matricula_id] });
+    const ativou = await db.execute({ sql: `UPDATE matriculas SET status = 'ativa' WHERE id = ? AND status = 'pendente'`, args: [c.matricula_id] });
+    if (ativou.rowsAffected > 0) await substituirMatriculaAnterior(c.aluno_id, c.matricula_id);
   }
 
   const alunoResult = await db.execute({ sql: 'SELECT * FROM alunos WHERE id = ?', args: [c.aluno_id] });

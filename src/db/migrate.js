@@ -433,6 +433,26 @@ async function corrigirFormatoDatasAcessosAntigos() {
   return result.rowsAffected || 0;
 }
 
+// 2026-11-13: padroniza os MODELOS de treino salvos: 3 séries de 12 ou 15 repetições viram "3x10".
+// "3xM" e qualquer outro formato ficam como estão. Roda UMA vez (marca em configuracoes), para não desfazer
+// edições futuras. Não mexe nas fichas já entregues aos alunos (treino_exercicios).
+async function padronizarSeriesModelos() {
+  const chave = 'migracao_series_modelos_3x10';
+  const feita = await db.execute({ sql: 'SELECT 1 FROM configuracoes WHERE chave = ?', args: [chave] });
+  if (feita.rows.length) return 0;
+  const linhas = await db.execute({ sql: 'SELECT id, series FROM treino_template_exercicios WHERE series IS NOT NULL', args: [] });
+  let alteradas = 0;
+  for (const l of linhas.rows) {
+    if (/^\s*3\s*[xX\u00d7]\s*(12|15)\s*$/.test(String(l.series))) {
+      // eslint-disable-next-line no-await-in-loop
+      await db.execute({ sql: 'UPDATE treino_template_exercicios SET series = ? WHERE id = ?', args: ['3x10', l.id] });
+      alteradas += 1;
+    }
+  }
+  await db.execute({ sql: "INSERT INTO configuracoes (chave, valor) VALUES (?, datetime('now')) ON CONFLICT(chave) DO NOTHING", args: [chave] });
+  return alteradas;
+}
+
 async function migrate() {
   const schemaPath = path.join(__dirname, 'schema.sql');
   const schema = fs.readFileSync(schemaPath, 'utf8');
@@ -470,6 +490,8 @@ async function migrate() {
   const acessosCorrigidos = await corrigirFormatoDatasAcessosAntigos();
   const videosAtualizados = await atualizarVideosBibliotecaExercicios();
   const videosTreinosAtualizados = await atualizarVideosTreinosExistentes();
+  const seriesPadronizadas = await padronizarSeriesModelos();
+  if (seriesPadronizadas) console.log(`Modelos de treino ajustados para 3x10: ${seriesPadronizadas}`);
 
   console.log(`Migração concluída: ${statements.length} statements de schema + ${aplicadas} alteração(ões) incremental(is) nova(s)${templatesSeedCriados ? ` + ${templatesSeedCriados} modelo(s) de mensagem novo(s) criado(s)` : ''}${bibliotecaSeedCriados ? ` + ${bibliotecaSeedCriados} exercício(s) novo(s) na biblioteca` : ''}${acessosCorrigidos ? ` + ${acessosCorrigidos} registro(s) de acesso com data corrigida` : ''}${videosAtualizados ? ` + ${videosAtualizados} vídeo(s) de exercício atualizado(s)` : ''}${videosTreinosAtualizados ? ` + ${videosTreinosAtualizados} vídeo(s) em fichas de treino já existentes atualizado(s)` : ''}.`);
 }

@@ -1364,3 +1364,16 @@ test('troca de plano pelo portal: ao pagar o plano novo, a matrícula antiga é 
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test('portal: cobrança automática futura não conta como "em aberto" (vem separada); avaliação não entra como mensalidade', async () => {
+  const pagamentoContas = require('../src/services/pagamentoContas.service');
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, email, cpf) VALUES ('al-auto', 'Auto', 'au@t.com', '84848484848')`, args: [] });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('m-auto', 'al-auto', 'p1', date('now','-20 days'), 'ativa')`, args: [] });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-auto-fut', 'al-auto', 'm-auto', 7000, 'pendente', 'assinatura_mp', 'Recorrência - X', date('now','+20 days'))`, args: [] });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES ('c-auto-av', 'al-auto', 'm-auto', 15978, 'pendente', 'manual', 'Serviço - Avaliação física', date('now','+5 days'))`, args: [] });
+  const portal = await pagamentoContas.consultarContasAbertas('84848484848', { semCobrancaAutomaticaFutura: true });
+  assert.deepStrictEqual(portal.contas.map((c) => c.id), ['c-auto-av']); // só a avaliação é "em aberto"
+  assert.strictEqual(portal.proxima_cobranca_automatica.valor_centavos, 7000);
+  const geral = await pagamentoContas.consultarContasAbertas('84848484848'); // outros usos (totem) não mudam
+  assert.strictEqual(geral.contas.length, 2);
+});

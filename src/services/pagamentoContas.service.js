@@ -14,18 +14,31 @@ const acessoTerminal = require('./acessoTerminal.service');
 const assinaturas = require('./assinaturas.service');
 
 /** Lista as contas em aberto (pendente/atrasado) de um aluno pelo CPF. */
-async function consultarContasAbertas(cpf) {
+// `semCobrancaAutomaticaFutura` (portal): a conta que o cartão automático cobrará sozinho numa data futura não é "em
+// aberto" para o aluno (não há nada a pagar agora). Ela sai da lista e volta separada em `proxima_cobranca_automatica`.
+async function consultarContasAbertas(cpf, { semCobrancaAutomaticaFutura = false } = {}) {
   const aluno = await acessoTerminal.buscarAlunoPorCpf(cpf);
   if (!aluno) return null;
 
   const result = await db.execute({
-    sql: `SELECT id, descricao, valor_centavos, vencimento, status FROM cobrancas
+    sql: `SELECT id, descricao, valor_centavos, vencimento, status, provedor FROM cobrancas
           WHERE aluno_id = ? AND status IN ('pendente', 'atrasado')
           ORDER BY vencimento ASC`,
     args: [aluno.id],
   });
+  if (!semCobrancaAutomaticaFutura) return { aluno, contas: result.rows.map(({ provedor, ...c }) => c) };
 
-  return { aluno, contas: result.rows };
+  const hoje = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+  const contas = [];
+  let proxima = null;
+  for (const { provedor, ...c } of result.rows) {
+    if (provedor === 'assinatura_mp' && c.status === 'pendente' && String(c.vencimento || '').slice(0, 10) > hoje) {
+      if (!proxima) proxima = { vencimento: c.vencimento, valor_centavos: Number(c.valor_centavos) };
+      continue;
+    }
+    contas.push(c);
+  }
+  return { aluno, contas, proxima_cobranca_automatica: proxima };
 }
 
 /**

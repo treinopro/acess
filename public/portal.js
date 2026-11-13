@@ -1382,15 +1382,16 @@ async function carregarResumoContasHub() {
   try {
     const resp = await api('/api/portal/contas/consultar', { method: 'POST', body: JSON.stringify({ cpf: cpfHubAtual, senha: senhaHubAtual }) });
     const resumoEl = document.getElementById('card-contas-resumo');
+    const proxima = resp.proxima_cobranca_automatica || null;
     if (!resp.contas.length) {
-      resumoEl.textContent = 'Nenhuma conta em aberto. Tudo em dia!';
+      resumoEl.textContent = 'Nenhuma conta em aberto. Tudo em dia!' + (proxima ? ' Próxima cobrança automática no cartão: ' + formatarData(proxima.vencimento) + ' (' + formatarMoeda(proxima.valor_centavos) + ').' : '');
       document.getElementById('btn-abrir-contas').disabled = true;
     } else {
       const total = resp.contas.reduce((s, c) => s + c.valor_centavos, 0);
       resumoEl.textContent = `${resp.contas.length} conta(s) em aberto — total ${formatarMoeda(total)}.`;
       document.getElementById('btn-abrir-contas').disabled = false;
     }
-    atualizarAvisoVencimento(resp.contas);
+    atualizarAvisoVencimento(resp.contas, proxima);
   } catch (err) {
     document.getElementById('card-contas-resumo').textContent = `Erro ao consultar: ${err.message}`;
   }
@@ -1434,14 +1435,26 @@ function contaMaisUrgente(contas) {
 // (≤3 dias ou já vencido); agora fica sempre visível, com a data concreta,
 // logo ao acessar o app (não só quando o aluno abre "Contas"). A cor/tom
 // ainda muda com a urgência, mas a VISIBILIDADE não depende mais disso.
-function atualizarAvisoVencimento(contas) {
+// Serviços (ex.: avaliação) e produtos não são mensalidade: não entram no aviso "Sua mensalidade...".
+function contaEhMensalidade(c) { return !/^\s*(Servi[cç]o|Produto)\s*-/i.test(String(c.descricao || '')); }
+
+function atualizarAvisoVencimento(contas, proximaAutomatica) {
   const el = document.getElementById('aviso-vencimento-hub');
   if (!el) return;
 
-  const urgente = contaMaisUrgente(contas);
+  const mensalidades = contas.filter(contaEhMensalidade);
+  const outras = contas.filter((c) => !contaEhMensalidade(c));
+  const urgente = contaMaisUrgente(mensalidades);
   if (!urgente) {
-    el.textContent = '✅ Sua mensalidade está em dia.';
-    el.className = 'aviso-vencimento em-dia';
+    const total = outras.reduce((s, c) => s + Number(c.valor_centavos || 0), 0);
+    const extra = outras.length ? ' Você tem ' + outras.length + (outras.length === 1 ? ' conta de serviço/produto' : ' contas de serviço/produto') + ' em aberto (' + formatarMoeda(total) + ').' : '';
+    if (proximaAutomatica) {
+      el.textContent = '💳 Sua mensalidade é cobrada automaticamente no cartão. Próxima cobrança: ' + formatarData(proximaAutomatica.vencimento) + '.' + extra;
+      el.className = 'aviso-vencimento futuro';
+    } else {
+      el.textContent = '✅ Sua mensalidade está em dia.' + extra;
+      el.className = 'aviso-vencimento em-dia';
+    }
     return;
   }
 

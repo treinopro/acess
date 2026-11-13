@@ -688,9 +688,9 @@ router.post('/contas/consultar', limitadorSenhaPortal, async (req, res, next) =>
     const autenticado = await autenticarAlunoPortal(cpf, senha);
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
 
-    const resultado = await pagamentoContas.consultarContasAbertas(cpf);
+    const resultado = await pagamentoContas.consultarContasAbertas(cpf, { semCobrancaAutomaticaFutura: true });
     if (!resultado) return res.status(404).json({ erro: 'CPF não encontrado.' });
-    res.json({ aluno_id: resultado.aluno.id, aluno_nome: resultado.aluno.nome, contas: resultado.contas });
+    res.json({ aluno_id: resultado.aluno.id, aluno_nome: resultado.aluno.nome, contas: resultado.contas, proxima_cobranca_automatica: resultado.proxima_cobranca_automatica || null });
   } catch (err) {
     next(err);
   }

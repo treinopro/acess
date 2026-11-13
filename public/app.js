@@ -7702,6 +7702,17 @@ function renderizarFiltroGruposLib() {
   });
 }
 
+// Miniatura: a imagem cadastrada; se for capa do YouTube de OUTRO vídeo (o antigo) ou não houver imagem, a capa do vídeo atual.
+function miniaturaBibliotecaAdmin(ex) {
+  const m = String(ex.video_url || '').match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([A-Za-z0-9_-]{6,})/);
+  const idVideo = m && m[1];
+  if (ex.imagem_url) {
+    const antiga = String(ex.imagem_url).match(/(?:ytimg\.com|img\.youtube\.com)\/vi(?:_webp)?\/([A-Za-z0-9_-]{6,})\//);
+    if (!(antiga && idVideo && antiga[1] !== idVideo)) return ex.imagem_url;
+  }
+  return idVideo ? `https://i.ytimg.com/vi/${idVideo}/mqdefault.jpg` : '';
+}
+
 function libItemHtml(ex) {
   const diffMap = { iniciante: '🟢 Iniciante', intermediario: '🟡 Intermediário', avancado: '🔴 Avançado' };
   let chips = '';
@@ -7710,7 +7721,7 @@ function libItemHtml(ex) {
   const videoTarget = `libVideo_${ex.id}`;
   return `
     <div class="lib-item">
-      ${ex.imagem_url ? `<img src="${escapeHtml(ex.imagem_url)}" loading="lazy" style="width:100%;border-radius:8px;max-height:120px;object-fit:cover">` : ''}
+      ${miniaturaBibliotecaAdmin(ex) ? `<div class="lib-thumb"${ex.video_url ? ' data-thumb-video role="button" aria-label="Ver execução"' : ''}><img src="${escapeHtml(miniaturaBibliotecaAdmin(ex))}" alt="" loading="lazy">${ex.video_url ? '<span class="lib-play"><span>&#9654;</span></span>' : ''}</div>` : ''}
       <div class="name">${escapeHtml(ex.nome)}</div>
       <div class="meta">${escapeHtml(ex.grupo_muscular)}${chips}</div>
       ${ex.video_url ? `<button type="button" class="btn-secundario btn-lib-video" data-video="${escapeHtml(ex.video_url)}" data-target="${videoTarget}" style="margin-top:6px">▶ Ver execução</button><div id="${videoTarget}"></div>` : ''}
@@ -7726,15 +7737,18 @@ function libItemHtml(ex) {
 function renderizarGridBiblioteca() {
   const grid = document.getElementById('lib-grid');
   const termos = normalizarBuscaLib(libBusca).split(/\s+/).filter(Boolean);
-  const lista = bibliotecaCache
-    .filter((e) => libFiltroGrupo === 'todos' || e.grupo_muscular === libFiltroGrupo)
-    // cada palavra digitada precisa aparecer no nome ou no grupo (ex.: "rosca biceps")
-    .filter((e) => { const alvo = normalizarBuscaLib(`${e.nome} ${e.grupo_muscular}`); return termos.every((t) => alvo.includes(t)); });
+  const doGrupo = bibliotecaCache.filter((e) => libFiltroGrupo === 'todos' || e.grupo_muscular === libFiltroGrupo);
+  // Busca tolerante a pronúncia ("tri ceps", "esmite", "lec pres"); sem o arquivo, cai na busca simples por trechos.
+  const lista = window.BuscaFonetica
+    ? window.BuscaFonetica.filtrar(doGrupo, libBusca, (e) => `${e.nome} ${e.grupo_muscular}`)
+    : doGrupo.filter((e) => { const alvo = normalizarBuscaLib(`${e.nome} ${e.grupo_muscular}`); return termos.every((t) => alvo.includes(t)); });
   const contagem = document.getElementById('lib-contagem');
   if (contagem) contagem.textContent = `${lista.length} de ${bibliotecaCache.length} exercícios`;
   if (!lista.length) { grid.innerHTML = '<p style="color:#667085;font-size:13px">Nenhum exercício encontrado.</p>'; return; }
   grid.innerHTML = lista.map(libItemHtml).join('');
 
+  // Tocar na miniatura abre/fecha o vídeo, usando o mesmo botão "Ver execução" do cartão.
+  grid.querySelectorAll('[data-thumb-video]').forEach((th) => th.addEventListener('click', () => th.closest('.lib-item')?.querySelector('.btn-lib-video')?.click()));
   grid.querySelectorAll('.btn-lib-video').forEach((btn) => {
     btn.addEventListener('click', () => {
       const alvo = document.getElementById(btn.dataset.target);

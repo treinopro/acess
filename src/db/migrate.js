@@ -423,6 +423,29 @@ async function limparMiniaturasDeVideosAntigos() {
   return limpas;
 }
 
+// 2026-11-13, pedido do dono: nos exercícios com vídeo do canal @Rjunior_lima, a imagem guardada (inclusive foto enviada)
+// é apagada UMA vez, porque a capa do próprio vídeo no YouTube é melhor. Roda só uma vez (marca em configuracoes):
+// uma imagem colocada depois (ex.: o 1º quadro do vídeo) não é mais tocada.
+const VIDEOS_DO_CANAL = new Set(['eiRnO9t-oEw', 'uSvluHlEHHQ', 'kLK5JoItOow', '42a2IZARYDk', 'XL5nvBgOOoQ', 'CExZraPxux8', 'oI8knuRet0U', 'AaOKJaQfNIc', 'JrdXjnUqhsQ', 'InXSmmeY9BE', 'TZrrBsm9CDo', 'sFgwEsJ7rDE', 'x3HQ62nOO1g', 'v-7dy0NiRts', 'v9lusLVdfAQ', 'qHPPFJnSgTo', 'iRfHplWT4ZQ', 'AWAhShvDxTk', 'y9TCI_1LNM0', 'Bkb7JjFWchQ', 'tOWN42yNcqg', 'ggmOe2eerD4', 'V1LGK717aVU', '3OBeC9mbJ18', 'B0v4O17DDsk', 'eEuLZSzLNtM', 'KfuUZw-MxaE', 'nUp2D8v9rOk', 'wbAJsXU4D2M', 'JBX-eqxcvos', 'GuvhCW9kqTA', 'UlvG0f27fPo', 'tkXXCdIO6jc']);
+async function limparImagensDosVideosDoCanal() {
+  const chave = 'migracao_limpar_imagens_canal_v1';
+  const feita = await db.execute({ sql: 'SELECT 1 FROM configuracoes WHERE chave = ?', args: [chave] });
+  if (feita.rows.length) return 0;
+  let limpas = 0;
+  for (const tabela of ['exercicio_biblioteca', 'treino_exercicios', 'treino_template_exercicios']) {
+    // eslint-disable-next-line no-await-in-loop
+    const r = await db.execute({ sql: `SELECT id, video_url FROM ${tabela} WHERE imagem_url IS NOT NULL AND imagem_url != ''`, args: [] });
+    for (const l of r.rows) {
+      if (!VIDEOS_DO_CANAL.has(idYoutube(l.video_url))) continue;
+      // eslint-disable-next-line no-await-in-loop
+      await db.execute({ sql: `UPDATE ${tabela} SET imagem_url = NULL WHERE id = ?`, args: [l.id] });
+      limpas += 1;
+    }
+  }
+  await db.execute({ sql: "INSERT INTO configuracoes (chave, valor) VALUES (?, datetime('now')) ON CONFLICT(chave) DO NOTHING", args: [chave] });
+  return limpas;
+}
+
 async function seedBibliotecaExercicios() {
   let criados = 0;
   for (const [grupoMuscular, nome, videoUrl, equipamento, dificuldade, musculosSecundarios, instrucoes] of BIBLIOTECA_SEED) {
@@ -524,6 +547,8 @@ async function migrate() {
   const videosTreinosAtualizados = await atualizarVideosTreinosExistentes();
   const miniaturasLimpas = await limparMiniaturasDeVideosAntigos();
   if (miniaturasLimpas) console.log(`Miniaturas de vídeos antigos removidas: ${miniaturasLimpas}`);
+  const imagensDoCanalLimpas = await limparImagensDosVideosDoCanal();
+  if (imagensDoCanalLimpas) console.log(`Imagens apagadas de exercícios com vídeo do canal: ${imagensDoCanalLimpas}`);
   const seriesPadronizadas = await padronizarSeriesModelos();
   if (seriesPadronizadas) console.log(`Modelos de treino ajustados para 3x10: ${seriesPadronizadas}`);
 

@@ -7680,6 +7680,10 @@ async function garantirBibliotecaCarregada(forcarRecarga = false) {
 })();
 
 let libFiltroGrupo = 'todos';
+let libBusca = '';
+// Sem acento e sem diferença de maiúsculas: "triceps" acha "Tríceps".
+function normalizarBuscaLib(t) { return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim(); }
+document.getElementById('lib-busca')?.addEventListener('input', (e) => { libBusca = e.target.value; renderizarGridBiblioteca(); });
 
 async function carregarSecaoBiblioteca() {
   await garantirBibliotecaCarregada(true); // recarrega sempre ao abrir a seção — pode ter mudado noutra aba
@@ -7721,7 +7725,13 @@ function libItemHtml(ex) {
 
 function renderizarGridBiblioteca() {
   const grid = document.getElementById('lib-grid');
-  const lista = libFiltroGrupo === 'todos' ? bibliotecaCache : bibliotecaCache.filter((e) => e.grupo_muscular === libFiltroGrupo);
+  const termos = normalizarBuscaLib(libBusca).split(/\s+/).filter(Boolean);
+  const lista = bibliotecaCache
+    .filter((e) => libFiltroGrupo === 'todos' || e.grupo_muscular === libFiltroGrupo)
+    // cada palavra digitada precisa aparecer no nome ou no grupo (ex.: "rosca biceps")
+    .filter((e) => { const alvo = normalizarBuscaLib(`${e.nome} ${e.grupo_muscular}`); return termos.every((t) => alvo.includes(t)); });
+  const contagem = document.getElementById('lib-contagem');
+  if (contagem) contagem.textContent = `${lista.length} de ${bibliotecaCache.length} exercícios`;
   if (!lista.length) { grid.innerHTML = '<p style="color:#667085;font-size:13px">Nenhum exercício encontrado.</p>'; return; }
   grid.innerHTML = lista.map(libItemHtml).join('');
 

@@ -2593,5 +2593,37 @@ function tratarRetornoCartao() {
   return true;
 }
 
+// ---- Voltar deslizando para o lado (arrastar o dedo da esquerda para a direita) ----
+// Faz o mesmo que o botão "Voltar" da tela aberta, sem precisar rolar até o fim da página. Fecha primeiro a janela do
+// vídeo da biblioteca, se estiver aberta. Não dispara em campos de texto, no vídeo, nem em listas que rolam para o lado.
+(function ligarVoltarPorGesto() {
+  let ini = null;
+  const bloqueado = (el) => {
+    for (let n = el; n && n !== document.body; n = n.parentElement) {
+      const tag = n.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'IFRAME' || tag === 'VIDEO' || tag === 'CANVAS') return true;
+      if (n.hasAttribute && n.hasAttribute('data-sem-gesto')) return true;
+      if (n.scrollWidth > n.clientWidth + 4) { const ox = getComputedStyle(n).overflowX; if (ox === 'auto' || ox === 'scroll') return true; }
+    }
+    return false;
+  };
+  document.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1 || bloqueado(e.target)) { ini = null; return; }
+    ini = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() };
+  }, { passive: true });
+  document.addEventListener('touchend', (e) => {
+    if (!ini || !e.changedTouches.length) return;
+    const dx = e.changedTouches[0].clientX - ini.x;
+    const dy = e.changedTouches[0].clientY - ini.y;
+    const rapido = Date.now() - ini.t < 900;
+    ini = null;
+    if (dx < 80 || Math.abs(dy) > dx * 0.5 || !rapido) return; // só um arrasto claro para a direita
+    const modal = document.getElementById('bib-modal');
+    if (modal && !modal.classList.contains('oculto')) { fecharVideoBibliotecaPortal(); return; }
+    const voltar = Array.from(document.querySelectorAll('.link-voltar')).find((b) => b.offsetParent !== null);
+    if (voltar) voltar.click();
+  }, { passive: true });
+})();
+
 carregarConfigPublica();
 if (!tratarRetornoCartao()) tentarAutoLoginHub();

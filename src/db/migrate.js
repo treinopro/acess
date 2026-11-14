@@ -197,18 +197,20 @@ async function seedMensagensTemplates() {
 // Seed idempotente por (grupo_muscular, nome) — rodar de novo não duplica, e
 // não sobrescreve um vídeo que o admin já tenha trocado manualmente depois.
 const BIBLIOTECA_SEED = [
-  ['Peito', 'Supino reto com barra', 'https://www.youtube.com/watch?v=pCPyqW60Wuk', 'barra', 'intermediario', 'Tríceps, ombro anterior', 'Deite no banco, pegada pouco mais aberta que os ombros, desça a barra até o peito e empurre.'],
-  ['Peito', 'Supino inclinado com halteres', 'https://www.youtube.com/shorts/eBT3llJhxU8', 'halter', 'intermediario', 'Ombro anterior, tríceps', 'Banco a 30-45°, desça os halteres na linha do peito superior e empurre para cima.'],
-  ['Peito', 'Supino reto com halteres', 'https://www.youtube.com/watch?v=k1gMi4IZZEA', 'halter', 'iniciante', 'Tríceps, ombro anterior', 'Permite maior amplitude que a barra; controle a descida.'],
+  ['Peito', 'Supino reto com barra', 'https://youtu.be/kv4n8GlEO5A', 'barra', 'intermediario', 'Tríceps, ombro anterior', 'Deite no banco, pegada pouco mais aberta que os ombros, desça a barra até o peito e empurre.'],
+  ['Peito', 'Supino inclinado com halteres', 'https://youtu.be/7-D5IRnR85Q', 'halter', 'intermediario', 'Ombro anterior, tríceps', 'Banco a 30-45°, desça os halteres na linha do peito superior e empurre para cima.'],
+  ['Peito', 'Supino inclinado com barra', 'https://youtu.be/-H_RvylY91E', 'barra', 'intermediario', 'Ombro anterior, tríceps', 'Banco a 30-45°, desça a barra até a parte superior do peito e empurre.'],
+  ['Peito', 'Supino reto com halteres', 'https://youtu.be/o2_r6ls0f28', 'halter', 'iniciante', 'Tríceps, ombro anterior', 'Permite maior amplitude que a barra; controle a descida.'],
   ['Peito', 'Crucifixo com halteres', 'https://www.youtube.com/watch?v=ITbQH-1HYZI', 'halter', 'iniciante', 'Ombro anterior', 'Cotovelos levemente flexionados, abra os braços em arco e traga de volta.'],
-  ['Peito', 'Crossover na polia', 'https://www.youtube.com/watch?v=o90Pm6qTeNI', 'polia', 'intermediario', 'Ombro anterior', 'Puxe os cabos à frente cruzando levemente as mãos; contraia o peito.'],
+  ['Peito', 'Crossover na polia', 'https://youtu.be/Ae7h9tzL3hU', 'polia', 'intermediario', 'Ombro anterior', 'Puxe os cabos à frente cruzando levemente as mãos; contraia o peito.'],
   ['Peito', 'Flexão de braço', 'https://www.youtube.com/watch?v=TbVWMhyax2U', 'peso corporal', 'iniciante', 'Tríceps, core', 'Corpo alinhado, desça até o peito quase tocar o chão e empurre.'],
   ['Peito', 'Flexão inclinada (mãos elevadas)', '', 'peso corporal', 'iniciante', 'Tríceps', 'Mãos num banco; versão mais fácil da flexão, boa para iniciantes.'],
-  ['Peito', 'Peck deck (voador)', 'https://www.youtube.com/watch?v=a5XwjsD3AOI', 'máquina', 'iniciante', 'Ombro anterior', 'Sentado, junte os braços à frente pela almofada; movimento guiado.'],
+  ['Peito', 'Peck deck (voador)', 'https://youtu.be/tA6YPnouT-A', 'máquina', 'iniciante', 'Ombro anterior', 'Sentado, junte os braços à frente pela almofada; movimento guiado.'],
+  ['Peito', 'Crucifixo voador', 'https://youtu.be/DQ5H0WIVUd8', 'máquina', 'iniciante', 'Ombro anterior', 'Sentado na máquina, abra os braços e junte à frente controlando o movimento.'],
   ['Peito', 'Supino declinado com barra', 'https://www.youtube.com/watch?v=ifWEwZDWMAw', 'barra', 'intermediario', 'Tríceps, ombro anterior', 'No banco declinado, desça a barra à linha inferior do peito e empurre sem perder a retração escapular.'],
   ['Peito', 'Crucifixo inclinado com halteres', 'https://www.youtube.com/watch?v=MEouME-ymto', 'halter', 'intermediario', 'Ombro anterior', 'Banco inclinado, abra os braços em arco mantendo leve flexão dos cotovelos.'],
-  ['Peito', 'Crossover polia alta', 'https://www.youtube.com/watch?v=E3aha5zhlc0', 'polia', 'intermediario', 'Ombro anterior', 'Conduza as mãos de cima para baixo e à frente, sem projetar os ombros.'],
-  ['Peito', 'Crossover polia baixa', 'https://www.youtube.com/watch?v=QUcXXwxa6hE', 'polia', 'intermediario', 'Ombro anterior', 'Conduza as mãos de baixo para cima em direção ao centro do peito.'],
+  ['Peito', 'Crossover polia alta', 'https://youtu.be/iXQYdp6VJng', 'polia', 'intermediario', 'Ombro anterior', 'Conduza as mãos de cima para baixo e à frente, sem projetar os ombros.'],
+  ['Peito', 'Crossover polia baixa', 'https://youtu.be/NhURnlZHNhQ', 'polia', 'intermediario', 'Ombro anterior', 'Conduza as mãos de baixo para cima em direção ao centro do peito.'],
   ['Peito', 'Pullover com halter', 'https://www.youtube.com/watch?v=tN-QTbJt30Y', 'halter', 'intermediario', 'Dorsal, serrátil, tríceps', 'Deitado, leve o halter atrás da cabeça com controle e retorne sem arquear a lombar.'],
   ['Costas', 'Puxada frente na polia', 'https://www.youtube.com/watch?v=25XTUWnt_R4', 'polia', 'iniciante', 'Bíceps, antebraço', 'Pegada aberta, puxe a barra até a clavícula descendo as escápulas.'],
   ['Costas', 'Remada curvada com barra', 'https://www.youtube.com/watch?v=JcaEfoMFlW8', 'barra', 'avancado', 'Bíceps, lombar', 'Tronco inclinado ~45°, puxe a barra ao umbigo mantendo a coluna neutra.'],
@@ -376,7 +378,7 @@ const VIDEOS_LEANDRO_TWIN_ANTIGOS = new Set([
 
 // 2026-11-12: vídeos próprios do canal da academia (@Rjunior_lima) substituíram os da lista abaixo.
 // Fichas e modelos que copiaram o vídeo antigo passam a usar o novo (só quando ainda estão com o antigo).
-const VIDEOS_SUBSTITUIDOS_PELO_CANAL = ['https://youtu.be/V1BZ1_0oxe4', 'https://youtu.be/jannLx4RxKo', 'https://youtu.be/eufDL9MmF8A', 'https://youtu.be/yopIHJ-jr3w', 'https://youtu.be/nAqWZprW4yY', 'https://youtu.be/1-xCKLVxqqg', 'https://youtu.be/TTvOm65EKnA', 'https://youtu.be/X12n32mNBp8', 'https://youtu.be/GjKnc5UJwzo', 'https://youtu.be/M-DTY40JG9M', 'https://www.youtube.com/shorts/hISzOeaSUBI', 'https://youtu.be/rM6SDUdl9fs', 'https://www.youtube.com/watch?v=QiqUXcz2iyA', 'https://youtu.be/BHfY5-jGNDA', 'https://youtu.be/lQo21In1LZs', 'https://youtu.be/uCT5wfQIQpk', 'https://youtu.be/FM2Butrvejo', 'https://youtu.be/LmZDCe78Pb0', 'https://youtu.be/50qHGus1TZk', 'https://youtu.be/mphx1zpnyT0', 'https://youtu.be/waAxlYvtCcI', 'https://youtu.be/exLCpU7mT3g', 'https://youtu.be/e0_xHkXw350', 'https://youtu.be/UqsUaoE3SSs'];
+const VIDEOS_SUBSTITUIDOS_PELO_CANAL = ['https://youtu.be/V1BZ1_0oxe4', 'https://youtu.be/jannLx4RxKo', 'https://youtu.be/eufDL9MmF8A', 'https://youtu.be/yopIHJ-jr3w', 'https://youtu.be/nAqWZprW4yY', 'https://youtu.be/1-xCKLVxqqg', 'https://youtu.be/TTvOm65EKnA', 'https://youtu.be/X12n32mNBp8', 'https://youtu.be/GjKnc5UJwzo', 'https://youtu.be/M-DTY40JG9M', 'https://www.youtube.com/shorts/hISzOeaSUBI', 'https://youtu.be/rM6SDUdl9fs', 'https://www.youtube.com/watch?v=QiqUXcz2iyA', 'https://youtu.be/BHfY5-jGNDA', 'https://youtu.be/lQo21In1LZs', 'https://youtu.be/uCT5wfQIQpk', 'https://youtu.be/FM2Butrvejo', 'https://youtu.be/LmZDCe78Pb0', 'https://youtu.be/50qHGus1TZk', 'https://youtu.be/mphx1zpnyT0', 'https://youtu.be/waAxlYvtCcI', 'https://youtu.be/exLCpU7mT3g', 'https://youtu.be/e0_xHkXw350', 'https://youtu.be/UqsUaoE3SSs', 'https://www.youtube.com/watch?v=pCPyqW60Wuk', 'https://www.youtube.com/watch?v=k1gMi4IZZEA', 'https://www.youtube.com/shorts/eBT3llJhxU8', 'https://www.youtube.com/watch?v=a5XwjsD3AOI', 'https://www.youtube.com/watch?v=E3aha5zhlc0', 'https://www.youtube.com/watch?v=QUcXXwxa6hE', 'https://www.youtube.com/watch?v=o90Pm6qTeNI'];
 
 async function atualizarVideosTreinosExistentes() {
   const antigos = [...new Set([...VIDEOS_LEANDRO_TWIN_ANTIGOS, ...VIDEOS_SUBSTITUIDOS_PELO_CANAL])];
@@ -426,9 +428,9 @@ async function limparMiniaturasDeVideosAntigos() {
 // 2026-11-13, pedido do dono: nos exercícios com vídeo do canal @Rjunior_lima, a imagem guardada (inclusive foto enviada)
 // é apagada UMA vez, porque a capa do próprio vídeo no YouTube é melhor. Roda só uma vez (marca em configuracoes):
 // uma imagem colocada depois (ex.: o 1º quadro do vídeo) não é mais tocada.
+const VIDEOS_DO_CANAL_LEVA3 = new Set(['kv4n8GlEO5A', 'o2_r6ls0f28', '7-D5IRnR85Q', 'tA6YPnouT-A', 'iXQYdp6VJng', 'NhURnlZHNhQ', 'Ae7h9tzL3hU', '-H_RvylY91E', 'DQ5H0WIVUd8']); // 3ª leva (peitoral)
 const VIDEOS_DO_CANAL = new Set(['eiRnO9t-oEw', 'uSvluHlEHHQ', 'kLK5JoItOow', '42a2IZARYDk', 'XL5nvBgOOoQ', 'CExZraPxux8', 'oI8knuRet0U', 'AaOKJaQfNIc', 'JrdXjnUqhsQ', 'InXSmmeY9BE', 'TZrrBsm9CDo', 'sFgwEsJ7rDE', 'x3HQ62nOO1g', 'v-7dy0NiRts', 'v9lusLVdfAQ', 'qHPPFJnSgTo', 'iRfHplWT4ZQ', 'AWAhShvDxTk', 'y9TCI_1LNM0', 'Bkb7JjFWchQ', 'tOWN42yNcqg', 'ggmOe2eerD4', 'V1LGK717aVU', '3OBeC9mbJ18', 'B0v4O17DDsk', 'eEuLZSzLNtM', 'KfuUZw-MxaE', 'nUp2D8v9rOk', 'wbAJsXU4D2M', 'JBX-eqxcvos', 'GuvhCW9kqTA', 'UlvG0f27fPo', 'tkXXCdIO6jc']);
-async function limparImagensDosVideosDoCanal() {
-  const chave = 'migracao_limpar_imagens_canal_v1';
+async function limparImagensDosVideosDoCanal(chave = 'migracao_limpar_imagens_canal_v1', ids = VIDEOS_DO_CANAL) {
   const feita = await db.execute({ sql: 'SELECT 1 FROM configuracoes WHERE chave = ?', args: [chave] });
   if (feita.rows.length) return 0;
   let limpas = 0;
@@ -436,7 +438,7 @@ async function limparImagensDosVideosDoCanal() {
     // eslint-disable-next-line no-await-in-loop
     const r = await db.execute({ sql: `SELECT id, video_url FROM ${tabela} WHERE imagem_url IS NOT NULL AND imagem_url != ''`, args: [] });
     for (const l of r.rows) {
-      if (!VIDEOS_DO_CANAL.has(idYoutube(l.video_url))) continue;
+      if (!ids.has(idYoutube(l.video_url))) continue;
       // eslint-disable-next-line no-await-in-loop
       await db.execute({ sql: `UPDATE ${tabela} SET imagem_url = NULL WHERE id = ?`, args: [l.id] });
       limpas += 1;
@@ -449,13 +451,12 @@ async function limparImagensDosVideosDoCanal() {
 // 2026-11-13, pedido do dono: os treinos JÁ EXISTENTES (fichas dos alunos e modelos salvos) passam a usar o vídeo atual da
 // biblioteca nos exercícios que têm vídeo do canal @Rjunior_lima. A cópia do vídeo é trocada (mesmo que tenha sido colocada à
 // mão) e a capa antiga é apagada. Também casa por NOME os exercícios sem vínculo com a biblioteca. Roda UMA vez (configuracoes).
-async function sincronizarVideosDoCanalNosTreinos() {
-  const chave = 'migracao_sync_videos_canal_treinos_v1';
+async function sincronizarVideosDoCanalNosTreinos(chave = 'migracao_sync_videos_canal_treinos_v1', ids = VIDEOS_DO_CANAL) {
   const feita = await db.execute({ sql: 'SELECT 1 FROM configuracoes WHERE chave = ?', args: [chave] });
   if (feita.rows.length) return 0;
   const norm = (t) => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
   const lib = (await db.execute({ sql: "SELECT id, nome, video_url FROM exercicio_biblioteca WHERE video_url IS NOT NULL AND video_url != ''", args: [] })).rows
-    .filter((l) => VIDEOS_DO_CANAL.has(idYoutube(l.video_url)));
+    .filter((l) => ids.has(idYoutube(l.video_url)));
   let n = 0;
   for (const tabela of ['treino_exercicios', 'treino_template_exercicios']) {
     // eslint-disable-next-line no-await-in-loop
@@ -578,9 +579,9 @@ async function migrate() {
   await db.execute(`UPDATE cobrancas SET valor_centavos = (SELECT s.valor_centavos FROM assinaturas_mp s WHERE s.cobranca_inicial_id = cobrancas.id AND s.status = 'authorized' LIMIT 1)
                     WHERE status = 'pendente' AND vencimento > date('now')
                       AND id IN (SELECT cobranca_inicial_id FROM assinaturas_mp WHERE status = 'authorized' AND cobranca_inicial_id IS NOT NULL)`).catch(() => {});
-  const imagensDoCanalLimpas = await limparImagensDosVideosDoCanal();
+  const imagensDoCanalLimpas = (await limparImagensDosVideosDoCanal()) + (await limparImagensDosVideosDoCanal('migracao_limpar_imagens_canal_leva3', VIDEOS_DO_CANAL_LEVA3));
   if (imagensDoCanalLimpas) console.log(`Imagens apagadas de exercícios com vídeo do canal: ${imagensDoCanalLimpas}`);
-  const treinosSincronizados = await sincronizarVideosDoCanalNosTreinos();
+  const treinosSincronizados = (await sincronizarVideosDoCanalNosTreinos()) + (await sincronizarVideosDoCanalNosTreinos('migracao_sync_videos_canal_treinos_leva3', VIDEOS_DO_CANAL_LEVA3));
   if (treinosSincronizados) console.log(`Exercícios de treinos atualizados com o vídeo do canal: ${treinosSincronizados}`);
   const seriesPadronizadas = await padronizarSeriesModelos();
   if (seriesPadronizadas) console.log(`Modelos de treino ajustados para 3x10: ${seriesPadronizadas}`);

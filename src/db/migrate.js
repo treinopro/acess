@@ -317,19 +317,63 @@ const BIBLIOTECA_SEED = [
 // mesmo vídeo em vários exercícios diferentes) por um vídeo individual e
 // curto por exercício. Idempotente: rodar de novo não faz nada além de
 // confirmar que já está certo.
+// Nome comparável: sem acento, sem maiúsculas, sem espaços e pontuação. "Supino inclinado com Barra", "supino inclinado com
+// barra" e "Legpress"/"Leg press" são o mesmo exercício e não podem virar dois itens na biblioteca.
+function normNome(t) {
+  return String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '');
+}
+
 async function atualizarVideosBibliotecaExercicios() {
   let atualizados = 0;
-  for (const [grupoMuscular, nome, videoUrl] of BIBLIOTECA_SEED) {
+  const existentes = (await db.execute({ sql: 'SELECT id, nome, video_url FROM exercicio_biblioteca', args: [] })).rows;
+  for (const [, nome, videoUrl] of BIBLIOTECA_SEED) {
     if (!videoUrl) continue;
-    // eslint-disable-next-line no-await-in-loop
-    const result = await db.execute({
-      sql: `UPDATE exercicio_biblioteca SET video_url = ?
-            WHERE grupo_muscular = ? AND nome = ? AND (video_url IS NULL OR video_url != ?)`,
-      args: [videoUrl, grupoMuscular, nome, videoUrl],
-    });
-    atualizados += result.rowsAffected || 0;
+    for (const e of existentes.filter((x) => normNome(x.nome) === normNome(nome))) {
+      if (String(e.video_url || '') === videoUrl) continue;
+      // eslint-disable-next-line no-await-in-loop
+      const result = await db.execute({ sql: 'UPDATE exercicio_biblioteca SET video_url = ? WHERE id = ?', args: [videoUrl, e.id] });
+      atualizados += result.rowsAffected || 0;
+    }
   }
   return atualizados;
+}
+
+// Une duplicados que apareceram porque o nome mudava só em maiúscula/espaço (ex.: "Supino inclinado com Barra" do sistema
+// e o novo "...com barra" do canal). Só atua quando um deles tem vídeo do canal. Fica o MAIS ANTIGO (o que as fichas já
+// usam), recebe o vídeo do canal e o outro é apagado; fichas e modelos que apontavam para ele passam para o que ficou.
+async function unificarDuplicadosDoCanal() {
+  const canal = new Set([...VIDEOS_DO_CANAL, ...VIDEOS_DO_CANAL_LEVA3]);
+  const linhas = (await db.execute({ sql: 'SELECT rowid AS ordem, id, nome, video_url, imagem_url, equipamento, dificuldade, instrucoes FROM exercicio_biblioteca ORDER BY rowid', args: [] })).rows;
+  const grupos = new Map();
+  for (const l of linhas) {
+    const k = normNome(l.nome);
+    if (!grupos.has(k)) grupos.set(k, []);
+    grupos.get(k).push(l);
+  }
+  let unidos = 0;
+  for (const itens of grupos.values()) {
+    if (itens.length < 2) continue;
+    const doCanal = itens.filter((i) => canal.has(idYoutube(i.video_url))).pop();
+    if (!doCanal) continue;
+    const fica = itens[0];
+    for (const dup of itens.slice(1)) {
+      // eslint-disable-next-line no-await-in-loop
+      await db.execute({ sql: 'UPDATE treino_exercicios SET biblioteca_id = ? WHERE biblioteca_id = ?', args: [fica.id, dup.id] });
+      // eslint-disable-next-line no-await-in-loop
+      await db.execute({ sql: 'UPDATE treino_template_exercicios SET biblioteca_id = ? WHERE biblioteca_id = ?', args: [fica.id, dup.id] });
+      // eslint-disable-next-line no-await-in-loop
+      await db.execute({ sql: 'DELETE FROM exercicio_biblioteca WHERE id = ?', args: [dup.id] });
+      unidos += 1;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await db.execute({
+      sql: `UPDATE exercicio_biblioteca SET video_url = ?, imagem_url = NULL,
+              equipamento = COALESCE(NULLIF(equipamento, ''), ?), dificuldade = COALESCE(NULLIF(dificuldade, ''), ?), instrucoes = COALESCE(NULLIF(instrucoes, ''), ?)
+            WHERE id = ?`,
+      args: [doCanal.video_url, doCanal.equipamento || null, doCanal.dificuldade || null, doCanal.instrucoes || null, fica.id],
+    });
+  }
+  return unidos;
 }
 
 // 2026-08-27: achado ao investigar "os vídeos novos não aparecem pro aluno"
@@ -454,7 +498,7 @@ async function limparImagensDosVideosDoCanal(chave = 'migracao_limpar_imagens_ca
 async function sincronizarVideosDoCanalNosTreinos(chave = 'migracao_sync_videos_canal_treinos_v1', ids = VIDEOS_DO_CANAL) {
   const feita = await db.execute({ sql: 'SELECT 1 FROM configuracoes WHERE chave = ?', args: [chave] });
   if (feita.rows.length) return 0;
-  const norm = (t) => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+  const norm = normNome;
   const lib = (await db.execute({ sql: "SELECT id, nome, video_url FROM exercicio_biblioteca WHERE video_url IS NOT NULL AND video_url != ''", args: [] })).rows
     .filter((l) => ids.has(idYoutube(l.video_url)));
   let n = 0;
@@ -476,13 +520,11 @@ async function sincronizarVideosDoCanalNosTreinos(chave = 'migracao_sync_videos_
 
 async function seedBibliotecaExercicios() {
   let criados = 0;
+  const nomesExistentes = new Set((await db.execute({ sql: 'SELECT nome FROM exercicio_biblioteca', args: [] })).rows.map((r) => normNome(r.nome)));
   for (const [grupoMuscular, nome, videoUrl, equipamento, dificuldade, musculosSecundarios, instrucoes] of BIBLIOTECA_SEED) {
-    // eslint-disable-next-line no-await-in-loop
-    const existente = await db.execute({
-      sql: 'SELECT id FROM exercicio_biblioteca WHERE grupo_muscular = ? AND nome = ?',
-      args: [grupoMuscular, nome],
-    });
-    if (existente.rows[0]) continue;
+    // Já existe com o mesmo nome (ignorando maiúscula, acento e espaço)? então não cria de novo.
+    if (nomesExistentes.has(normNome(nome))) continue;
+    nomesExistentes.add(normNome(nome));
 
     // eslint-disable-next-line no-await-in-loop
     await db.execute({
@@ -572,6 +614,8 @@ async function migrate() {
   const bibliotecaSeedCriados = await seedBibliotecaExercicios();
   const acessosCorrigidos = await corrigirFormatoDatasAcessosAntigos();
   const videosAtualizados = await atualizarVideosBibliotecaExercicios();
+  const duplicadosUnidos = await unificarDuplicadosDoCanal();
+  if (duplicadosUnidos) console.log(`Exercícios duplicados unidos na biblioteca: ${duplicadosUnidos}`);
   const videosTreinosAtualizados = await atualizarVideosTreinosExistentes();
   const miniaturasLimpas = await limparMiniaturasDeVideosAntigos();
   if (miniaturasLimpas) console.log(`Miniaturas de vídeos antigos removidas: ${miniaturasLimpas}`);
@@ -581,7 +625,7 @@ async function migrate() {
                       AND id IN (SELECT cobranca_inicial_id FROM assinaturas_mp WHERE status = 'authorized' AND cobranca_inicial_id IS NOT NULL)`).catch(() => {});
   const imagensDoCanalLimpas = (await limparImagensDosVideosDoCanal()) + (await limparImagensDosVideosDoCanal('migracao_limpar_imagens_canal_leva3', VIDEOS_DO_CANAL_LEVA3));
   if (imagensDoCanalLimpas) console.log(`Imagens apagadas de exercícios com vídeo do canal: ${imagensDoCanalLimpas}`);
-  const treinosSincronizados = (await sincronizarVideosDoCanalNosTreinos()) + (await sincronizarVideosDoCanalNosTreinos('migracao_sync_videos_canal_treinos_leva3', VIDEOS_DO_CANAL_LEVA3));
+  const treinosSincronizados = (await sincronizarVideosDoCanalNosTreinos()) + (await sincronizarVideosDoCanalNosTreinos('migracao_sync_videos_canal_treinos_leva3', VIDEOS_DO_CANAL_LEVA3)) + (await sincronizarVideosDoCanalNosTreinos('migracao_sync_videos_canal_treinos_v4_todos', new Set([...VIDEOS_DO_CANAL, ...VIDEOS_DO_CANAL_LEVA3])));
   if (treinosSincronizados) console.log(`Exercícios de treinos atualizados com o vídeo do canal: ${treinosSincronizados}`);
   const seriesPadronizadas = await padronizarSeriesModelos();
   if (seriesPadronizadas) console.log(`Modelos de treino ajustados para 3x10: ${seriesPadronizadas}`);

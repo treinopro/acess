@@ -491,8 +491,11 @@ function resetHub() {
   document.getElementById('input-senha-hub').classList.add('oculto');
   document.getElementById('hub-cpf-erro').textContent = '';
   document.getElementById('painel-hub-cpf').classList.remove('oculto');
-  ['painel-hub-primeiro-acesso', 'painel-hub-dashboard', 'painel-hub-contas', 'painel-hub-conta', 'painel-hub-upgrade-escolha', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-comprovante', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-avaliacoes']
+  ['painel-hub-primeiro-acesso', 'painel-hub-dashboard', 'painel-hub-contas', 'painel-hub-conta', 'painel-hub-upgrade-escolha', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-comprovante', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-avaliacoes', 'painel-hub-demo']
     .forEach((id) => document.getElementById(id).classList.add('oculto'));
+  demoParar();
+  document.getElementById('card-demo').classList.add('oculto');
+  demoConfigHub = null;
   const avisoVencimento = document.getElementById('aviso-vencimento-hub');
   avisoVencimento.classList.add('oculto');
   avisoVencimento.textContent = '';
@@ -626,7 +629,7 @@ document.getElementById('bib-busca').addEventListener('input', renderizarBibliot
 })();
 
 document.getElementById('btn-voltar-hub').addEventListener('click', () => {
-  const SUBPAINEIS_HUB = ['painel-hub-conta', 'painel-hub-upgrade-escolha', 'painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-avaliacoes', 'painel-hub-notificacoes', 'painel-hub-biblioteca'];
+  const SUBPAINEIS_HUB = ['painel-hub-conta', 'painel-hub-upgrade-escolha', 'painel-hub-contas', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-avaliacoes', 'painel-hub-notificacoes', 'painel-hub-biblioteca', 'painel-hub-demo'];
   const painelAberto = SUBPAINEIS_HUB.find((id) => !document.getElementById(id).classList.contains('oculto'));
   if (painelAberto) {
     if (painelAberto === 'painel-hub-pix') pararPollPixHub();
@@ -725,7 +728,116 @@ function preencherDashboardHub(info) {
   carregarBannersHub();
   carregarResumoContasHub();
   carregarAvaliacoesHub();
+  carregarDemoHub();
 }
+
+// ---- Demonstração dos exercícios (2026-11-13) ----
+// Playlist do YouTube tocando em sequência dentro do portal (API de iframe do
+// YouTube). Quem pode ver é decidido pelo servidor em GET /api/portal/demonstracao
+// (fase de testes: só categoria "professor") — se disponivel:false o card nem
+// aparece e o ID da playlist nunca chega aqui.
+let demoConfigHub = null;
+let demoPlayer = null;
+let demoRepetirAtual = true;
+let demoApiYoutube = null;
+let demoTimerPosicao = null;
+
+async function carregarDemoHub() {
+  const card = document.getElementById('card-demo');
+  card.classList.add('oculto');
+  demoConfigHub = null;
+  try {
+    const r = await api(`/api/portal/demonstracao?cpf=${encodeURIComponent(cpfHubAtual)}&senha=${encodeURIComponent(senhaHubAtual)}`);
+    if (!r.disponivel) return;
+    demoConfigHub = r;
+    document.getElementById('card-demo-resumo').textContent = r.modo_teste
+      ? 'Vídeos de cada exercício, em sequência. (Modo teste: só professores veem este card.)'
+      : 'Vídeos de cada exercício, em sequência.';
+    card.classList.remove('oculto');
+  } catch (err) {
+    // Não é crítico — sem o card, o resto do hub segue normal.
+  }
+}
+
+function carregarApiYoutube() {
+  if (window.YT && window.YT.Player) return Promise.resolve();
+  if (demoApiYoutube) return demoApiYoutube;
+  demoApiYoutube = new Promise((resolve, reject) => {
+    const anterior = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => { if (anterior) anterior(); resolve(); };
+    const s = document.createElement('script');
+    s.src = 'https://www.youtube.com/iframe_api';
+    s.onerror = () => { demoApiYoutube = null; reject(new Error('Não consegui carregar o player do YouTube. Verifique sua internet.')); };
+    document.head.appendChild(s);
+  });
+  return demoApiYoutube;
+}
+
+function demoParar() {
+  clearInterval(demoTimerPosicao);
+  demoTimerPosicao = null;
+  if (demoPlayer) {
+    try { demoPlayer.destroy(); } catch (e) { /* já removido */ }
+    demoPlayer = null;
+  }
+  const area = document.getElementById('demo-player-area');
+  if (area) area.innerHTML = '<div id="demo-player"></div>';
+}
+
+function demoAtualizarBotaoRepetir() {
+  const b = document.getElementById('btn-demo-repetir');
+  b.textContent = demoRepetirAtual ? '🔁 Repetir playlist: ligado' : '➡ Repetir playlist: desligado (para no último)';
+  b.className = `botao-grande ${demoRepetirAtual ? 'primario' : 'secundario'}`;
+}
+
+function demoAtualizarPosicao() {
+  try {
+    const lista = demoPlayer && demoPlayer.getPlaylist && demoPlayer.getPlaylist();
+    const i = demoPlayer && demoPlayer.getPlaylistIndex && demoPlayer.getPlaylistIndex();
+    if (lista && lista.length && i >= 0) {
+      document.getElementById('demo-posicao').textContent = `Vídeo ${i + 1} de ${lista.length}`;
+    }
+  } catch (e) { /* player ainda carregando */ }
+}
+
+document.getElementById('btn-abrir-demo').addEventListener('click', async () => {
+  if (!demoConfigHub) return;
+  ocultarPaineisHub();
+  document.getElementById('painel-hub-demo').classList.remove('oculto');
+  document.getElementById('demo-erro').textContent = '';
+  document.getElementById('demo-posicao').textContent = 'Carregando vídeos...';
+  document.getElementById('demo-aviso-teste').classList.toggle('oculto', !demoConfigHub.modo_teste);
+  demoRepetirAtual = demoConfigHub.repetir !== false;
+  demoAtualizarBotaoRepetir();
+  const playlistId = demoConfigHub.playlist_id;
+  try {
+    await carregarApiYoutube();
+    demoPlayer = new window.YT.Player('demo-player', {
+      width: '100%',
+      height: '100%',
+      playerVars: { listType: 'playlist', list: playlistId, rel: 0, playsinline: 1, modestbranding: 1 },
+      events: {
+        onReady: () => {
+          try { demoPlayer.setLoop(demoRepetirAtual); } catch (e) { /* ignora */ }
+          demoTimerPosicao = setInterval(demoAtualizarPosicao, 1000);
+        },
+        onError: () => {
+          document.getElementById('demo-erro').textContent = 'Não consegui reproduzir este vídeo (pode estar privado ou removido). Toque em "Próximo".';
+        },
+      },
+    });
+  } catch (err) {
+    document.getElementById('demo-erro').textContent = err.message;
+  }
+});
+
+document.getElementById('btn-demo-repetir').addEventListener('click', () => {
+  demoRepetirAtual = !demoRepetirAtual;
+  demoAtualizarBotaoRepetir();
+  try { if (demoPlayer) demoPlayer.setLoop(demoRepetirAtual); } catch (e) { /* ignora */ }
+});
+document.getElementById('btn-demo-anterior').addEventListener('click', () => { try { demoPlayer.previousVideo(); } catch (e) { /* ignora */ } });
+document.getElementById('btn-demo-proximo').addEventListener('click', () => { try { demoPlayer.nextVideo(); } catch (e) { /* ignora */ } });
 
 // ---- Notificações de vencimento (2026-08-13) ----
 
@@ -1481,8 +1593,9 @@ function atualizarAvisoVencimento(contas, proximaAutomatica) {
 }
 
 function ocultarPaineisHub() {
-  ['painel-hub-dashboard', 'painel-hub-contas', 'painel-hub-conta', 'painel-hub-upgrade-escolha', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-comprovante', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-notificacoes', 'painel-hub-avaliacoes', 'painel-hub-biblioteca']
+  ['painel-hub-dashboard', 'painel-hub-contas', 'painel-hub-conta', 'painel-hub-upgrade-escolha', 'painel-hub-treino', 'painel-hub-upgrade', 'painel-hub-pix', 'painel-hub-comprovante', 'painel-hub-completar-cadastro', 'painel-hub-facial', 'painel-hub-notificacoes', 'painel-hub-avaliacoes', 'painel-hub-biblioteca', 'painel-hub-demo']
     .forEach((id) => document.getElementById(id).classList.add('oculto'));
+  demoParar(); // sai da tela de demonstração = para o vídeo
   irParaTopo();
 }
 

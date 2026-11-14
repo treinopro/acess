@@ -2114,6 +2114,29 @@
           </div>
         </form>
 
+        <form id="form-config-demo-videos" class="form-painel">
+          <h3 style="margin-top:0">Demonstração em vídeo (portal do aluno)</h3>
+          <p style="margin-top:0;color:#667085;font-size:13px">
+            Cole o link da playlist do YouTube com os vídeos dos exercícios. No portal, ela toca em sequência
+            dentro de um card "Demonstração dos exercícios". Comece em "Só professores" pra testar e mude pra
+            "Todos os alunos" quando estiver aprovado. A playlist precisa estar como Pública ou Não listada.
+          </p>
+          <label>Link da playlist</label>
+          <input id="cfg-demo-playlist" type="text" placeholder="https://www.youtube.com/playlist?list=PL..." />
+          <label style="margin-top:10px">Quem pode ver</label>
+          <select id="cfg-demo-visibilidade">
+            <option value="professores">Só professores (modo teste)</option>
+            <option value="todos">Todos os alunos</option>
+            <option value="desligado">Ninguém (desligado)</option>
+          </select>
+          <label style="display:flex;align-items:center;gap:8px;margin:12px 0">
+            <input type="checkbox" id="cfg-demo-repetir" style="width:auto" /> Repetir a playlist ao terminar (o aluno pode mudar na hora)
+          </label>
+          <div class="form-acoes">
+            <button type="submit" class="btn-primario">Salvar</button>
+          </div>
+        </form>
+
         <form id="form-config-biometria-catraca" class="form-painel">
           <h3 style="margin-top:0">Biometria da catraca por horário</h3>
           <p style="margin-top:0;color:#667085;font-size:13px">

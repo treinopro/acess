@@ -105,6 +105,34 @@ const PADROES_CHAMAR_PROFESSOR = {
 };
 const CHAVES_CHAMAR_PROFESSOR = Object.keys(PADROES_CHAMAR_PROFESSOR);
 
+// Demonstração em vídeo no portal do aluno (2026-11-13, pedido do dono):
+// playlist do YouTube com os vídeos dos exercícios, tocando em sequência
+// dentro do portal. Começa liberada SÓ pra categoria "professor" (fase de
+// testes) — o dono muda pra "todos" quando validar. Quem decide é o servidor
+// (GET /api/portal/demonstracao): o ID da playlist nunca vai pra quem não
+// tem permissão, e o GET /api/config público só devolve as chaves de PADROES
+// (nunca as demo_videos_*).
+//   visibilidade: 'professores' | 'todos' | 'desligado'
+//   repetir:      repetir a playlist inteira ao chegar no último vídeo
+const PADROES_DEMO_VIDEOS = {
+  demo_videos_playlist: '',
+  demo_videos_visibilidade: 'professores',
+  demo_videos_repetir: 'true',
+};
+const CHAVES_DEMO_VIDEOS = Object.keys(PADROES_DEMO_VIDEOS);
+
+// Aceita o link da playlist (youtube.com/playlist?list=PL..., ou de um vídeo
+// com &list=PL...) ou o ID puro. Devolve só o ID, ou null se não parecer um.
+function extrairIdPlaylistYoutube(entrada) {
+  const texto = String(entrada || '').trim();
+  if (!texto) return '';
+  let id = texto;
+  if (/^https?:\/\//i.test(texto)) {
+    try { id = new URL(texto).searchParams.get('list') || ''; } catch { return null; }
+  }
+  return /^[A-Za-z0-9_-]{10,80}$/.test(id) ? id : null;
+}
+
 // GET /api/config — pública de propósito: a tela de login precisa mostrar o
 // nome do app e o "licenciado para" ANTES do usuário estar autenticado.
 // Não expõe nada sensível, só as strings de marca/identidade visual e a
@@ -114,7 +142,15 @@ router.get('/', async (req, res, next) => {
   try {
     const result = await db.execute('SELECT chave, valor FROM configuracoes');
     const config = { ...PADROES };
-    result.rows.forEach((row) => { config[row.chave] = row.valor; });
+    // Rota pública: só devolve as chaves de PADROES (marca, menu, som do totem,
+    // WhatsApp...). Antes devolvia TODAS as linhas de `configuracoes`, o que
+    // expunha sem login o saldo inicial do caixa, o e-mail de destino do
+    // backup, a playlist restrita a professores etc. — chaves que de propósito
+    // têm endpoints próprios, só pro admin (ver comentário de PADROES_BACKUP).
+    result.rows.forEach((row) => {
+      if (!Object.prototype.hasOwnProperty.call(PADROES, row.chave)) return;
+      config[row.chave] = row.valor;
+    });
 
     if (typeof config.menu_ordem === 'string') {
       try {
@@ -659,7 +695,70 @@ async function obterConfigChamarProfessor() {
   };
 }
 
+// GET /api/config/demo-videos — admin only (ver PADROES_DEMO_VIDEOS acima)
+router.get('/demo-videos', autenticar, apenasAdmin, async (req, res, next) => {
+  try {
+    res.json(await obterConfigDemoVideos());
+  } catch (err) {
+    next(err);
+  }
+});
+
+const DemoVideosConfigSchema = z.object({
+  demo_videos_playlist: z.string().trim().max(300).optional(),
+  demo_videos_visibilidade: z.enum(['professores', 'todos', 'desligado']).optional(),
+  demo_videos_repetir: z.boolean().optional(),
+});
+
+// PUT /api/config/demo-videos — admin only
+router.put('/demo-videos', autenticar, apenasAdmin, async (req, res, next) => {
+  try {
+    const dados = DemoVideosConfigSchema.parse(req.body);
+    if (Object.keys(dados).length === 0) return res.status(400).json({ erro: 'Nenhum campo informado.' });
+
+    if (dados.demo_videos_playlist !== undefined) {
+      const id = extrairIdPlaylistYoutube(dados.demo_videos_playlist);
+      if (id === null) {
+        return res.status(400).json({ erro: 'Não reconheci esse link. Cole o endereço da playlist do YouTube (o que tem "list=" no final).' });
+      }
+      dados.demo_videos_playlist = id;
+    }
+
+    for (const chave of Object.keys(dados)) {
+      const valor = typeof dados[chave] === 'boolean' ? String(dados[chave]) : dados[chave];
+      await db.execute({
+        sql: 'INSERT INTO configuracoes (chave, valor) VALUES (?, ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor',
+        args: [chave, valor],
+      });
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Lê a configuração da demonstração em vídeo — usada pelo painel (admin) e por
+ * GET /api/portal/demonstracao (portal.routes.js) pra decidir quem pode ver.
+ */
+async function obterConfigDemoVideos() {
+  const result = await db.execute({
+    sql: `SELECT chave, valor FROM configuracoes WHERE chave IN (${CHAVES_DEMO_VIDEOS.map(() => '?').join(',')})`,
+    args: CHAVES_DEMO_VIDEOS,
+  });
+  const config = { ...PADROES_DEMO_VIDEOS };
+  result.rows.forEach((row) => { config[row.chave] = row.valor; });
+  return {
+    playlist: config.demo_videos_playlist,
+    visibilidade: ['professores', 'todos', 'desligado'].includes(config.demo_videos_visibilidade)
+      ? config.demo_videos_visibilidade
+      : 'professores',
+    repetir: config.demo_videos_repetir !== 'false',
+  };
+}
+
 module.exports = {
   router, escreverBackupStream, obterCooldownAcesso, obterConfigChamarProfessor, obterConfigBiometriaCatraca,
-  definirArmadoManualBiometria,
+  obterConfigDemoVideos, definirArmadoManualBiometria,
 };

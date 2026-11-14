@@ -451,7 +451,7 @@ function carregarSecao(nome) {
   if (nome === 'pagamento-rapido') iniciarPagamentoRapido();
   if (nome === 'usuarios') carregarUsuarios();
   if (nome === 'config') {
-    carregarConfiguracoesForm(); carregarConfigCooldown(); carregarConfigChamarProfessor();
+    carregarConfiguracoesForm(); carregarConfigCooldown(); carregarConfigChamarProfessor(); carregarConfigDemoVideos();
     carregarConfigBiometriaCatraca(); carregarConfigBackup(); carregarConfigOfertaAssinatura(); carregarPlanosCadastroRecorrencia(); carregarCombosRecorrencia(); carregarPendenciasSincronizacao();
   }
   if (nome === 'recuperacao') carregarSecaoRecuperacao();
@@ -1023,6 +1023,34 @@ document.getElementById('form-config-chamar-professor').addEventListener('submit
   try {
     await api('/api/config/chamar-professor-horario', { method: 'PUT', body: JSON.stringify(dados) });
     mostrarToast('Horário do "Chamar professor" salvo.');
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
+// ---------------- Demonstração em vídeo no portal (admin) ----------------
+// Playlist do YouTube + quem pode ver — ver /api/config/demo-videos em
+// src/routes/config.routes.js e GET /api/portal/demonstracao.
+async function carregarConfigDemoVideos() {
+  try {
+    const config = await api('/api/config/demo-videos');
+    document.getElementById('cfg-demo-playlist').value = config.playlist
+      ? `https://www.youtube.com/playlist?list=${config.playlist}`
+      : '';
+    document.getElementById('cfg-demo-visibilidade').value = config.visibilidade || 'professores';
+    document.getElementById('cfg-demo-repetir').checked = config.repetir !== false;
+  } catch (err) { mostrarToast(err.message, true); }
+}
+
+document.getElementById('form-config-demo-videos').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const dados = {
+    demo_videos_playlist: document.getElementById('cfg-demo-playlist').value.trim(),
+    demo_videos_visibilidade: document.getElementById('cfg-demo-visibilidade').value,
+    demo_videos_repetir: document.getElementById('cfg-demo-repetir').checked,
+  };
+  try {
+    await api('/api/config/demo-videos', { method: 'PUT', body: JSON.stringify(dados) });
+    mostrarToast('Demonstração em vídeo salva.');
+    carregarConfigDemoVideos();
   } catch (err) { mostrarToast(err.message, true); }
 });
 

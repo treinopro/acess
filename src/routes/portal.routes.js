@@ -36,7 +36,7 @@ const mercadopago = require('../services/payment/mercadopago.service');
 const emailBoasVindas = require('../services/emailBoasVindas.service');
 const gamificacao = require('../services/gamificacao.service');
 const { primeiroVencimento, ehRecorrente } = require('../services/cobrancas.service');
-const { obterConfigChamarProfessor } = require('./config.routes');
+const { obterConfigChamarProfessor, obterConfigDemoVideos } = require('./config.routes');
 const webPush = require('../services/webPush.service');
 const { criarLimitador } = require('../middleware/rateLimit');
 const { normalizarCpf } = require('../utils/cpf');
@@ -1144,6 +1144,30 @@ router.get('/banners', limitadorSenhaPortal, async (req, res, next) => {
       .map((b) => ({ id: b.id, titulo: b.titulo, texto: b.texto, imagem_url: b.imagem_url }));
 
     res.json({ banners });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/portal/demonstracao?cpf=...&senha=... — playlist do YouTube com os
+// vídeos dos exercícios (2026-11-13, pedido do dono). Mesma autenticação CPF +
+// senha do resto do portal. A permissão é decidida AQUI (não no front): com
+// visibilidade 'professores' (padrão na fase de testes), só quem tem
+// alunos.categoria = 'professor' recebe o ID da playlist — pra qualquer outro
+// o servidor responde disponivel:false, sem o ID. Config no painel:
+// Configurações > Demonstração em vídeo (ver config.routes.js).
+router.get('/demonstracao', limitadorSenhaPortal, async (req, res, next) => {
+  try {
+    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(req.query);
+    const autenticado = await autenticarAlunoPortal(cpf, senha);
+    if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
+
+    const config = await obterConfigDemoVideos();
+    const ehProfessor = autenticado.aluno.categoria === 'professor';
+    const liberado = config.visibilidade === 'todos' || (config.visibilidade === 'professores' && ehProfessor);
+
+    if (!liberado || !config.playlist) return res.json({ disponivel: false });
+    res.json({ disponivel: true, playlist_id: config.playlist, repetir: config.repetir, modo_teste: config.visibilidade === 'professores' });
   } catch (err) {
     next(err);
   }

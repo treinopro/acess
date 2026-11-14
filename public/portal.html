@@ -430,6 +430,12 @@ if ('serviceWorker' in navigator) {
         <button class="botao-grande secundario" id="btn-abrir-treino" style="margin:0">Ver treino</button>
       </div>
 
+      <div class="cartao oculto" id="card-demo">
+        <h3>🎬 Demonstração dos exercícios</h3>
+        <p id="card-demo-resumo">Vídeos de cada exercício, em sequência.</p>
+        <button class="botao-grande secundario" id="btn-abrir-demo" style="margin:0">Assistir</button>
+      </div>
+
       <div class="cartao" id="card-plano">
         <h3>Meu plano</h3>
         <p id="card-plano-resumo">Consultando...</p>
@@ -472,6 +478,22 @@ if ('serviceWorker' in navigator) {
         <button type="submit" class="botao-grande primario" style="margin:0">Salvar</button>
       </div>
     </form>
+
+    <!-- Demonstração dos exercícios (playlist do YouTube) -->
+    <div class="cartao oculto" id="painel-hub-demo" style="text-align:left">
+      <h3 style="margin-top:0">🎬 Demonstração dos exercícios</h3>
+      <div class="oculto" id="demo-aviso-teste" style="background:#3b2a05;border:1px solid #b45309;color:#fcd34d;border-radius:10px;padding:8px 12px;font-size:13px;margin-bottom:12px">
+        Modo teste: por enquanto só professores veem esta tela.
+      </div>
+      <div id="demo-player-area" style="width:100%;aspect-ratio:16/9;background:#000;border-radius:12px;overflow:hidden"><div id="demo-player"></div></div>
+      <div id="demo-posicao" style="margin:10px 0;font-size:14px;color:#94a3b8;text-align:center"></div>
+      <div class="erro-msg" id="demo-erro"></div>
+      <div style="display:flex;gap:10px;margin-bottom:10px">
+        <button type="button" class="botao-grande secundario" id="btn-demo-anterior" style="margin:0">⏮ Anterior</button>
+        <button type="button" class="botao-grande secundario" id="btn-demo-proximo" style="margin:0">Próximo ⏭</button>
+      </div>
+      <button type="button" class="botao-grande primario" id="btn-demo-repetir" style="margin:0"></button>
+    </div>
 
     <!-- Minhas avaliações -->
     <div class="cartao oculto" id="painel-hub-avaliacoes" style="text-align:left">

@@ -632,7 +632,8 @@ async function direitoAvaliacao({ alunoId }) {
   if (!a) return { tem_combo: false };
   const datas = await datasDosPagamentos(a.id);
   let liberadoEm = null;
-  if (ehFidelidade(a)) liberadoEm = datas[0] || null;
+  // 12 meses: libera na adesão (cartão cadastrado e assinatura ativa), mesmo que a 1ª cobrança esteja agendada para depois.
+  if (ehFidelidade(a)) liberadoEm = datas[0] || String(a.atualizado_em || a.criado_em || hojeBrasilia()).slice(0, 10);
   else if (datas.length >= 3) liberadoEm = datas[2];
   const resp = { tem_combo: true, combo_nome: a.combo_nome, fidelidade: ehFidelidade(a), cobrancas_pagas: datas.length, liberado_em: liberadoEm, disponivel: false, disponivel_em: null, motivo: null };
   if (!liberadoEm) { resp.motivo = 'aguardando_terceira_cobranca'; resp.faltam_cobrancas = Math.max(0, 3 - datas.length); return resp; }

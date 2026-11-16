@@ -1448,3 +1448,10 @@ test('portal: peso reportado pelo aluno sobrescreve a carga, exceto em drop-set/
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test('direito à avaliação: contrato de 12 meses libera na adesão, mesmo com a 1ª cobrança agendada para depois', async () => {
+  await criarAssinaturaDireta({ id: 'dir12ag', alunoId: 'dir12aga', limite: 12, pagamentos: [] });
+  const d = await assinaturas.direitoAvaliacao({ alunoId: 'dir12aga' });
+  assert.strictEqual(d.tem_combo, true);
+  assert.strictEqual(d.disponivel, true);
+});

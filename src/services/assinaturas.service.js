@@ -658,6 +658,55 @@ async function direitoAvaliacao({ alunoId }) {
   return resp;
 }
 
+// Gera, quando o direito à avaliação do combo está liberado, o registro que o resto do sistema já usa para avaliações
+// vendidas: uma conta de serviço de R$ 0,00 já paga ("incluída na assinatura", o aluno paga o adicional na mensalidade) e o
+// passo a passo em Pendências (avaliação realizada, treino prescrito, teste de força, treino aplicado). Uma vez por ciclo de
+// 90 dias, e nunca se já existe um passo a passo recente desse aluno.
+async function gerarAvaliacaoDoCombo(alunoId) {
+  try {
+    const d = await direitoAvaliacao({ alunoId });
+    if (!d.tem_combo || !d.disponivel) return null;
+    const recente = await db.execute({
+      sql: `SELECT 1 FROM cobrancas WHERE aluno_id = ? AND provedor = 'assinatura_mp' AND descricao LIKE 'Serviço - %(incluída na assinatura)'
+              AND vencimento > date('now', '-${CADENCIA_AVALIACAO_DIAS} days') LIMIT 1`,
+      args: [alunoId],
+    });
+    if (recente.rows.length) return null;
+    const pipelineRecente = await db.execute({
+      sql: `SELECT 1 FROM avaliacao_pipeline WHERE aluno_id = ? AND data_avaliacao > date('now', '-${CADENCIA_AVALIACAO_DIAS} days') LIMIT 1`,
+      args: [alunoId],
+    });
+    if (pipelineRecente.rows.length) return null;
+    const hoje = hojeBrasilia();
+    const nome = String(d.combo_nome || 'Avaliação física').replace(/^Plano \+ /i, '');
+    const cobrancaId = uuid();
+    await db.execute({
+      sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento, metodo_pagamento, pago_em)
+            VALUES (?, ?, NULL, 0, 'pago', 'assinatura_mp', ?, ?, 'assinatura', datetime('now'))`,
+      args: [cobrancaId, alunoId, `Serviço - ${nome} (incluída na assinatura)`, hoje],
+    });
+    await db.execute({
+      sql: 'INSERT INTO avaliacao_pipeline (id, aluno_id, data_avaliacao, criado_por) VALUES (?, ?, ?, NULL)',
+      args: [uuid(), alunoId, hoje],
+    });
+    return { cobrancaId, data: hoje };
+  } catch (err) {
+    console.error('[assinaturas] falha ao gerar a avaliação do combo:', err.message);
+    return null;
+  }
+}
+
+// Varre quem tem combo ativo e gera a avaliação de quem acabou de ficar liberado (adesão, 3ª cobrança, nova janela de 90 dias).
+async function gerarAvaliacoesPendentesDosCombos() {
+  const r = await db.execute({
+    sql: `SELECT DISTINCT aluno_id FROM assinaturas_mp WHERE combo_id IS NOT NULL AND status IN ('authorized', 'paused')`,
+    args: [],
+  }).catch(() => ({ rows: [] }));
+  let geradas = 0;
+  for (const l of r.rows) if (await gerarAvaliacaoDoCombo(l.aluno_id)) geradas += 1;
+  return geradas;
+}
+
 async function previaCancelamentoPorId(assinaturaId) {
   const r = await db.execute({ sql: 'SELECT * FROM assinaturas_mp WHERE id = ?', args: [assinaturaId] });
   if (!r.rows[0]) throw erro('Assinatura não encontrada.', 404);
@@ -732,6 +781,9 @@ async function atualizarStatus(preapprovalId, status) {
               AND status = 'pendente' AND vencimento > date('now')`,
       args: [String(preapprovalId), String(preapprovalId)],
     }).catch(() => {});
+    // combo com direito liberado (ex.: 12 meses na adesão): abre a avaliação e o passo a passo em Pendências
+    const quem = await db.execute({ sql: 'SELECT aluno_id FROM assinaturas_mp WHERE preapproval_id = ?', args: [String(preapprovalId)] }).catch(() => ({ rows: [] }));
+    if (quem.rows[0]) await gerarAvaliacaoDoCombo(quem.rows[0].aluno_id);
   }
 }
 
@@ -1020,6 +1072,7 @@ async function reconciliarAssinaturas({ somentePendentes = false } = {}) {
       console.error('[assinaturas] falha ao reconciliar', v.id, err.message);
     }
   }
+  if (!somentePendentes) await gerarAvaliacoesPendentesDosCombos();
   return resultado;
 }
 
@@ -1427,5 +1480,5 @@ module.exports = {
   habilitado, criarAssinatura, listar, cancelar, processarEvento, processarPagamentoAprovado,
   ofertaPublica, disponibilidadeParaAluno, obterOuCriarParaAluno, obterOuCriarParaNovoCadastro, baseUrlDaRequisicao, urlOferta,
   obterOferta, salvarOferta, calcularDescontoCentavos, OFERTA_PADRAO,
-  obterPlanosCadastro, salvarPlanosCadastro, listarPlanosCadastroPublicos, buscarPlanoCadastro, expirarCheckoutsAbandonados, reconciliarAssinaturas, sincronizarAgora, cronogramaCobrancaAutomatica, cancelarPendentesDasMatriculas, anexarRecorrencia, desvincularCobranca, verificarOferta, cancelarPendentesOciosasDoAluno, obterCombos, salvarCombos, listarCombosPublicos, buscarCombo, direitoAvaliacao, previaCancelamentoPorId,
+  obterPlanosCadastro, salvarPlanosCadastro, listarPlanosCadastroPublicos, buscarPlanoCadastro, expirarCheckoutsAbandonados, reconciliarAssinaturas, sincronizarAgora, cronogramaCobrancaAutomatica, cancelarPendentesDasMatriculas, anexarRecorrencia, desvincularCobranca, verificarOferta, cancelarPendentesOciosasDoAluno, obterCombos, salvarCombos, listarCombosPublicos, buscarCombo, direitoAvaliacao, previaCancelamentoPorId, gerarAvaliacaoDoCombo, gerarAvaliacoesPendentesDosCombos,
 };

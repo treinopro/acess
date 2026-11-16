@@ -1455,3 +1455,23 @@ test('direito à avaliação: contrato de 12 meses libera na adesão, mesmo com 
   assert.strictEqual(d.tem_combo, true);
   assert.strictEqual(d.disponivel, true);
 });
+
+test('combo com avaliação liberada gera a conta de R$ 0,00 e o passo a passo em Pendências, uma vez por ciclo', async () => {
+  await criarAssinaturaDireta({ id: 'gerafid', alunoId: 'gerafida', limite: 12, pagamentos: [] });
+  const g1 = await assinaturas.gerarAvaliacaoDoCombo('gerafida');
+  assert.ok(g1 && g1.cobrancaId);
+  const conta = (await db.execute({ sql: `SELECT descricao, valor_centavos, status FROM cobrancas WHERE id = ?`, args: [g1.cobrancaId] })).rows[0];
+  assert.match(conta.descricao, /^Serviço - .*\(incluída na assinatura\)$/);
+  assert.strictEqual(Number(conta.valor_centavos), 0);
+  assert.strictEqual(conta.status, 'pago');
+  assert.strictEqual(Number((await db.execute({ sql: `SELECT COUNT(*) n FROM avaliacao_pipeline WHERE aluno_id = 'gerafida'`, args: [] })).rows[0].n), 1);
+  // chamar de novo (job a cada 15 min) não duplica
+  assert.strictEqual(await assinaturas.gerarAvaliacaoDoCombo('gerafida'), null);
+  assert.strictEqual(Number((await db.execute({ sql: `SELECT COUNT(*) n FROM avaliacao_pipeline WHERE aluno_id = 'gerafida'`, args: [] })).rows[0].n), 1);
+
+  // sem fidelidade: só depois da 3ª cobrança paga
+  await criarAssinaturaDireta({ id: 'geralv', alunoId: 'geralva', limite: null, pagamentos: [diasAtras(40), diasAtras(10)] });
+  assert.strictEqual(await assinaturas.gerarAvaliacaoDoCombo('geralva'), null);
+  await db.execute({ sql: `INSERT INTO assinaturas_mp_pagamentos (payment_id, assinatura_id, valor_centavos, baixa, criado_em) VALUES ('geralv-3', 'geralv', 6500, 'baixada', datetime('now'))`, args: [] });
+  assert.ok(await assinaturas.gerarAvaliacaoDoCombo('geralva'));
+});

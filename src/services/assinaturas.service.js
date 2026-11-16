@@ -658,38 +658,25 @@ async function direitoAvaliacao({ alunoId }) {
   return resp;
 }
 
-// Gera, quando o direito à avaliação do combo está liberado, o registro que o resto do sistema já usa para avaliações
-// vendidas: uma conta de serviço de R$ 0,00 já paga ("incluída na assinatura", o aluno paga o adicional na mensalidade) e o
-// passo a passo em Pendências (avaliação realizada, treino prescrito, teste de força, treino aplicado). Uma vez por ciclo de
-// 90 dias, e nunca se já existe um passo a passo recente desse aluno.
+// Quando o direito à avaliação do combo está liberado, abre o passo a passo que o sistema já usa para avaliações
+// (Pendências: avaliação realizada, treino prescrito, teste de força, treino aplicado). A cobrança continua sendo uma só, a
+// da recorrência (plano + avaliação): não cria conta à parte. Uma vez por ciclo de 90 dias, e nunca se esse aluno já tem
+// um passo a passo recente (de qualquer origem).
 async function gerarAvaliacaoDoCombo(alunoId) {
   try {
     const d = await direitoAvaliacao({ alunoId });
     if (!d.tem_combo || !d.disponivel) return null;
     const recente = await db.execute({
-      sql: `SELECT 1 FROM cobrancas WHERE aluno_id = ? AND provedor = 'assinatura_mp' AND descricao LIKE 'Serviço - %(incluída na assinatura)'
-              AND vencimento > date('now', '-${CADENCIA_AVALIACAO_DIAS} days') LIMIT 1`,
-      args: [alunoId],
-    });
-    if (recente.rows.length) return null;
-    const pipelineRecente = await db.execute({
       sql: `SELECT 1 FROM avaliacao_pipeline WHERE aluno_id = ? AND data_avaliacao > date('now', '-${CADENCIA_AVALIACAO_DIAS} days') LIMIT 1`,
       args: [alunoId],
     });
-    if (pipelineRecente.rows.length) return null;
+    if (recente.rows.length) return null;
     const hoje = hojeBrasilia();
-    const nome = String(d.combo_nome || 'Avaliação física').replace(/^Plano \+ /i, '');
-    const cobrancaId = uuid();
-    await db.execute({
-      sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento, metodo_pagamento, pago_em)
-            VALUES (?, ?, NULL, 0, 'pago', 'assinatura_mp', ?, ?, 'assinatura', datetime('now'))`,
-      args: [cobrancaId, alunoId, `Serviço - ${nome} (incluída na assinatura)`, hoje],
-    });
     await db.execute({
       sql: 'INSERT INTO avaliacao_pipeline (id, aluno_id, data_avaliacao, criado_por) VALUES (?, ?, ?, NULL)',
       args: [uuid(), alunoId, hoje],
     });
-    return { cobrancaId, data: hoje };
+    return { data: hoje };
   } catch (err) {
     console.error('[assinaturas] falha ao gerar a avaliação do combo:', err.message);
     return null;

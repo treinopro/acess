@@ -623,6 +623,8 @@ async function migrate() {
   await db.execute(`UPDATE cobrancas SET valor_centavos = (SELECT s.valor_centavos FROM assinaturas_mp s WHERE s.cobranca_inicial_id = cobrancas.id AND s.status = 'authorized' LIMIT 1)
                     WHERE status = 'pendente' AND vencimento > date('now')
                       AND id IN (SELECT cobranca_inicial_id FROM assinaturas_mp WHERE status = 'authorized' AND cobranca_inicial_id IS NOT NULL)`).catch(() => {});
+  // A avaliação do combo não gera conta à parte (a cobrança é a da recorrência): remove as de R$ 0,00 criadas por engano.
+  await db.execute(`DELETE FROM cobrancas WHERE provedor = 'assinatura_mp' AND valor_centavos = 0 AND status = 'pago' AND descricao LIKE 'Serviço - %(incluída na assinatura)'`).catch(() => {});
   const imagensDoCanalLimpas = (await limparImagensDosVideosDoCanal()) + (await limparImagensDosVideosDoCanal('migracao_limpar_imagens_canal_leva3', VIDEOS_DO_CANAL_LEVA3));
   if (imagensDoCanalLimpas) console.log(`Imagens apagadas de exercícios com vídeo do canal: ${imagensDoCanalLimpas}`);
   const treinosSincronizados = (await sincronizarVideosDoCanalNosTreinos()) + (await sincronizarVideosDoCanalNosTreinos('migracao_sync_videos_canal_treinos_leva3', VIDEOS_DO_CANAL_LEVA3)) + (await sincronizarVideosDoCanalNosTreinos('migracao_sync_videos_canal_treinos_v4_todos', new Set([...VIDEOS_DO_CANAL, ...VIDEOS_DO_CANAL_LEVA3])));

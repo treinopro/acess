@@ -1456,15 +1456,13 @@ test('direito à avaliação: contrato de 12 meses libera na adesão, mesmo com 
   assert.strictEqual(d.disponivel, true);
 });
 
-test('combo com avaliação liberada gera a conta de R$ 0,00 e o passo a passo em Pendências, uma vez por ciclo', async () => {
+test('combo com avaliação liberada gera só o passo a passo em Pendências (sem conta à parte), uma vez por ciclo de 90 dias', async () => {
   await criarAssinaturaDireta({ id: 'gerafid', alunoId: 'gerafida', limite: 12, pagamentos: [] });
   const g1 = await assinaturas.gerarAvaliacaoDoCombo('gerafida');
-  assert.ok(g1 && g1.cobrancaId);
-  const conta = (await db.execute({ sql: `SELECT descricao, valor_centavos, status FROM cobrancas WHERE id = ?`, args: [g1.cobrancaId] })).rows[0];
-  assert.match(conta.descricao, /^Serviço - .*\(incluída na assinatura\)$/);
-  assert.strictEqual(Number(conta.valor_centavos), 0);
-  assert.strictEqual(conta.status, 'pago');
+  assert.ok(g1 && g1.data);
   assert.strictEqual(Number((await db.execute({ sql: `SELECT COUNT(*) n FROM avaliacao_pipeline WHERE aluno_id = 'gerafida'`, args: [] })).rows[0].n), 1);
+  // nenhuma conta nova: a cobrança é a da recorrência
+  assert.strictEqual(Number((await db.execute({ sql: `SELECT COUNT(*) n FROM cobrancas WHERE aluno_id = 'gerafida' AND descricao LIKE '%incluída na assinatura%'`, args: [] })).rows[0].n), 0);
   // chamar de novo (job a cada 15 min) não duplica
   assert.strictEqual(await assinaturas.gerarAvaliacaoDoCombo('gerafida'), null);
   assert.strictEqual(Number((await db.execute({ sql: `SELECT COUNT(*) n FROM avaliacao_pipeline WHERE aluno_id = 'gerafida'`, args: [] })).rows[0].n), 1);

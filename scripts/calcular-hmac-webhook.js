@@ -12,24 +12,37 @@ function arg(nome) {
   return i > 0 ? process.argv[i + 1] : undefined;
 }
 
-const segredo = String(process.env.MERCADOPAGO_WEBHOOK_SECRET || '').trim().replace(/^["']|["']$/g, '').trim();
+// Aceita VÁRIOS segredos em MERCADOPAGO_WEBHOOK_SECRET (separados por vírgula, ponto e vírgula ou quebra de linha), um por
+// aplicação. Para cada um testa as variações do manifesto e diz qual bate com o v1 (sem mostrar o segredo).
+const segredos = String(process.env.MERCADOPAGO_WEBHOOK_SECRET || '')
+  .split(/[\s,;]+/).map((x) => x.trim().replace(/^["']|["']$/g, '').trim()).filter(Boolean);
 const dataId = arg('data-id');
 const requestId = arg('request-id');
 const ts = arg('ts');
-const v1 = arg('v1');
+const v1 = (arg('v1') || '').trim().toLowerCase();
 
-if (!segredo || !dataId || !ts) {
+if (!segredos.length || !dataId || !ts) {
   console.error('Faltam dados. Defina MERCADOPAGO_WEBHOOK_SECRET e passe --data-id, --ts (e --request-id).');
   process.exit(1);
 }
 
-// Mesma montagem do servidor: id em minúsculas quando alfanumérico; request-id só entra se informado.
-const idParaManifest = /^[a-zA-Z0-9]+$/.test(dataId) ? dataId.toLowerCase() : dataId;
-const manifest = `id:${idParaManifest};` + (requestId ? `request-id:${requestId};` : '') + `ts:${ts};`;
-const hmac = crypto.createHmac('sha256', segredo).update(manifest).digest('hex');
+const idMin = /^[a-zA-Z0-9]+$/.test(dataId) ? dataId.toLowerCase() : dataId;
+const variantes = [
+  ['padrão (id minúsculo + request-id + ts)', `id:${idMin};request-id:${requestId};ts:${ts};`],
+  ['sem request-id', `id:${idMin};ts:${ts};`],
+  ['id como recebido', `id:${dataId};request-id:${requestId};ts:${ts};`],
+  ['ts em segundos→milissegundos', `id:${idMin};request-id:${requestId};ts:${ts}000;`],
+].filter(([, m]) => !m.includes('request-id:undefined'));
 
-console.log('manifest      :', JSON.stringify(manifest));
-console.log('manifest bytes:', Buffer.byteLength(manifest, 'utf8'));
-console.log('hmac_sha256   :', hmac);
-console.log('segredo       :', `${segredo.length} caracteres, sha256 (12 primeiros)=${crypto.createHash('sha256').update(segredo).digest('hex').slice(0, 12)}`);
-if (v1) console.log('bate com o v1 :', hmac === v1.trim().toLowerCase() ? 'SIM' : 'NÃO');
+console.log('manifest padrão:', JSON.stringify(variantes[0][1]));
+let achou = false;
+segredos.forEach((segredo, n) => {
+  const marca = `segredo #${n + 1} (${segredo.length} caracteres, sha256=${crypto.createHash('sha256').update(segredo).digest('hex').slice(0, 12)})`;
+  variantes.forEach(([nome, manifest]) => {
+    const hmac = crypto.createHmac('sha256', segredo).update(manifest, 'utf8').digest('hex');
+    const bate = v1 ? hmac === v1 : null;
+    if (bate) achou = true;
+    console.log(`${marca} | ${nome}: hmac=${hmac}${bate === null ? '' : bate ? '  <== BATE' : ''}`);
+  });
+});
+if (v1) console.log(achou ? '\nResultado: um dos segredos bate.' : '\nResultado: nenhum segredo/variação bate com o v1.');

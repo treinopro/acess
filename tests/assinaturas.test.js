@@ -1246,7 +1246,7 @@ test('direito à avaliação: 12 meses libera na adesão; sem fidelidade só ap�
   d = await assinaturas.direitoAvaliacao({ alunoId: 'dir12a' });
   assert.strictEqual(d.disponivel, false);
   assert.strictEqual(d.motivo, 'avaliacao_vigente');
-  assert.strictEqual(d.disponivel_em, diasAtras(30 - 90));
+  assert.strictEqual(d.disponivel_em, diasAtras(30 - 90 + 15)); // abre 15 dias antes de vencer
 
   // Sem combo: nada a mostrar.
   await criarAssinaturaDireta({ id: 'dirsc', alunoId: 'dirsca', limite: 12, combo: false, pagamentos: [diasAtras(1)] });
@@ -1472,4 +1472,19 @@ test('combo com avaliação liberada gera só o passo a passo em Pendências (se
   assert.strictEqual(await assinaturas.gerarAvaliacaoDoCombo('geralva'), null);
   await db.execute({ sql: `INSERT INTO assinaturas_mp_pagamentos (payment_id, assinatura_id, valor_centavos, baixa, criado_em) VALUES ('geralv-3', 'geralv', 6500, 'baixada', datetime('now'))`, args: [] });
   assert.ok(await assinaturas.gerarAvaliacaoDoCombo('geralva'));
+});
+
+test('renovação perto dos 90 dias: a nova avaliação abre nos últimos 15 dias do ciclo, e não antes', async () => {
+  // última avaliação há 80 dias (faltam 10): já abre
+  await criarAssinaturaDireta({ id: 'renov1', alunoId: 'renov1a', limite: 12, pagamentos: [diasAtras(1)] });
+  await db.execute({ sql: `INSERT INTO avaliacoes_fisicas (id, aluno_id, data_avaliacao) VALUES ('af-renov1', 'renov1a', ?)`, args: [diasAtras(80)] });
+  await db.execute({ sql: `INSERT INTO avaliacao_pipeline (id, aluno_id, data_avaliacao) VALUES ('ap-renov1', 'renov1a', ?)`, args: [diasAtras(80)] });
+  assert.strictEqual((await assinaturas.direitoAvaliacao({ alunoId: 'renov1a' })).disponivel, true);
+  assert.ok(await assinaturas.gerarAvaliacaoDoCombo('renov1a'));
+  // última avaliação há 60 dias (faltam 30): ainda não
+  await criarAssinaturaDireta({ id: 'renov2', alunoId: 'renov2a', limite: 12, pagamentos: [diasAtras(1)] });
+  await db.execute({ sql: `INSERT INTO avaliacoes_fisicas (id, aluno_id, data_avaliacao) VALUES ('af-renov2', 'renov2a', ?)`, args: [diasAtras(60)] });
+  await db.execute({ sql: `INSERT INTO avaliacao_pipeline (id, aluno_id, data_avaliacao) VALUES ('ap-renov2', 'renov2a', ?)`, args: [diasAtras(60)] });
+  assert.strictEqual((await assinaturas.direitoAvaliacao({ alunoId: 'renov2a' })).disponivel, false);
+  assert.strictEqual(await assinaturas.gerarAvaliacaoDoCombo('renov2a'), null);
 });

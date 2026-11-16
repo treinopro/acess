@@ -590,6 +590,9 @@ async function cancelarNoMp(preapprovalId) {
 
 const DIAS_ARREPENDIMENTO = 7;
 const CADENCIA_AVALIACAO_DIAS = 90;
+// A renovação pode acontecer um pouco antes de completar os 90 dias: a nova avaliação já pode abrir nos últimos 15 dias
+// (mesma janela de aviso do portal), para a recepção acompanhar.
+const ANTECEDENCIA_AVALIACAO_DIAS = 15;
 
 function somarDiasISO(iso, dias) {
   const d = new Date(String(iso).slice(0, 10) + 'T12:00:00Z');
@@ -650,7 +653,8 @@ async function direitoAvaliacao({ alunoId }) {
     ultima = u2.rows[0]?.data ? String(u2.rows[0].data).slice(0, 10) : null;
   }
   const vencimentoDaUltima = ultima ? somarDiasISO(ultima, CADENCIA_AVALIACAO_DIAS) : null;
-  const disponivelEm = vencimentoDaUltima && vencimentoDaUltima > liberadoEm ? vencimentoDaUltima : liberadoEm;
+  const abreEm = vencimentoDaUltima ? somarDiasISO(vencimentoDaUltima, -ANTECEDENCIA_AVALIACAO_DIAS) : null;
+  const disponivelEm = abreEm && abreEm > liberadoEm ? abreEm : liberadoEm;
   resp.disponivel_em = disponivelEm;
   resp.ultima_avaliacao = ultima;
   resp.disponivel = hojeBrasilia() >= disponivelEm;
@@ -667,7 +671,7 @@ async function gerarAvaliacaoDoCombo(alunoId) {
     const d = await direitoAvaliacao({ alunoId });
     if (!d.tem_combo || !d.disponivel) return null;
     const recente = await db.execute({
-      sql: `SELECT 1 FROM avaliacao_pipeline WHERE aluno_id = ? AND data_avaliacao > date('now', '-${CADENCIA_AVALIACAO_DIAS} days') LIMIT 1`,
+      sql: `SELECT 1 FROM avaliacao_pipeline WHERE aluno_id = ? AND data_avaliacao > date('now', '-${CADENCIA_AVALIACAO_DIAS - ANTECEDENCIA_AVALIACAO_DIAS} days') LIMIT 1`,
       args: [alunoId],
     });
     if (recente.rows.length) return null;

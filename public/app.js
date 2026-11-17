@@ -7822,6 +7822,24 @@ function abrirFormExercicioLib(ex) {
 }
 
 document.getElementById('btn-novo-exercicio-lib').addEventListener('click', () => abrirFormExercicioLib(null));
+
+// Exporta a biblioteca inteira (inclui os exercícios criados à mão) num arquivo para importar no Treino pro.
+document.getElementById('btn-exportar-treinopro').addEventListener('click', async () => {
+  try {
+    const lista = await garantirBibliotecaCarregada(true);
+    const exercicios = lista.map((e) => ({
+      grupo_muscular: e.grupo_muscular, nome: e.nome, video_url: e.video_url || null, imagem_url: e.imagem_url || null,
+      equipamento: e.equipamento || null, dificuldade: e.dificuldade || null, musculos_secundarios: e.musculos_secundarios || null, instrucoes: e.instrucoes || null,
+    }));
+    const blob = new Blob([JSON.stringify({ origem: 'academia', exportado_em: new Date().toISOString(), exercicios })], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'biblioteca-academia.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    mostrarToast(`${exercicios.length} exercícios exportados. Importe o arquivo no Treino pro (Biblioteca > Importar da academia).`);
+  } catch (err) { mostrarToast(err.message, true); }
+});
 document.getElementById('btn-cancelar-exercicio-lib').addEventListener('click', () => {
   document.getElementById('form-exercicio-lib').classList.add('oculto');
 });

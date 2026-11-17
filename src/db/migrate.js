@@ -341,25 +341,40 @@ async function atualizarVideosBibliotecaExercicios() {
   return atualizados;
 }
 
-// Une duplicados que apareceram porque o nome mudava só em maiúscula/espaço (ex.: "Supino inclinado com Barra" do sistema
-// e o novo "...com barra" do canal). Só atua quando um deles tem vídeo do canal. Fica o MAIS ANTIGO (o que as fichas já
-// usam), recebe o vídeo do canal e o outro é apagado; fichas e modelos que apontavam para ele passam para o que ficou.
+// Nome para detectar o MESMO exercício escrito de formas parecidas: sem acento/maiúscula, plural e singular iguais
+// ("halter"/"halteres"), sem palavras de ligação ("com", "na", "no"...) e sem ordem de espaços/pontuação.
+const PALAVRAS_DE_LIGACAO = new Set(['com', 'de', 'da', 'do', 'na', 'no', 'em', 'e', 'a', 'o', 'para']);
+function normNomeFlex(t) {
+  return String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .split(/[^a-z0-9]+/).filter((w) => w && !PALAVRAS_DE_LIGACAO.has(w))
+    .map((w) => (w.length > 4 && w.endsWith('es') ? w.slice(0, -2) : (w.length > 3 && w.endsWith('s') ? w.slice(0, -1) : w)))
+    .join('');
+}
+
+// Une exercícios repetidos da biblioteca (mesmo grupo, nome parecido: "Desenvolvimento com halter" e "...com halteres",
+// ou o mesmo nome duas vezes). Fica UM: o que tem o nome exato da lista do sistema; senão o que tem vídeo do canal; senão o
+// mais antigo. Ele recebe o vídeo do canal (se algum tinha) e os campos que faltavam; fichas e modelos que apontavam para os
+// outros passam para o que ficou, e os outros são apagados.
 async function unificarDuplicadosDoCanal() {
   const canal = new Set([...VIDEOS_DO_CANAL, ...VIDEOS_DO_CANAL_LEVA3, ...VIDEOS_DO_CANAL_LEVA4]);
-  const linhas = (await db.execute({ sql: 'SELECT rowid AS ordem, id, nome, video_url, imagem_url, equipamento, dificuldade, instrucoes FROM exercicio_biblioteca ORDER BY rowid', args: [] })).rows;
+  const nomesDoSistema = new Set(BIBLIOTECA_SEED.map((r) => r[1]));
+  const linhas = (await db.execute({ sql: 'SELECT rowid AS ordem, id, grupo_muscular, nome, video_url, imagem_url, equipamento, dificuldade, musculos_secundarios, instrucoes FROM exercicio_biblioteca ORDER BY rowid', args: [] })).rows;
   const grupos = new Map();
   for (const l of linhas) {
-    const k = normNome(l.nome);
+    const k = `${normNome(l.grupo_muscular)}|${normNomeFlex(l.nome)}`;
     if (!grupos.has(k)) grupos.set(k, []);
     grupos.get(k).push(l);
   }
   let unidos = 0;
   for (const itens of grupos.values()) {
     if (itens.length < 2) continue;
+    const pontuacao = (i) => (nomesDoSistema.has(i.nome) ? 2 : 0) + (canal.has(idYoutube(i.video_url)) ? 1 : 0);
+    const ordenados = [...itens].sort((x, y) => pontuacao(y) - pontuacao(x) || x.ordem - y.ordem);
+    const fica = ordenados[0];
     const doCanal = itens.filter((i) => canal.has(idYoutube(i.video_url))).pop();
-    if (!doCanal) continue;
-    const fica = itens[0];
-    for (const dup of itens.slice(1)) {
+    const video = doCanal ? doCanal.video_url : (fica.video_url || itens.find((i) => i.video_url)?.video_url || null);
+    const pega = (campo) => fica[campo] || itens.find((i) => i[campo])?.[campo] || null;
+    for (const dup of itens.filter((i) => i.id !== fica.id)) {
       // eslint-disable-next-line no-await-in-loop
       await db.execute({ sql: 'UPDATE treino_exercicios SET biblioteca_id = ? WHERE biblioteca_id = ?', args: [fica.id, dup.id] });
       // eslint-disable-next-line no-await-in-loop
@@ -370,10 +385,11 @@ async function unificarDuplicadosDoCanal() {
     }
     // eslint-disable-next-line no-await-in-loop
     await db.execute({
-      sql: `UPDATE exercicio_biblioteca SET video_url = ?, imagem_url = NULL,
-              equipamento = COALESCE(NULLIF(equipamento, ''), ?), dificuldade = COALESCE(NULLIF(dificuldade, ''), ?), instrucoes = COALESCE(NULLIF(instrucoes, ''), ?)
-            WHERE id = ?`,
-      args: [doCanal.video_url, doCanal.equipamento || null, doCanal.dificuldade || null, doCanal.instrucoes || null, fica.id],
+      sql: `UPDATE exercicio_biblioteca SET video_url = ?, imagem_url = ${doCanal ? 'NULL' : 'COALESCE(imagem_url, ?)'},
+              equipamento = ?, dificuldade = ?, musculos_secundarios = ?, instrucoes = ? WHERE id = ?`,
+      args: doCanal
+        ? [video, pega('equipamento'), pega('dificuldade'), pega('musculos_secundarios'), pega('instrucoes'), fica.id]
+        : [video, pega('imagem_url'), pega('equipamento'), pega('dificuldade'), pega('musculos_secundarios'), pega('instrucoes'), fica.id],
     });
   }
   return unidos;

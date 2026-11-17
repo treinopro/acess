@@ -9,6 +9,7 @@ router.use(autenticar);
 
 const exercicioSchema = z.object({
   grupo_muscular: z.string().min(1),
+  outros_grupos: z.string().optional().nullable(),
   nome: z.string().min(1),
   video_url: z.string().optional().nullable(),
   imagem_url: z.string().optional().nullable(),
@@ -42,11 +43,11 @@ router.post('/', apenasAdmin, async (req, res, next) => {
     const id = uuid();
     await db.execute({
       sql: `INSERT INTO exercicio_biblioteca
-              (id, grupo_muscular, nome, video_url, imagem_url, notas, equipamento, dificuldade, instrucoes, musculos_secundarios)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              (id, grupo_muscular, nome, video_url, imagem_url, notas, equipamento, dificuldade, instrucoes, musculos_secundarios, outros_grupos)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [id, dados.grupo_muscular, dados.nome, dados.video_url || null, dados.imagem_url || null,
         dados.notas || null, dados.equipamento || null, dados.dificuldade || null,
-        dados.instrucoes || null, dados.musculos_secundarios || null],
+        dados.instrucoes || null, dados.musculos_secundarios || null, dados.outros_grupos || null],
     });
     res.status(201).json({ id, ...dados });
   } catch (err) {

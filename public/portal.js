@@ -526,20 +526,24 @@ function miniaturaBibliotecaPortal(e) {
   return m ? 'https://i.ytimg.com/vi/' + m[1] + '/mqdefault.jpg' : '';
 }
 
+function gruposDoExercicioPortal(e) {
+  return [e.grupo_muscular].concat(String(e.outros_grupos || '').split(',')).map((g) => g.trim()).filter(Boolean);
+}
+
 function renderizarBibliotecaPortal() {
   const consulta = document.getElementById('bib-busca').value;
-  const doGrupo = bibliotecaPortal.filter((e) => bibGrupo === 'todos' || e.grupo_muscular === bibGrupo);
+  const doGrupo = bibliotecaPortal.filter((e) => bibGrupo === 'todos' || gruposDoExercicioPortal(e).includes(bibGrupo));
   // Busca tolerante a pronúncia ("tríceps", "tri ceps", "lec pres", "esmite"...); sem o arquivo, cai na busca simples.
   const lista = window.BuscaFonetica
-    ? window.BuscaFonetica.filtrar(doGrupo, consulta, (e) => e.nome + ' ' + e.grupo_muscular)
-    : doGrupo.filter((e) => { const alvo = normalizarBibPortal(e.nome + ' ' + e.grupo_muscular); return normalizarBibPortal(consulta).split(/\s+/).filter(Boolean).every((t) => alvo.includes(t)); });
+    ? window.BuscaFonetica.filtrar(doGrupo, consulta, (e) => e.nome + ' ' + gruposDoExercicioPortal(e).join(' '))
+    : doGrupo.filter((e) => { const alvo = normalizarBibPortal(e.nome + ' ' + gruposDoExercicioPortal(e).join(' ')); return normalizarBibPortal(consulta).split(/\s+/).filter(Boolean).every((t) => alvo.includes(t)); });
   document.getElementById('bib-contagem').textContent = lista.length + ' de ' + bibliotecaPortal.length + ' exercícios';
   const alvo = document.getElementById('bib-lista');
   if (!lista.length) { alvo.innerHTML = '<p style="color:#94a3b8">Nenhum exercício encontrado.</p>'; return; }
   // Grade de cartões (miniatura 16:9 + título), como uma lista de vídeos. O vídeo só carrega ao tocar no cartão.
   alvo.innerHTML = '<div class="bib-grid">' + lista.map((e) => {
     const miniatura = miniaturaBibliotecaPortal(e);
-    const sub = [e.grupo_muscular, e.equipamento].filter(Boolean).map(escapeHtml).join(' · ');
+    const sub = [gruposDoExercicioPortal(e).join(' / '), e.equipamento].filter(Boolean).map(escapeHtml).join(' · ');
     return '<button type="button" class="bib-card" data-bib-id="' + escapeHtml(e.id) + '"' + ((e.video_url || e.instrucoes) ? '' : ' disabled') + '>' +
       '<span class="bib-thumb">' + (miniatura ? '<img src="' + escapeHtml(miniatura) + '" alt="" loading="lazy">' : '') +
       (e.video_url ? '<span class="bib-play"><span>&#9654;</span></span>' : '') + '</span>' +
@@ -551,7 +555,7 @@ function renderizarBibliotecaPortal() {
 function abrirVideoBibliotecaPortal(e) {
   if (!e) return;
   document.getElementById('bib-modal-titulo').textContent = e.nome;
-  document.getElementById('bib-modal-sub').textContent = [e.grupo_muscular, e.equipamento, e.dificuldade].filter(Boolean).join(' · ');
+  document.getElementById('bib-modal-sub').textContent = [gruposDoExercicioPortal(e).join(' / '), e.equipamento, e.dificuldade].filter(Boolean).join(' · ');
   document.getElementById('bib-modal-video').innerHTML = videoPreviewHtml(e.video_url);
   document.getElementById('bib-modal-instrucoes').textContent = e.instrucoes || '';
   document.getElementById('bib-modal').classList.remove('oculto');
@@ -565,7 +569,7 @@ document.getElementById('bib-modal').addEventListener('click', (ev) => { if (ev.
 document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') fecharVideoBibliotecaPortal(); });
 
 function renderizarGruposBibliotecaPortal() {
-  const grupos = ['todos', ...new Set(bibliotecaPortal.map((e) => e.grupo_muscular))];
+  const grupos = ['todos', ...new Set(bibliotecaPortal.flatMap((e) => gruposDoExercicioPortal(e)))];
   const box = document.getElementById('bib-grupos');
   box.innerHTML = grupos.map((g) => '<button type="button" class="tag" data-bib-grupo="' + escapeHtml(g) + '" style="border:none;cursor:pointer;margin:0;padding:8px 12px;font-size:14px' + (g === bibGrupo ? ';background:#10b981;color:#052e22;font-weight:700' : '') + '">' + (g === 'todos' ? 'Todos' : escapeHtml(g)) + '</button>').join('');
   box.querySelectorAll('[data-bib-grupo]').forEach((b) => b.addEventListener('click', () => { bibGrupo = b.dataset.bibGrupo; renderizarGruposBibliotecaPortal(); renderizarBibliotecaPortal(); }));

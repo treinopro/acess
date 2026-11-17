@@ -617,7 +617,7 @@ router.get('/biblioteca', limitadorSenhaPortal, async (req, res, next) => {
     if (!ativa.rows.length) return res.status(403).json({ erro: 'A biblioteca de exercícios é exclusiva para alunos com matrícula ativa, professores e colaboradores. Fale com a recepção.' });
     if (!bibliotecaPortalCache.dados || Date.now() - bibliotecaPortalCache.em > 5 * 60 * 1000) {
       const r = await db.execute({
-        sql: `SELECT id, grupo_muscular, nome, video_url, imagem_url, equipamento, dificuldade, musculos_secundarios, instrucoes
+        sql: `SELECT id, grupo_muscular, outros_grupos, nome, video_url, imagem_url, equipamento, dificuldade, musculos_secundarios, instrucoes
               FROM exercicio_biblioteca ORDER BY grupo_muscular, nome`,
         args: [],
       });

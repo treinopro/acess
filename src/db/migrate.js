@@ -8,6 +8,8 @@ const db = require('./client');
 // precisam de ALTER TABLE. Cada comando roda isolado e ignora erro de "coluna
 // duplicada" para que rodar `npm run migrate` de novo seja sempre seguro.
 const ALTERACOES_INCREMENTAIS = [
+  // Mesmo exercício em mais de um grupo muscular: grupo principal em grupo_muscular, extras aqui (separados por vírgula).
+  "ALTER TABLE exercicio_biblioteca ADD COLUMN outros_grupos TEXT",
   "ALTER TABLE alunos ADD COLUMN biometria_id TEXT",
   "ALTER TABLE cobrancas ADD COLUMN descricao TEXT",
   "ALTER TABLE alunos ADD COLUMN codigo_acesso TEXT",

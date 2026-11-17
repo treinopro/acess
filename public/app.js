@@ -2462,18 +2462,23 @@ document.getElementById('btn-excluir-treino').addEventListener('click', async ()
 // lista (ex: ao digitar na busca) pra não perder a seleção.
 let bibliotecaMultiSelecionados = new Set();
 
+// Grupo principal + grupos extras (mesmo exercício em mais de um grupamento).
+function gruposDoExercicio(ex) {
+  return [ex.grupo_muscular].concat(String(ex.outros_grupos || '').split(',')).map((g) => g.trim()).filter(Boolean);
+}
+
 function renderizarListaLibMulti(filtro) {
   const box = document.getElementById('exercicio-lib-multi');
   const termo = (filtro || '').trim().toLowerCase();
   const lista = termo
-    ? bibliotecaCache.filter((ex) => ex.nome.toLowerCase().includes(termo) || ex.grupo_muscular.toLowerCase().includes(termo))
+    ? bibliotecaCache.filter((ex) => ex.nome.toLowerCase().includes(termo) || gruposDoExercicio(ex).join(' ').toLowerCase().includes(termo))
     : bibliotecaCache;
   if (!lista.length) { box.innerHTML = '<p style="color:#667085;font-size:13px;margin:4px 0">Nenhum exercício encontrado.</p>'; return; }
   box.innerHTML = lista.map((ex) => `
     <label style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #f2f4f7">
       <input type="checkbox" class="exercicio-lib-check" value="${ex.id}" data-nome="${escapeHtml(ex.nome)}" style="width:auto" ${bibliotecaMultiSelecionados.has(ex.id) ? 'checked' : ''} />
       <span style="flex:1">${escapeHtml(ex.nome)}</span>
-      <span class="tag">${escapeHtml(ex.grupo_muscular)}</span>
+      <span class="tag">${escapeHtml(gruposDoExercicio(ex).join(' / '))}</span>
     </label>
   `).join('');
   box.querySelectorAll('.exercicio-lib-check').forEach((chk) => {
@@ -7751,7 +7756,7 @@ function libItemHtml(ex) {
     <div class="lib-item">
       ${miniaturaBibliotecaAdmin(ex) ? `<div class="lib-thumb"${ex.video_url ? ' data-thumb-video role="button" aria-label="Ver execução"' : ''}><img src="${escapeHtml(miniaturaBibliotecaAdmin(ex))}" alt="" loading="lazy">${ex.video_url ? '<span class="lib-play"><span>&#9654;</span></span>' : ''}</div>` : ''}
       <div class="name">${escapeHtml(ex.nome)}</div>
-      <div class="meta">${escapeHtml(ex.grupo_muscular)}${chips}</div>
+      <div class="meta">${escapeHtml(gruposDoExercicio(ex).join(' / '))}${chips}</div>
       ${ex.video_url ? `<button type="button" class="btn-secundario btn-lib-video" data-video="${escapeHtml(ex.video_url)}" data-target="${videoTarget}" style="margin-top:6px">▶ Ver execução</button><div id="${videoTarget}"></div>` : ''}
       ${ex.instrucoes ? `<div style="font-size:12.5px;color:#667085;margin-top:6px">${escapeHtml(ex.instrucoes)}</div>` : ''}
       <div class="form-acoes" style="margin-top:8px">
@@ -7765,11 +7770,11 @@ function libItemHtml(ex) {
 function renderizarGridBiblioteca() {
   const grid = document.getElementById('lib-grid');
   const termos = normalizarBuscaLib(libBusca).split(/\s+/).filter(Boolean);
-  const doGrupo = bibliotecaCache.filter((e) => libFiltroGrupo === 'todos' || e.grupo_muscular === libFiltroGrupo);
+  const doGrupo = bibliotecaCache.filter((e) => libFiltroGrupo === 'todos' || gruposDoExercicio(e).includes(libFiltroGrupo));
   // Busca tolerante a pronúncia ("tri ceps", "esmite", "lec pres"); sem o arquivo, cai na busca simples por trechos.
   const lista = window.BuscaFonetica
-    ? window.BuscaFonetica.filtrar(doGrupo, libBusca, (e) => `${e.nome} ${e.grupo_muscular}`)
-    : doGrupo.filter((e) => { const alvo = normalizarBuscaLib(`${e.nome} ${e.grupo_muscular}`); return termos.every((t) => alvo.includes(t)); });
+    ? window.BuscaFonetica.filtrar(doGrupo, libBusca, (e) => `${e.nome} ${gruposDoExercicio(e).join(' ')}`)
+    : doGrupo.filter((e) => { const alvo = normalizarBuscaLib(`${e.nome} ${gruposDoExercicio(e).join(' ')}`); return termos.every((t) => alvo.includes(t)); });
   const contagem = document.getElementById('lib-contagem');
   if (contagem) contagem.textContent = `${lista.length} de ${bibliotecaCache.length} exercícios`;
   if (!lista.length) { grid.innerHTML = '<p style="color:#667085;font-size:13px">Nenhum exercício encontrado.</p>'; return; }
@@ -7799,11 +7804,28 @@ function renderizarGridBiblioteca() {
   });
 }
 
+// Caixinhas "Também aparece em": o exercício aparece em todos os grupos marcados (além do principal).
+function renderizarGruposExtrasLib(marcados) {
+  const box = document.getElementById('lib-grupos-extras');
+  if (!box) return;
+  const principal = document.getElementById('lib-grupo').value;
+  box.innerHTML = GRUPOS_MUSCULARES.filter((g) => g !== principal).map((g) =>
+    `<label style="display:inline-flex;align-items:center;gap:4px;margin:2px 10px 2px 0;font-weight:normal"><input type="checkbox" class="lib-extra" value="${g}" style="width:auto" ${marcados.includes(g) ? 'checked' : ''}/> ${g}</label>`).join('');
+}
+function lerGruposExtrasLib() {
+  const principal = document.getElementById('lib-grupo').value;
+  return Array.from(document.querySelectorAll('#lib-grupos-extras .lib-extra:checked')).map((c) => c.value).filter((g) => g !== principal).join(',');
+}
+document.getElementById('lib-grupo').addEventListener('change', () => {
+  renderizarGruposExtrasLib(lerGruposExtrasLib().split(',').filter(Boolean));
+});
+
 function abrirFormExercicioLib(ex) {
   document.getElementById('form-exercicio-lib-titulo').textContent = ex ? 'Editar exercício' : 'Novo exercício';
   document.getElementById('lib-id').value = ex?.id || '';
   document.getElementById('lib-nome').value = ex?.nome || '';
   document.getElementById('lib-grupo').value = ex?.grupo_muscular || GRUPOS_MUSCULARES[0];
+  renderizarGruposExtrasLib(ex ? String(ex.outros_grupos || '').split(',').map((g) => g.trim()).filter(Boolean) : []);
   document.getElementById('lib-equipamento').value = ex?.equipamento || '';
   document.getElementById('lib-dificuldade').value = ex?.dificuldade || '';
   document.getElementById('lib-video').value = ex?.video_url || '';
@@ -7828,7 +7850,7 @@ document.getElementById('btn-exportar-treinopro').addEventListener('click', asyn
   try {
     const lista = await garantirBibliotecaCarregada(true);
     const exercicios = lista.map((e) => ({
-      grupo_muscular: e.grupo_muscular, nome: e.nome, video_url: e.video_url || null, imagem_url: e.imagem_url || null,
+      grupo_muscular: e.grupo_muscular, outros_grupos: e.outros_grupos || null, nome: e.nome, video_url: e.video_url || null, imagem_url: e.imagem_url || null,
       equipamento: e.equipamento || null, dificuldade: e.dificuldade || null, musculos_secundarios: e.musculos_secundarios || null, instrucoes: e.instrucoes || null,
     }));
     const blob = new Blob([JSON.stringify({ origem: 'academia', exportado_em: new Date().toISOString(), exercicios })], { type: 'application/json' });
@@ -7853,6 +7875,7 @@ document.getElementById('form-exercicio-lib').addEventListener('submit', async (
   const dados = {
     nome: document.getElementById('lib-nome').value.trim(),
     grupo_muscular: document.getElementById('lib-grupo').value,
+    outros_grupos: lerGruposExtrasLib() || null,
     equipamento: document.getElementById('lib-equipamento').value || null,
     dificuldade: document.getElementById('lib-dificuldade').value || null,
     video_url: document.getElementById('lib-video').value.trim() || null,
@@ -7877,8 +7900,7 @@ async function popularSelectLibTreino() {
   await garantirBibliotecaCarregada();
   const grupos = {};
   bibliotecaCache.forEach((ex) => {
-    if (!grupos[ex.grupo_muscular]) grupos[ex.grupo_muscular] = [];
-    grupos[ex.grupo_muscular].push(ex);
+    gruposDoExercicio(ex).forEach((g) => { if (!grupos[g]) grupos[g] = []; grupos[g].push(ex); });
   });
   let opts = '<option value="">— digitar nome manualmente —</option>';
   Object.keys(grupos).sort().forEach((g) => {

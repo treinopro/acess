@@ -78,7 +78,11 @@ function obterOrigin(req) {
 // de portal por engano.
 function montarLinkPortal(aluno, origin) {
   if ((aluno.categoria || 'aluno') === 'visitante') return `${origin}/cadastro-mobile.html`;
-  if (aluno.codigo_acesso) return `${origin}/meu-acesso.html?codigo=${aluno.codigo_acesso}`;
+  // Aluno com código de acesso recebe os dois links (2026-11): o portal (treino, biblioteca, pagamentos)
+  // e o QR da catraca (direto, sem senha).
+  if (aluno.codigo_acesso) {
+    return `Entrar no portal do aluno:\n${origin}/portal.html\n\nMeu QR de acesso (catraca):\n${origin}/meu-acesso.html?codigo=${aluno.codigo_acesso}`;
+  }
   return `${origin}/portal.html`;
 }
 

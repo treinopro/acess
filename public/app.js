@@ -6294,6 +6294,20 @@ document.getElementById('btn-rel-risco-cancelar-matriculas').addEventListener('c
 let acessosVivoFonte = null;
 const acessosVivoLista = []; // últimos 20, mais recente primeiro — só em memória
 
+// Quando o acesso não tem aluno (liberação rápida da recepção, pânico, digital
+// não vinculada...), mostra de onde veio em vez de um "—" mudo.
+function rotuloOrigemAcessoVivo(a) {
+  const porMetodo = {
+    admin_rapido: 'Liberação rápida (recepção)',
+    admin_panico: 'Liberação de pânico',
+    biometria_catraca: 'Digital não reconhecida',
+    facial: 'Rosto não reconhecido',
+    qrcode: 'QR code inválido',
+    admin: 'Liberação pela recepção',
+  };
+  return porMetodo[a.metodo] || (a.mensagem ? String(a.mensagem).slice(0, 40) : '—');
+}
+
 function formatarTipoAcessoVivo(a) {
   if (a.resultado === 'liberado') return '<span class="badge ativo">Liberado</span>';
   const rotulo = a.mensagem && /atraso/i.test(a.mensagem) ? 'Vencido' : 'Negado';
@@ -6356,7 +6370,7 @@ function renderizarAcessosVivo() {
   acessosVivoLista.forEach((a) => {
     const nomeCel = a.aluno_id
       ? `<span class="nome-clicavel" style="cursor:pointer;color:#1d4ed8;text-decoration:underline">${escapeHtml(a.aluno_nome)}</span>`
-      : (escapeHtml(a.aluno_nome) || '—');
+      : (escapeHtml(a.aluno_nome) || `<span style="color:#667085">${escapeHtml(rotuloOrigemAcessoVivo(a))}</span>`);
     const tr = el(`
       <tr>
         <td>${new Date(a.em).toLocaleTimeString('pt-BR')}</td>
@@ -6384,6 +6398,7 @@ function iniciarEscutaAcessosVivo() {
         mensagem: dados.mensagem,
         aluno_nome: dados.alunoNome,
         aluno_id: dados.alunoId || null,
+        metodo: dados.metodo || null,
       });
       if (acessosVivoLista.length > 20) acessosVivoLista.length = 20;
       renderizarAcessosVivo();

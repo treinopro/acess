@@ -168,6 +168,7 @@ terminal.post('/validar-biometria-catraca', limitadorIdentificacao, autenticarTe
     const { autorizado, motivo } = await acessoTerminal.verificarAutorizacaoAluno(aluno);
     await acessoTerminal.registrarAcesso({
       alunoId: aluno.id,
+      alunoNome: aluno.nome,
       metodo: 'biometria_catraca',
       resultado: autorizado ? 'liberado' : 'negado',
       mensagem: motivo,
@@ -353,6 +354,7 @@ terminal.post('/acessos/lote', limitadorAcessosLote, autenticarTerminal, async (
           await acessoTerminal.registrarAcessoIdempotente({
             id: evento.id,
             alunoId: aluno.id,
+            alunoNome: aluno.nome,
             metodo: 'biometria_catraca',
             resultado: 'negado',
             mensagem: evento.mensagem || 'Negado localmente pelo agente.',
@@ -366,6 +368,7 @@ terminal.post('/acessos/lote', limitadorAcessosLote, autenticarTerminal, async (
         await acessoTerminal.registrarAcessoIdempotente({
           id: evento.id,
           alunoId: aluno.id,
+          alunoNome: aluno.nome,
           metodo: 'biometria_catraca',
           resultado: autorizado ? 'liberado' : 'negado',
           mensagem: motivo,

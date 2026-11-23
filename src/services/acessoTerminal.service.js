@@ -907,11 +907,11 @@ async function registrarAcessoIdempotente(dados) {
   if (dados.resultado === 'liberado') {
     try { totemEventos.emitirLiberado({ metodo: dados.metodo }); } catch { /* nunca deve derrubar o registro do acesso */ }
   }
-  // 2026-09-08: mesmo canal admin de registrarAcesso acima — este caminho
-  // (biometria lida direto na catraca) não tem o nome do aluno em mãos sem
-  // uma consulta extra ao banco, então vai só com metodo/resultado/mensagem.
+  // 2026-09-08: mesmo canal admin de registrarAcesso acima. 2026-11: quem
+  // chama (POST /acessos/lote) já buscou o aluno, então passa `alunoNome` —
+  // antes ia sem nome e a janela "Acessos ao vivo" mostrava "—" nas digitais.
   try { totemEventos.emitirAcessoAdmin({
-    resultado: dados.resultado, metodo: dados.metodo, alunoId: dados.alunoId, mensagem: dados.mensagem,
+    resultado: dados.resultado, metodo: dados.metodo, alunoId: dados.alunoId, alunoNome: dados.alunoNome, mensagem: dados.mensagem,
   }); } catch { /* nunca deve derrubar o registro do acesso */ }
   return registrarAcessoIdempotenteEm(db, dados);
 }

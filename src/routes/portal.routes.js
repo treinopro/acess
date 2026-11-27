@@ -104,11 +104,27 @@ router.get('/planos', async (req, res, next) => {
 // alguém trocando de IP/rede ainda conseguiria ficar tentando várias senhas
 // contra o MESMO CPF sem isso. Generoso o bastante pro uso normal (aluno
 // errando a senha uma ou duas vezes).
+// Credenciais do portal (2026-11): CPF e senha agora viajam em CABEÇALHOS (X-Portal-Cpf / X-Portal-Senha, com
+// encodeURIComponent), não mais na URL — a URL aparece nos logs do servidor, no histórico do navegador e em
+// qualquer proxy. Ainda aceita ?cpf=&senha= só por compatibilidade com telas já abertas/em cache; quando todos
+// estiverem atualizados dá para remover o "|| req.query".
+function credenciaisPortal(req, res) {
+  const lerCabecalho = (nome) => {
+    const v = req.get(nome);
+    if (!v) return undefined;
+    try { return decodeURIComponent(v); } catch { return v; }
+  };
+  // A resposta depende do cabeçalho: sem isso, um cache do navegador (mesmo aparelho, outro aluno) poderia
+  // reaproveitar a resposta de outra pessoa, já que a URL passou a ser igual para todos.
+  if (res) { res.vary('X-Portal-Cpf'); res.vary('X-Portal-Senha'); }
+  return { cpf: lerCabecalho('x-portal-cpf') ?? req.query.cpf, senha: lerCabecalho('x-portal-senha') ?? req.query.senha };
+}
+
 const limitadorSenhaPortal = criarLimitador({
   janelaMs: 15 * 60 * 1000,
   maximo: 8,
   mensagem: 'Muitas tentativas de acesso para este CPF. Aguarde alguns minutos ou procure a recepção.',
-  chavePor: (req) => `senha-portal:${req.body?.cpf || req.query?.cpf || ''}`,
+  chavePor: (req) => `senha-portal:${req.body?.cpf || (req.get('x-portal-cpf') ? decodeURIComponent(req.get('x-portal-cpf')) : '') || req.query?.cpf || ''}`,
 });
 
 // Cadastro INATIVO ou TRANCADO não vê treino no portal (2026-10-13, pedido do
@@ -141,7 +157,7 @@ async function autenticarAlunoPortal(cpf, senha) {
 // batendo com o biometria_id, senão 401.
 router.get('/aluno', limitadorSenhaPortal, async (req, res, next) => {
   try {
-    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().trim().optional() }).parse(req.query);
+    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().trim().optional() }).parse(credenciaisPortal(req, res));
     const aluno = await acessoTerminal.buscarAlunoPorCpf(cpf);
     if (!aluno) return res.status(404).json({ erro: 'CPF não encontrado. Use "Quero me cadastrar" se ainda não tem cadastro.' });
 
@@ -243,7 +259,7 @@ router.post('/completar-cadastro', limitadorSenhaPortal, async (req, res, next) 
 // 'nativo' (o link do app externo já vem em GET /api/config, campo treino_app_url).
 router.get('/treino', limitadorSenhaPortal, async (req, res, next) => {
   try {
-    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(req.query);
+    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(credenciaisPortal(req, res));
     const autenticado = await autenticarAlunoPortal(cpf, senha);
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
     const aluno = autenticado.aluno;
@@ -441,7 +457,7 @@ router.post('/treino/:id/concluir-treino', limitadorSenhaPortal, async (req, res
 // src/services/gamificacao.service.js).
 router.get('/gamificacao', limitadorSenhaPortal, async (req, res, next) => {
   try {
-    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(req.query);
+    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(credenciaisPortal(req, res));
     const autenticado = await autenticarAlunoPortal(cpf, senha);
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
     res.json(await gamificacao.obterResumoGamificacao(autenticado.aluno.id));
@@ -562,7 +578,7 @@ router.post('/chamar-professor', limitadorSenhaPortal, async (req, res, next) =>
 // lista vazia — não é erro, é "ainda não avaliado".
 router.get('/avaliacoes', limitadorSenhaPortal, async (req, res, next) => {
   try {
-    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(req.query);
+    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(credenciaisPortal(req, res));
     const autenticado = await autenticarAlunoPortal(cpf, senha);
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
     const aluno = autenticado.aluno;
@@ -603,7 +619,7 @@ router.get('/avaliacoes', limitadorSenhaPortal, async (req, res, next) => {
 let bibliotecaPortalCache = { em: 0, dados: null };
 router.get('/biblioteca', limitadorSenhaPortal, async (req, res, next) => {
   try {
-    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(req.query);
+    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(credenciaisPortal(req, res));
     const autenticado = await autenticarAlunoPortal(cpf, senha);
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
     // Cadastro inativo, inadimplente ou trancado não vê a biblioteca, mesmo com matrícula (vale para todas as categorias).
@@ -927,7 +943,7 @@ router.get('/cadastro/recorrencia/planos', async (req, res, next) => {
  try {
   res.set('Cache-Control', 'no-store');
   // O CPF (só dígitos) libera modalidades restritas a alunos específicos (ex.: teste); sem ele, só as públicas.
-  res.json({ opcoes: await assinaturas.listarPlanosCadastroPublicos({ cpf: req.query.cpf }) });
+  res.json({ opcoes: await assinaturas.listarPlanosCadastroPublicos({ cpf: credenciaisPortal(req, res).cpf }) });
  } catch (e) { next(e); }
 });
 
@@ -1270,7 +1286,7 @@ router.post('/push/unsubscribe', limitadorSenhaPortal, async (req, res, next) =>
 // viu há mais de 1h (ver public/portal.js).
 router.get('/banners', limitadorSenhaPortal, async (req, res, next) => {
   try {
-    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(req.query);
+    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(credenciaisPortal(req, res));
     const autenticado = await autenticarAlunoPortal(cpf, senha);
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
 
@@ -1299,7 +1315,7 @@ router.get('/banners', limitadorSenhaPortal, async (req, res, next) => {
 // Configurações > Demonstração em vídeo (ver config.routes.js).
 router.get('/demonstracao', limitadorSenhaPortal, async (req, res, next) => {
   try {
-    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(req.query);
+    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(credenciaisPortal(req, res));
     const autenticado = await autenticarAlunoPortal(cpf, senha);
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
 
@@ -1322,7 +1338,7 @@ const assinaturas = require('../services/assinaturas.service');
 
 router.get('/assinatura', limitadorSenhaPortal, async (req, res, next) => {
   try {
-    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(req.query);
+    const { cpf, senha } = z.object({ cpf: z.string().min(1), senha: z.string().min(1) }).parse(credenciaisPortal(req, res));
     const autenticado = await autenticarAlunoPortal(cpf, senha);
     if (autenticado.erro) return res.status(autenticado.status).json({ erro: autenticado.erro });
     // O aluno voltou ao portal: se deixou um cartão pela metade há mais de 15 min, desfaz (conta volta ao normal).

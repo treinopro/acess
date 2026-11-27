@@ -3,9 +3,22 @@
 // aciona a catraca (ver aviso no topo de src/routes/portal.routes.js).
 
 async function api(caminho, opcoes = {}) {
+  // 2026-11: CPF e senha NÃO vão na URL (apareciam nos logs do servidor e no histórico do navegador). Quem monta
+  // `/api/portal/...?cpf=..&senha=..` continua igual; aqui os dois saem da URL e viajam em cabeçalhos.
+  const cabecalhosCredenciais = {};
+  if (typeof caminho === 'string' && caminho.startsWith('/api/portal/') && /[?&](cpf|senha)=/.test(caminho)) {
+    const u = new URL(caminho, location.origin);
+    for (const [chave, cabecalho] of [['cpf', 'X-Portal-Cpf'], ['senha', 'X-Portal-Senha']]) {
+      if (u.searchParams.has(chave)) {
+        cabecalhosCredenciais[cabecalho] = encodeURIComponent(u.searchParams.get(chave));
+        u.searchParams.delete(chave);
+      }
+    }
+    caminho = u.pathname + u.search;
+  }
   const resp = await fetch(caminho, {
     ...opcoes,
-    headers: { 'Content-Type': 'application/json', ...(opcoes.headers || {}) },
+    headers: { 'Content-Type': 'application/json', ...cabecalhosCredenciais, ...(opcoes.headers || {}) },
   });
   const dados = await resp.json().catch(() => ({}));
   if (!resp.ok) {

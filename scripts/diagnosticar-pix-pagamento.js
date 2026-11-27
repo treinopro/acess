@@ -27,13 +27,13 @@ async function main() {
   const achados = new Map();
   for (const t of trechos) {
     const pt = await db.execute({
-      sql: `SELECT pt.*, a.nome AS aluno_nome FROM pagamentos_totem pt LEFT JOIN alunos a ON a.id = pt.aluno_id
+      sql: `SELECT pt.*, a.nome AS aluno_nome, a.email AS aluno_email FROM pagamentos_totem pt LEFT JOIN alunos a ON a.id = pt.aluno_id
             WHERE pt.id LIKE ? OR pt.provedor_referencia LIKE ?`,
       args: [`%${t}%`, `%${t}%`],
     });
     pt.rows.forEach((r) => achados.set(`pt:${r.id}`, { tipo: 'pagamentos_totem (pagar contas em aberto)', r }));
     const cb = await db.execute({
-      sql: `SELECT c.*, a.nome AS aluno_nome FROM cobrancas c LEFT JOIN alunos a ON a.id = c.aluno_id
+      sql: `SELECT c.*, a.nome AS aluno_nome, a.email AS aluno_email FROM cobrancas c LEFT JOIN alunos a ON a.id = c.aluno_id
             WHERE c.id LIKE ? OR c.provedor_referencia LIKE ?`,
       args: [`%${t}%`, `%${t}%`],
     });
@@ -50,6 +50,7 @@ async function main() {
     console.log('— Encontrado em:', tipo);
     console.log('  id:', r.id);
     console.log('  aluno:', r.aluno_nome || '(não encontrado)');
+    console.log('  e-mail cadastrado no sistema:', r.aluno_email ? 'sim' : 'NÃO (o Pix foi criado com e-mail genérico "aluno-<cpf>@academia-gestao.com", por isso o Mercado Pago não mostra o pagador)');
     console.log('  status:', r.status, '| valor (centavos):', r.valor_centavos);
     console.log('  criado em:', r.criado_em);
     console.log('  referência do pedido no Mercado Pago:', r.provedor_referencia);

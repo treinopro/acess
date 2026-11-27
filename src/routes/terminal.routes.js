@@ -880,6 +880,14 @@ terminal.get('/eventos/stream', (req, res) => {
 // autenticar/apenasAdmin normais (lê o JWT do header Authorization), mas
 // EventSource não manda headers customizados — o JWT vem em ?token=, ver
 // autenticarAdminPorQuery em middleware/auth.js.
+// POST /api/terminal/admin/eventos/ticket — emite o código de uso único (30 s) que abre o stream acima.
+// Fica no router `admin`, então exige o JWT de administrador no cabeçalho Authorization (nunca na URL).
+const ticketsSse = require('../services/ticketsSse.service');
+router.post('/admin/eventos/ticket', autenticar, apenasAdmin, (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({ ticket: ticketsSse.emitir(req.usuario), valido_por_segundos: ticketsSse.VALIDADE_MS / 1000 });
+});
+
 terminal.get('/admin/eventos/stream', autenticarAdminPorQuery, (req, res) => {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',

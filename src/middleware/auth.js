@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const { verificarToken } = require('../utils/jwt');
+const ticketsSse = require('../services/ticketsSse.service');
 
 // Comparação de string em tempo constante — evita, em teoria, ataques de
 // timing pra descobrir um segredo caractere por caractere (risco baixo na
@@ -92,20 +93,17 @@ function autenticarTerminalOuCadastroPublico(req, res, next) {
 // transporte muda (mesmo padrão já usado pelo TERMINAL_TOKEN do totem em
 // GET /api/terminal/eventos/stream).
 function autenticarAdminPorQuery(req, res, next) {
-  const token = req.query.token;
-  if (!token) {
-    return res.status(401).json({ erro: 'Token não informado.' });
+  // 2026-11: o JWT NÃO vai mais na URL (aparecia nos logs). A conexão se abre com ?ticket=, um código de uso único
+  // e de 30 s emitido por POST /api/terminal/admin/eventos/ticket (esse sim autenticado por cabeçalho).
+  const usuario = ticketsSse.consumir(req.query.ticket);
+  if (!usuario) {
+    return res.status(401).json({ erro: 'Código de conexão inválido, expirado ou já usado.' });
   }
-  try {
-    const usuario = verificarToken(token);
-    if (usuario.papel !== 'admin') {
-      return res.status(403).json({ erro: 'Apenas administradores podem realizar esta ação.' });
-    }
-    req.usuario = usuario;
-    return next();
-  } catch (err) {
-    return res.status(401).json({ erro: 'Token inválido ou expirado.' });
+  if (usuario.papel !== 'admin') {
+    return res.status(403).json({ erro: 'Apenas administradores podem realizar esta ação.' });
   }
+  req.usuario = usuario;
+  return next();
 }
 
 module.exports = {

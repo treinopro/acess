@@ -6385,11 +6385,27 @@ function renderizarAcessosVivo() {
   carregarFotosAcessosVivo();
 }
 
-function iniciarEscutaAcessosVivo() {
-  if (acessosVivoFonte || !estado.token) return;
+// 2026-11: a conexão ao vivo NÃO leva mais o token de login na URL (aparecia nos logs do servidor). O painel pede um
+// código de uso único (30 s) por POST autenticado e abre o stream com ele. Como o código só vale uma vez, a
+// reconexão automática nativa do EventSource (que reusaria a mesma URL) não serve: a cada erro/queda fechamos e
+// pedimos um código novo.
+let acessosVivoQuer = false;
+let acessosVivoTimerReconexao = null;
+
+async function abrirStreamAcessosVivo() {
+  if (!acessosVivoQuer || acessosVivoFonte) return;
+  let ticket;
   try {
-    acessosVivoFonte = new EventSource(`/api/terminal/admin/eventos/stream?token=${encodeURIComponent(estado.token)}`);
-    acessosVivoFonte.addEventListener('acesso', (evento) => {
+    ticket = (await api('/api/terminal/admin/eventos/ticket', { method: 'POST' })).ticket;
+  } catch {
+    agendarReconexaoAcessosVivo();
+    return;
+  }
+  if (!acessosVivoQuer || acessosVivoFonte) return; // fechou a janela enquanto o código vinha
+  try {
+    const fonte = new EventSource(`/api/terminal/admin/eventos/stream?ticket=${encodeURIComponent(ticket)}`);
+    acessosVivoFonte = fonte;
+    fonte.addEventListener('acesso', (evento) => {
       let dados = {};
       try { dados = JSON.parse(evento.data); } catch { return; }
       acessosVivoLista.unshift({
@@ -6403,14 +6419,34 @@ function iniciarEscutaAcessosVivo() {
       if (acessosVivoLista.length > 20) acessosVivoLista.length = 20;
       renderizarAcessosVivo();
     });
-    // Sem handler de erro customizado de propósito — o EventSource reconecta
-    // sozinho (comportamento nativo do navegador) se a conexão cair.
+    fonte.addEventListener('error', () => {
+      if (acessosVivoFonte !== fonte) return;
+      fonte.close();
+      acessosVivoFonte = null;
+      agendarReconexaoAcessosVivo();
+    });
   } catch {
-    // Best-effort: se falhar ao abrir, a janela só fica sem eventos novos.
+    agendarReconexaoAcessosVivo();
   }
 }
 
+function agendarReconexaoAcessosVivo() {
+  if (!acessosVivoQuer || acessosVivoTimerReconexao) return;
+  acessosVivoTimerReconexao = setTimeout(() => {
+    acessosVivoTimerReconexao = null;
+    abrirStreamAcessosVivo();
+  }, 3000);
+}
+
+function iniciarEscutaAcessosVivo() {
+  if (acessosVivoQuer || !estado.token) return;
+  acessosVivoQuer = true;
+  abrirStreamAcessosVivo();
+}
+
 function pararEscutaAcessosVivo() {
+  acessosVivoQuer = false;
+  if (acessosVivoTimerReconexao) { clearTimeout(acessosVivoTimerReconexao); acessosVivoTimerReconexao = null; }
   if (acessosVivoFonte) {
     acessosVivoFonte.close();
     acessosVivoFonte = null;

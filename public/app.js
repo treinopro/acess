@@ -451,7 +451,7 @@ function carregarSecao(nome) {
   if (nome === 'pagamento-rapido') iniciarPagamentoRapido();
   if (nome === 'usuarios') carregarUsuarios();
   if (nome === 'config') {
-    carregarConfiguracoesForm(); carregarConfigCooldown(); carregarConfigChamarProfessor(); carregarConfigDemoVideos();
+    carregarAparelhosTotem(); carregarConfiguracoesForm(); carregarConfigCooldown(); carregarConfigChamarProfessor(); carregarConfigDemoVideos();
     carregarConfigBiometriaCatraca(); carregarConfigBackup(); carregarConfigOfertaAssinatura(); carregarPlanosCadastroRecorrencia(); carregarCombosRecorrencia(); carregarPendenciasSincronizacao();
   }
   if (nome === 'recuperacao') carregarSecaoRecuperacao();
@@ -975,6 +975,56 @@ document.getElementById('btn-baixar-backup').addEventListener('click', async () 
 // Guardado fora de GET/PUT /api/config (que é público) — mesmo padrão do
 // backup-config logo abaixo. Ver /api/config/cooldown-acesso em
 // src/routes/config.routes.js.
+// ---------------- Aparelhos do totem (pareamento) ----------------
+function dataHoraAparelho(s) {
+  if (!s) return '—';
+  const d = new Date(String(s).replace(' ', 'T') + 'Z');
+  return Number.isNaN(d.getTime()) ? s : d.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+}
+
+async function carregarAparelhosTotem() {
+  const tbody = document.getElementById('lista-aparelhos');
+  if (!tbody) return;
+  try {
+    const { aparelhos } = await api('/api/terminal/aparelhos');
+    const ativos = aparelhos.filter((a) => !a.revogado_em);
+    tbody.innerHTML = ativos.length ? '' : '<tr><td colspan="4">Nenhum aparelho pareado ainda. Gere um código acima.</td></tr>';
+    ativos.forEach((a) => {
+      const tr = el(`<tr><td>${escapeHtml(a.nome)}</td><td>${escapeHtml(dataHoraAparelho(a.criado_em))}</td><td>${escapeHtml(dataHoraAparelho(a.ultimo_uso))}</td>
+        <td><button type="button" class="btn-secundario perigo">Revogar</button></td></tr>`);
+      tr.querySelector('button').addEventListener('click', async () => {
+        if (!window.confirm(`Revogar "${a.nome}"? Ele para de funcionar como totem até ser pareado de novo.`)) return;
+        try { await api(`/api/terminal/aparelhos/${encodeURIComponent(a.id)}`, { method: 'DELETE' }); mostrarToast('Aparelho revogado.'); carregarAparelhosTotem(); } catch (err) { mostrarToast(err.message, true); }
+      });
+      tbody.appendChild(tr);
+    });
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="4">${escapeHtml(err.message)}</td></tr>`;
+  }
+}
+
+let timerCodigoAparelho = null;
+document.getElementById('btn-aparelho-codigo')?.addEventListener('click', async () => {
+  try {
+    const nome = document.getElementById('aparelho-nome').value.trim();
+    const r = await api('/api/terminal/aparelhos/codigo', { method: 'POST', body: JSON.stringify({ nome }) });
+    const caixa = document.getElementById('aparelho-codigo-box');
+    document.getElementById('aparelho-codigo-texto').textContent = r.codigo;
+    caixa.classList.remove('oculto');
+    const fim = new Date(r.expira_em).getTime();
+    clearInterval(timerCodigoAparelho);
+    const atualizar = () => {
+      const falta = Math.max(0, Math.round((fim - Date.now()) / 1000));
+      document.getElementById('aparelho-codigo-validade').textContent = falta > 0 ? `Vale por mais ${Math.floor(falta / 60)}:${String(falta % 60).padStart(2, '0')} — uso único` : 'Expirado. Gere outro.';
+      if (falta === 0) { clearInterval(timerCodigoAparelho); carregarAparelhosTotem(); }
+    };
+    atualizar();
+    timerCodigoAparelho = setInterval(atualizar, 1000);
+    document.getElementById('aparelho-nome').value = '';
+    carregarAparelhosTotem();
+  } catch (err) { mostrarToast(err.message, true); }
+});
+
 async function carregarConfigCooldown() {
   try {
     const config = await api('/api/config/cooldown-acesso');

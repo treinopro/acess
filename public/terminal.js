@@ -2,10 +2,8 @@
 // (CPF, QR pessoal do celular, reconhecimento facial contínuo) e vinculação
 // inicial de método de acesso para quem já existia no sistema antes do totem.
 //
-// IMPORTANTE: troque o valor abaixo pelo mesmo TERMINAL_TOKEN configurado no
-// .env do servidor. Como o aluno não faz login, este token é o que autentica
-// o totem perante a API — mantenha o dispositivo fisicamente controlado.
-const TERMINAL_TOKEN = '533910a1b2ff8e90e62194b1b2f61c1e641e724e9d00b2d4f50e96bbce3e9e63';
+// 2026-11: o totem NÃO guarda mais segredo no código da página. A identificação do aparelho vem de
+// totem-aparelho.js (pareamento por código gerado no painel); a chave fica só neste navegador.
 
 // Modelos do face-api.js, carregamento, pose e cadastro guiado (liveness)
 // agora moram em facial-guiado.js — mesmo mecanismo usado pelo portal remoto
@@ -180,11 +178,22 @@ function aguardarGiroOuTempo(inicioMs, maxMs) {
   });
 }
 
-function iniciarEscutaLiberacoesExternas() {
+// 2026-11: a conexão não leva mais segredo na URL. Pede um código de uso único (30 s) com a chave do aparelho e abre o
+// stream com ele. Como o código só vale uma vez, a reconexão nativa do EventSource não serve: a cada queda
+// fechamos e pedimos um código novo (um único timer evita abrir conexões repetidas).
+let timerReabrirEventosExternos = null;
+function agendarReabrirEventosExternos(ms) {
+  if (timerReabrirEventosExternos) return;
+  timerReabrirEventosExternos = setTimeout(() => { timerReabrirEventosExternos = null; iniciarEscutaLiberacoesExternas(); }, ms);
+}
+
+async function iniciarEscutaLiberacoesExternas() {
   if (!('EventSource' in window)) return; // navegador muito antigo — segue sem esse aviso extra, sem quebrar o resto
+  if (!TotemAparelho.chave()) return; // ainda sem pareamento: a tela de pareamento está aberta
   try {
-    if (fonteEventosExternos) fonteEventosExternos.close(); // fecha qualquer conexão anterior (pode estar morta em silêncio) antes de abrir outra
-    const fonte = new EventSource(`/api/terminal/eventos/stream?token=${encodeURIComponent(TERMINAL_TOKEN)}`);
+    if (fonteEventosExternos) { fonteEventosExternos.close(); fonteEventosExternos = null; } // fecha qualquer conexão anterior (pode estar morta em silêncio)
+    const { ticket } = await api('/api/terminal/eventos/ticket', { method: 'POST' });
+    const fonte = new EventSource(`/api/terminal/eventos/stream?ticket=${encodeURIComponent(ticket)}`);
     fonteEventosExternos = fonte;
     fonte.addEventListener('giro', () => registrarGiroNoTotem());
     fonte.addEventListener('liberado', (evento) => {
@@ -192,15 +201,15 @@ function iniciarEscutaLiberacoesExternas() {
       try { dados = JSON.parse(evento.data); } catch { /* payload malformado — segue com objeto vazio, cai no aviso genérico */ }
       mostrarConfirmacaoLiberacaoExterna(dados);
     });
-    // Sem handler de erro customizado de propósito: o EventSource já tenta
-    // reconectar sozinho (comportamento nativo do navegador) — um totem que
-    // fica minutos sem rede volta a receber eventos assim que a rede volta,
-    // sem nenhum código adicional aqui. O reforço pra quando isso NÃO basta
-    // (tela apagada/app em segundo plano) é o listener de visibilitychange
-    // logo abaixo.
+    fonte.addEventListener('error', () => {
+      if (fonteEventosExternos !== fonte) return;
+      fonte.close();
+      fonteEventosExternos = null;
+      agendarReabrirEventosExternos(3000);
+    });
   } catch {
-    // Best-effort — se falhar ao abrir a conexão, o totem continua
-    // funcionando normalmente, só sem esse aviso extra de liberações externas.
+    // Sem rede/servidor agora: tenta de novo em instantes. O totem continua funcionando, só sem esse aviso extra.
+    agendarReabrirEventosExternos(10000);
   }
 }
 iniciarEscutaLiberacoesExternas();
@@ -232,7 +241,7 @@ async function enviarHeartbeatTablet() {
     }
     await fetch('/api/terminal/totem-heartbeat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Terminal-Token': TERMINAL_TOKEN },
+      headers: { 'Content-Type': 'application/json', ...TotemAparelho.cabecalhos() },
       body: JSON.stringify(corpo),
       keepalive: true,
     });
@@ -551,11 +560,12 @@ async function api(caminho, opcoes = {}) {
     ...opcoes,
     headers: {
       'Content-Type': 'application/json',
-      'X-Terminal-Token': TERMINAL_TOKEN,
+      ...TotemAparelho.cabecalhos(),
       ...(opcoes.headers || {}),
     },
   });
   const dados = await resp.json().catch(() => ({}));
+  if (resp.status === 401 && dados.precisa_parear) { TotemAparelho.esquecer(); TotemAparelho.mostrarPareamento('Este aparelho não está autorizado. Pareie de novo.'); }
   if (!resp.ok) throw new Error(dados.erro || dados.motivo || 'Erro na requisição.');
   return dados;
 }

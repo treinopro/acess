@@ -394,6 +394,15 @@ CREATE TABLE IF NOT EXISTS pagamentos_totem (
 -- Configurações gerais do app (par chave/valor) — nome do app, "licenciado para", etc.
 -- Tabela pequena e genérica de propósito: permite adicionar novas configs no futuro
 -- sem precisar de ALTER TABLE.
+-- Pareamento de aparelhos do totem (2026-11): cada aparelho tem a própria chave (só o hash fica aqui). Ver
+-- src/services/aparelhos.service.js (as tabelas também são criadas sozinhas no primeiro uso).
+CREATE TABLE IF NOT EXISTS aparelhos (
+  id TEXT PRIMARY KEY, nome TEXT NOT NULL, chave_hash TEXT NOT NULL UNIQUE,
+  criado_em TEXT NOT NULL DEFAULT (datetime('now')), ultimo_uso TEXT, revogado_em TEXT);
+CREATE TABLE IF NOT EXISTS aparelhos_codigos (
+  id TEXT PRIMARY KEY, codigo_hash TEXT NOT NULL UNIQUE, nome TEXT NOT NULL,
+  expira_em TEXT NOT NULL, usado_em TEXT, criado_em TEXT NOT NULL DEFAULT (datetime('now')));
+
 CREATE TABLE IF NOT EXISTS configuracoes (
   chave TEXT PRIMARY KEY,
   valor TEXT

@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const { verificarToken } = require('../utils/jwt');
 const ticketsSse = require('../services/ticketsSse.service');
+const aparelhos = require('../services/aparelhos.service');
 
 // Comparação de string em tempo constante — evita, em teoria, ataques de
 // timing pra descobrir um segredo caractere por caractere (risco baixo na
@@ -49,6 +50,42 @@ function autenticarTerminal(req, res, next) {
     return res.status(401).json({ erro: 'Token do terminal inválido ou não informado.' });
   }
   return next();
+}
+
+// 2026-11: o TERMINAL_TOKEN ficou PÚBLICO durante muito tempo (estava escrito em public/terminal.js). Por isso:
+//   - rotas do TABLET (autenticarTotem): aceitam a chave do aparelho pareado (cabeçalho X-Device-Key). O token
+//     antigo só vale enquanto TERMINAL_TOKEN_LEGADO_ATIVO não for "0" (período de transição);
+//   - rotas do AGENTE da catraca (autenticarTerminal, acima): continuam com o token, que passa a ser SECRETO
+//     (fica só no .env do servidor e do agente) depois de trocado.
+function terminalLegadoAtivo() {
+  return process.env.TERMINAL_TOKEN_LEGADO_ATIVO !== '0';
+}
+
+async function chaveDeAparelhoValida(req) {
+  const aparelho = await aparelhos.validarChave(req.headers['x-device-key']);
+  if (aparelho) req.aparelho = aparelho;
+  return Boolean(aparelho);
+}
+
+async function autenticarTotem(req, res, next) {
+  try {
+    if (await chaveDeAparelhoValida(req)) return next();
+    if (terminalLegadoAtivo() && segredosIguais(req.headers['x-terminal-token'], process.env.TERMINAL_TOKEN)) return next();
+    return res.status(401).json({ erro: 'Aparelho não pareado. Peça um código de pareamento à recepção.', precisa_parear: true });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+async function autenticarTotemOuCadastroPublico(req, res, next) {
+  try {
+    if (await chaveDeAparelhoValida(req)) return next();
+    if (terminalLegadoAtivo() && segredosIguais(req.headers['x-terminal-token'], process.env.TERMINAL_TOKEN)) return next();
+    if (segredosIguais(req.headers['x-cadastro-token'], process.env.CADASTRO_PUBLICO_TOKEN)) return next();
+    return res.status(401).json({ erro: 'Token inválido ou não informado.', precisa_parear: !req.headers['x-cadastro-token'] });
+  } catch (err) {
+    return next(err);
+  }
 }
 
 // Autenticação por segredo compartilhado para a página pública de auto-cadastro
@@ -113,4 +150,7 @@ module.exports = {
   autenticarCadastroPublico,
   autenticarTerminalOuCadastroPublico,
   autenticarAdminPorQuery,
+  autenticarTotem,
+  autenticarTotemOuCadastroPublico,
+  terminalLegadoAtivo,
 };

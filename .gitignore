@@ -12,3 +12,6 @@ backups/
 # reais de alunos/pagamentos (nome, valor, forma de pagamento), não deve ir
 # pro histórico do git. Segue existindo normalmente no disco de cada máquina.
 fila-cadastro-totem.jsonl
+
+# Cache local das chaves de aparelhos do totem (só hashes) — ver src/services/aparelhos.service.js
+aparelhos-cache.json

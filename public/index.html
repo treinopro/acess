@@ -1934,6 +1934,28 @@
           <h2>Configurações</h2>
         </div>
 
+        <div class="form-painel" id="bloco-aparelhos">
+          <h3 style="margin-top:0">Aparelhos do totem</h3>
+          <p style="margin:0 0 10px;color:#667085;font-size:13px">
+            Cada tablet ou celular usado como totem precisa ser <b>pareado</b>: gere um código aqui e digite na tela
+            "Parear este aparelho" que aparece nele (o código vale 10 minutos e só funciona uma vez). Se perder um
+            aparelho, revogue-o na lista e ele para de funcionar na hora.
+          </p>
+          <div class="form-acoes" style="align-items:flex-end">
+            <div style="flex:1;min-width:200px"><label>Nome do aparelho</label><input id="aparelho-nome" maxlength="60" placeholder="ex: Tablet da recepção" /></div>
+            <button type="button" class="btn-primario" id="btn-aparelho-codigo">Gerar código de pareamento</button>
+          </div>
+          <div id="aparelho-codigo-box" class="oculto" style="margin:12px 0;padding:14px;border:2px dashed #16a34a;border-radius:12px;text-align:center">
+            <div style="font-size:12px;color:#667085">Digite este código no aparelho:</div>
+            <div id="aparelho-codigo-texto" style="font-size:34px;letter-spacing:5px;font-weight:700;font-family:monospace"></div>
+            <div id="aparelho-codigo-validade" style="font-size:12px;color:#667085"></div>
+          </div>
+          <table class="tabela" style="margin-top:12px">
+            <thead><tr><th>Aparelho</th><th>Pareado em</th><th>Último uso</th><th></th></tr></thead>
+            <tbody id="lista-aparelhos"><tr><td colspan="4">Carregando...</td></tr></tbody>
+          </table>
+        </div>
+
         <form id="form-config-app" class="form-painel">
           <h3 style="margin-top:0">Identidade do app</h3>
           <div class="grid-2">

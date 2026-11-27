@@ -3,8 +3,10 @@ const express = require('express');
 const { v4: uuid } = require('uuid');
 const { z } = require('zod');
 const {
-  autenticar, apenasAdmin, autenticarTerminal, autenticarTerminalOuCadastroPublico, autenticarAdminPorQuery,
+  autenticar, apenasAdmin, autenticarTerminal, autenticarAdminPorQuery,
+  autenticarTotem, autenticarTotemOuCadastroPublico, terminalLegadoAtivo,
 } = require('../middleware/auth');
+const ticketsSse = require('../services/ticketsSse.service');
 const catracaGateway = require('../services/catracaGateway.service');
 const acessoTerminal = require('../services/acessoTerminal.service');
 const mercadopago = require('../services/payment/mercadopago.service');
@@ -86,7 +88,7 @@ const limitadorContas = criarLimitador({
 // mais nenhuma rota HTTP que a exponha como forma de liberar acesso.
 
 // POST /api/terminal/acesso/codigo { codigo_acesso } — leitura do QR pessoal do celular
-terminal.post('/acesso/codigo', limitadorIdentificacao, autenticarTerminal, async (req, res, next) => {
+terminal.post('/acesso/codigo', limitadorIdentificacao, autenticarTotem, async (req, res, next) => {
   try {
     const { codigo_acesso } = z.object({ codigo_acesso: z.string().min(1) }).parse(req.body);
     const aluno = await acessoTerminal.buscarAlunoPorCodigoAcessoParaAcesso(codigo_acesso);
@@ -102,7 +104,7 @@ terminal.post('/acesso/codigo', limitadorIdentificacao, autenticarTerminal, asyn
 });
 
 // POST /api/terminal/acesso/facial { descriptor: number[128] } — reconhecimento facial recorrente
-terminal.post('/acesso/facial', limitadorIdentificacao, autenticarTerminal, async (req, res, next) => {
+terminal.post('/acesso/facial', limitadorIdentificacao, autenticarTotem, async (req, res, next) => {
   try {
     const { descriptor } = z.object({ descriptor: z.array(z.number()).length(128) }).parse(req.body);
     const match = await acessoTerminal.encontrarMelhorMatchFacialParaAcesso(descriptor);
@@ -265,7 +267,7 @@ const limitadorHeartbeatTotem = criarLimitador({
   janelaMs: 60 * 1000, maximo: 30,
   mensagem: 'Muitos heartbeats do totem. Aguarde um pouco.',
 });
-terminal.post('/totem-heartbeat', limitadorHeartbeatTotem, autenticarTerminal, (req, res) => {
+terminal.post('/totem-heartbeat', limitadorHeartbeatTotem, autenticarTotem, (req, res) => {
   const dados = z.object({
     nivel: z.number().min(0).max(1).optional().nullable(),
     carregando: z.boolean().optional().nullable(),
@@ -392,7 +394,7 @@ terminal.post('/acessos/lote', limitadorAcessosLote, autenticarTerminal, async (
 
 // GET /api/terminal/vincular/codigo?cpf=... — gera (ou recupera) o código de
 // acesso estável do aluno, para gerar o QR/link "meu acesso" pessoal dele.
-terminal.get('/vincular/codigo', limitadorVinculacao, autenticarTerminal, async (req, res, next) => {
+terminal.get('/vincular/codigo', limitadorVinculacao, autenticarTotem, async (req, res, next) => {
   try {
     const { cpf } = z.object({ cpf: z.string().min(1) }).parse(req.query);
     const aluno = await acessoTerminal.buscarAlunoPorCpf(cpf);
@@ -417,7 +419,7 @@ terminal.get('/vincular/codigo', limitadorVinculacao, autenticarTerminal, async 
 // auto-cadastro (totem ou celular) só rodam quando o aluno AINDA não tem
 // rosto cadastrado. Trocar um rosto já existente passa a exigir a recepção
 // (painel -> perfil do aluno -> aba "Biometria & acesso").
-terminal.post('/vincular/facial', limitadorVinculacao, autenticarTerminalOuCadastroPublico, async (req, res, next) => {
+terminal.post('/vincular/facial', limitadorVinculacao, autenticarTotemOuCadastroPublico, async (req, res, next) => {
   try {
     const { cpf, descriptor, foto } = z.object({
       cpf: z.string().min(1),
@@ -506,7 +508,7 @@ const PLANO_VISITANTE = {
 // GET /api/terminal/planos — planos ativos, para o totem (ou a página de
 // cadastro pelo celular) montar o seletor de plano. Sempre inclui a opção
 // "Visitante" no final, mesmo que não exista nenhum plano pago cadastrado.
-terminal.get('/planos', autenticarTerminalOuCadastroPublico, async (req, res, next) => {
+terminal.get('/planos', autenticarTotemOuCadastroPublico, async (req, res, next) => {
   try {
     const result = await db.execute(
       'SELECT id, nome, tipo, valor_centavos, duracao_dias FROM planos WHERE ativo = 1 ORDER BY valor_centavos',
@@ -518,7 +520,7 @@ terminal.get('/planos', autenticarTerminalOuCadastroPublico, async (req, res, ne
 });
 
 // POST /api/terminal/auto-cadastro { nome, cpf, telefone, email, data_nascimento, plano_id, indicado_por_cpf? }
-terminal.post('/auto-cadastro', limitadorCadastro, autenticarTerminalOuCadastroPublico, async (req, res, next) => {
+terminal.post('/auto-cadastro', limitadorCadastro, autenticarTotemOuCadastroPublico, async (req, res, next) => {
   try {
     const dados = autoCadastroSchema.parse(req.body);
 
@@ -704,7 +706,7 @@ terminal.post('/auto-cadastro', limitadorCadastro, autenticarTerminalOuCadastroP
 // aqui enquanto espera o pagamento. Quando a cobrança está paga, ativa a
 // matrícula (só na primeira vez — updates seguintes do WHERE status='pendente'
 // não afetam nada, evitando reabrir a catraca a cada poll) e libera o acesso.
-terminal.get('/auto-cadastro/status/:cobrancaId', autenticarTerminalOuCadastroPublico, async (req, res, next) => {
+terminal.get('/auto-cadastro/status/:cobrancaId', autenticarTotemOuCadastroPublico, async (req, res, next) => {
   try {
     const cobranca = await db.execute({ sql: 'SELECT * FROM cobrancas WHERE id = ?', args: [req.params.cobrancaId] });
     let c = cobranca.rows[0];
@@ -779,7 +781,7 @@ terminal.get('/auto-cadastro/status/:cobrancaId', autenticarTerminalOuCadastroPu
 
 // POST /api/terminal/contas/consultar { cpf } — lista as contas em aberto
 // (pendente/atrasado) do aluno, pra montar a tela de seleção no totem.
-terminal.post('/contas/consultar', limitadorContas, autenticarTerminal, async (req, res, next) => {
+terminal.post('/contas/consultar', limitadorContas, autenticarTotem, async (req, res, next) => {
   try {
     const { cpf } = z.object({ cpf: z.string().min(1) }).parse(req.body);
     const resultado = await pagamentoContas.consultarContasAbertas(cpf);
@@ -794,7 +796,7 @@ terminal.post('/contas/consultar', limitadorContas, autenticarTerminal, async (r
 // Gera UM pagamento Pix agregado cobrindo todas as cobrancas selecionadas.
 // liberar_acesso=true por padrão aqui (totem físico da academia); o portal
 // remoto (portal.routes.js) chama o mesmo serviço sempre com false.
-terminal.post('/contas/pagar', limitadorContas, autenticarTerminal, async (req, res, next) => {
+terminal.post('/contas/pagar', limitadorContas, autenticarTotem, async (req, res, next) => {
   try {
     const schema = z.object({
       cpf: z.string().min(1),
@@ -815,7 +817,7 @@ terminal.post('/contas/pagar', limitadorContas, autenticarTerminal, async (req, 
 
 // GET /api/terminal/contas/status/:pagamentoId — polling do totem enquanto
 // aguarda o Pix.
-terminal.get('/contas/status/:pagamentoId', autenticarTerminal, async (req, res, next) => {
+terminal.get('/contas/status/:pagamentoId', autenticarTotem, async (req, res, next) => {
   try {
     const resultado = await pagamentoContas.consultarStatusPagamento(req.params.pagamentoId);
     res.json(resultado);
@@ -840,13 +842,17 @@ terminal.get('/contas/status/:pagamentoId', autenticarTerminal, async (req, res,
 // (TERMINAL_TOKEN), mesma comparação em tempo constante — só o transporte
 // muda.
 terminal.get('/eventos/stream', (req, res) => {
+  // 2026-11: abre com ?ticket= (código de uso único de 30 s, pedido por POST /eventos/ticket com a chave do
+  // aparelho). O ?token= antigo (TERMINAL_TOKEN na URL) só vale durante a transição (TERMINAL_TOKEN_LEGADO_ATIVO).
+  const usuarioTicket = req.query.ticket ? ticketsSse.consumir(req.query.ticket) : null;
   const esperado = process.env.TERMINAL_TOKEN;
   const recebido = req.query.token;
-  const autorizado = Boolean(esperado) && Boolean(recebido)
+  const autorizadoLegado = terminalLegadoAtivo() && Boolean(esperado) && Boolean(recebido)
     && Buffer.from(String(recebido)).length === Buffer.from(String(esperado)).length
     && crypto.timingSafeEqual(Buffer.from(String(recebido)), Buffer.from(String(esperado)));
+  const autorizado = (usuarioTicket && usuarioTicket.papel === 'totem') || autorizadoLegado;
   if (!autorizado) {
-    return res.status(401).json({ erro: 'Token do terminal inválido ou não informado.' });
+    return res.status(401).json({ erro: 'Código de conexão inválido, expirado ou já usado.', precisa_parear: true });
   }
 
   res.writeHead(200, {
@@ -880,9 +886,66 @@ terminal.get('/eventos/stream', (req, res) => {
 // autenticar/apenasAdmin normais (lê o JWT do header Authorization), mas
 // EventSource não manda headers customizados — o JWT vem em ?token=, ver
 // autenticarAdminPorQuery em middleware/auth.js.
+// ---- Pareamento de aparelhos do totem (ver src/services/aparelhos.service.js) ----
+// Troca um código de pareamento (gerado no painel) pela chave do aparelho. Pública de propósito (o aparelho ainda
+// não tem chave), por isso o limite apertado de tentativas por IP: o código tem 8 caracteres e vale 10 minutos.
+const aparelhosService = require('../services/aparelhos.service');
+const limitadorParear = criarLimitador({
+  janelaMs: 15 * 60 * 1000, maximo: 10,
+  mensagem: 'Muitas tentativas de pareamento. Aguarde alguns minutos.',
+});
+terminal.post('/aparelhos/parear', limitadorParear, async (req, res, next) => {
+  try {
+    const { codigo } = z.object({ codigo: z.string().min(1).max(40) }).parse(req.body || {});
+    const resultado = await aparelhosService.parear(codigo);
+    if (!resultado) return res.status(400).json({ erro: 'Código inválido, expirado ou já usado. Gere um novo no painel.' });
+    res.set('Cache-Control', 'no-store');
+    res.json({ chave: resultado.chave, nome: resultado.nome });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// O aparelho confere se a chave dele ainda vale (ao abrir a página) — se não, mostra a tela de pareamento.
+terminal.get('/aparelho/status', autenticarTotem, (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({ ok: true, pareado: Boolean(req.aparelho), nome: req.aparelho ? req.aparelho.nome : null });
+});
+
+// Código de uso único (30 s) para abrir o stream de eventos do totem (EventSource não manda cabeçalhos).
+terminal.post('/eventos/ticket', autenticarTotem, (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({ ticket: ticketsSse.emitir({ papel: 'totem' }) });
+});
+
+// Administração dos aparelhos (painel > Configurações): gerar código, listar, revogar.
+router.post('/aparelhos/codigo', autenticar, apenasAdmin, async (req, res, next) => {
+  try {
+    const { nome } = z.object({ nome: z.string().max(60).optional() }).parse(req.body || {});
+    res.set('Cache-Control', 'no-store');
+    res.status(201).json(await aparelhosService.emitirCodigoPareamento(nome));
+  } catch (err) {
+    next(err);
+  }
+});
+router.get('/aparelhos', autenticar, apenasAdmin, async (req, res, next) => {
+  try {
+    res.json({ aparelhos: await aparelhosService.listar() });
+  } catch (err) {
+    next(err);
+  }
+});
+router.delete('/aparelhos/:id', autenticar, apenasAdmin, async (req, res, next) => {
+  try {
+    if (!(await aparelhosService.revogar(req.params.id))) return res.status(404).json({ erro: 'Aparelho não encontrado ou já revogado.' });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/terminal/admin/eventos/ticket — emite o código de uso único (30 s) que abre o stream acima.
 // Fica no router `admin`, então exige o JWT de administrador no cabeçalho Authorization (nunca na URL).
-const ticketsSse = require('../services/ticketsSse.service');
 router.post('/admin/eventos/ticket', autenticar, apenasAdmin, (req, res) => {
   res.set('Cache-Control', 'no-store');
   res.json({ ticket: ticketsSse.emitir(req.usuario), valido_por_segundos: ticketsSse.VALIDADE_MS / 1000 });

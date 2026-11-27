@@ -2,10 +2,8 @@
 // (CPF, QR pessoal do celular, reconhecimento facial contínuo) e vinculação
 // inicial de método de acesso para quem já existia no sistema antes do totem.
 //
-// IMPORTANTE: troque o valor abaixo pelo mesmo TERMINAL_TOKEN configurado no
-// .env do servidor. Como o aluno não faz login, este token é o que autentica
-// o totem perante a API — mantenha o dispositivo fisicamente controlado.
-const TERMINAL_TOKEN = '533910a1b2ff8e90e62194b1b2f61c1e641e724e9d00b2d4f50e96bbce3e9e63';
+// 2026-11: o totem NÃO guarda mais segredo no código da página. A identificação do aparelho vem de
+// totem-aparelho.js (pareamento por código gerado no painel); a chave fica só neste navegador.
 
 // URL dos modelos do face-api.js — hospedados localmente em public/vendor/,
 // já que o totem roda numa rede sem internet. Ver README (seção do totem)
@@ -322,11 +320,12 @@ async function api(caminho, opcoes = {}) {
     ...opcoes,
     headers: {
       'Content-Type': 'application/json',
-      'X-Terminal-Token': TERMINAL_TOKEN,
+      ...TotemAparelho.cabecalhos(),
       ...(opcoes.headers || {}),
     },
   });
   const dados = await resp.json().catch(() => ({}));
+  if (resp.status === 401 && dados.precisa_parear) { TotemAparelho.esquecer(); TotemAparelho.mostrarPareamento('Este aparelho não está autorizado. Pareie de novo.'); }
   if (!resp.ok) throw new Error(dados.erro || dados.motivo || 'Erro na requisição.');
   return dados;
 }

@@ -15,3 +15,17 @@ fila-cadastro-totem.jsonl
 
 # Cache local das chaves de aparelhos do totem (só hashes) — ver src/services/aparelhos.service.js
 aparelhos-cache.json
+
+# Dados pessoais e segredos que NUNCA podem ir pro repositório (ele já foi público — ver STATUS-PROJETO.md/segurança):
+# listas de alunos, exportações da catraca, resultados de scripts com nomes/valores, planilhas, chaves privadas.
+certs/
+*.pem
+*.key
+*.xlsx
+*.csv
+*.jsonl
+scripts/data/
+resultado-*.txt
+migrate[0-9]*.txt
+netcheck.txt
+*.patch

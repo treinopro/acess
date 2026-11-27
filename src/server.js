@@ -81,6 +81,15 @@ try {
 const EXECUTAR_JOBS_AGENDADOS = String(process.env.EXECUTAR_JOBS_AGENDADOS || 'true').toLowerCase() === 'true';
 
 const app = express();
+
+// 2026-11: atrás do proxy do Northflank, SEM isto req.ip é sempre o IP do proxy — todos os limitadores de tentativa
+// por IP (cadastro, identificação, pareamento, contas...) viravam um balde único para o mundo inteiro. Defina
+// TRUST_PROXY=1 na NUVEM (um proxy na frente). No PC do totem (acesso direto pela rede local) deixe sem definir:
+// aceitar X-Forwarded-For de quem fala direto com o servidor permitiria forjar o IP. Confira em GET /health ("ip").
+if (process.env.TRUST_PROXY) {
+  const valor = process.env.TRUST_PROXY.trim();
+  app.set('trust proxy', /^\d+$/.test(valor) ? Number(valor) : valor);
+}
 app.disable('x-powered-by'); // não anuncia "Express" na resposta (mesmo efeito de helmet.hidePoweredBy)
 
 // CORS restrito: só entra em jogo se CORS_ORIGIN estiver configurado (lista
@@ -213,7 +222,7 @@ app.use(express.static(path.join(__dirname, '..', 'public'), {
   },
 }));
 
-app.get('/health', (req, res) => res.json({ status: 'ok', servico: 'academia-gestao' }));
+app.get('/health', (req, res) => res.json({ status: 'ok', servico: 'academia-gestao', ip: req.ip }));
 app.get('/assinar/:id', (req, res) => {
   res.set('Cache-Control', 'no-store');
   res.sendFile(path.join(__dirname, '..', 'public', 'assinar.html'));

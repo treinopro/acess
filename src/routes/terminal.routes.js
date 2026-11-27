@@ -746,6 +746,7 @@ terminal.get('/auto-cadastro/status/:cobrancaId', autenticarTerminalOuCadastroPu
         args: [c.matricula_id],
       });
       jaAtivadaAntes = upd.rowsAffected === 0;
+      if (!jaAtivadaAntes) await pagamentoContas.reativarAlunoSeEmDia(c.aluno_id).catch((err) => console.error('[totem] não consegui reativar o aluno', c.aluno_id, err.message));
     }
 
     const alunoResult = await db.execute({ sql: 'SELECT * FROM alunos WHERE id = ?', args: [c.aluno_id] });

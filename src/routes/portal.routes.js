@@ -1006,7 +1006,10 @@ async function confirmarPagamentoEAtivarMatricula(cobrancaId) {
 
   if (c.matricula_id) {
     const ativou = await db.execute({ sql: `UPDATE matriculas SET status = 'ativa' WHERE id = ? AND status = 'pendente'`, args: [c.matricula_id] });
-    if (ativou.rowsAffected > 0) await substituirMatriculaAnterior(c.aluno_id, c.matricula_id);
+    if (ativou.rowsAffected > 0) {
+      await substituirMatriculaAnterior(c.aluno_id, c.matricula_id);
+      await pagamentoContas.reativarAlunoSeEmDia(c.aluno_id).catch((err) => console.error('[portal] não consegui reativar o aluno', c.aluno_id, err.message));
+    }
   }
 
   const alunoResult = await db.execute({ sql: 'SELECT * FROM alunos WHERE id = ?', args: [c.aluno_id] });

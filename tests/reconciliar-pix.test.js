@@ -57,6 +57,22 @@ before(async () => {
   // pagamento já marcado 'pago' (primeira etapa), mas a conta ficou aberta (falha no meio)
   await db.execute({ sql: `INSERT INTO pagamentos_totem (id, aluno_id, cobranca_ids, valor_centavos, provedor, provedor_referencia, liberar_acesso, status)
     VALUES ('pt-meio', 'a1', '["c-b"]', 6500, 'mercadopago', 'ORD-PT2', 0, 'pago')` });
+  // reativação do cadastro após quitar: inativo/inadimplente voltam a 'ativo'; trancado não; com outra conta vencida, não
+  await db.execute({ sql: `INSERT INTO alunos (id, nome, cpf, status) VALUES ('r-inativo', 'Inativo Paga', '10000000001', 'inativo'), ('r-inad', 'Inadimplente Paga', '10000000002', 'inadimplente'),
+    ('r-tranc', 'Trancado Paga', '10000000003', 'trancado'), ('r-outra', 'Inativo Com Outra Conta', '10000000004', 'inativo')` });
+  await db.execute({ sql: `INSERT INTO matriculas (id, aluno_id, plano_id, data_inicio, status) VALUES ('mr1', 'r-inativo', 'p1', '2026-10-01', 'ativa'), ('mr2', 'r-inad', 'p1', '2026-10-01', 'ativa'),
+    ('mr3', 'r-tranc', 'p1', '2026-10-01', 'ativa'), ('mr4', 'r-outra', 'p1', '2026-10-01', 'ativa')` });
+  await db.execute({ sql: `INSERT INTO cobrancas (id, aluno_id, matricula_id, valor_centavos, status, provedor, descricao, vencimento) VALUES
+    ('rc1', 'r-inativo', 'mr1', 7000, 'atrasado', 'manual', 'Mensalidade', '2026-11-20'),
+    ('rc2', 'r-inad', 'mr2', 7000, 'atrasado', 'manual', 'Mensalidade', '2026-11-20'),
+    ('rc3', 'r-tranc', 'mr3', 7000, 'atrasado', 'manual', 'Mensalidade', '2026-11-20'),
+    ('rc4', 'r-outra', 'mr4', 7000, 'atrasado', 'manual', 'Mensalidade', '2026-11-20'),
+    ('rc4b', 'r-outra', 'mr4', 7000, 'atrasado', 'manual', 'Mensalidade (outra)', '2026-10-20')` });
+  for (const [pid, aluno, conta, ord] of [['pt-r1', 'r-inativo', 'rc1', 'ORD-R1'], ['pt-r2', 'r-inad', 'rc2', 'ORD-R2'], ['pt-r3', 'r-tranc', 'rc3', 'ORD-R3'], ['pt-r4', 'r-outra', 'rc4', 'ORD-R4']]) {
+    await db.execute({ sql: `INSERT INTO pagamentos_totem (id, aluno_id, cobranca_ids, valor_centavos, provedor, provedor_referencia, liberar_acesso, status)
+      VALUES (?, ?, ?, 7000, 'mercadopago', ?, 0, 'pendente')`, args: [pid, aluno, JSON.stringify([conta]), ord] });
+    pedidos[ord] = aprovado;
+  }
   pedidos['ORD-PT1'] = aprovado;
   pedidos['ORD-PT2'] = aprovado;
   pedidos['ORD-CAD'] = aprovado;
@@ -88,6 +104,20 @@ test('Pix de matrícula/cadastro aprovado: cobrança paga, matrícula ativa e pa
 test('Pix ainda não pago no MP continua pendente', async () => {
   assert.strictEqual((await linhas("SELECT status FROM cobrancas WHERE id = 'c-espera'"))[0].status, 'pendente');
   assert.strictEqual((await linhas("SELECT * FROM pagamentos_cobranca WHERE cobranca_id = 'c-espera'")).length, 0);
+});
+
+test('ao quitar tudo, cadastro inativo/inadimplente volta a ativo; trancado e quem tem outra conta vencida não', async () => {
+  const st = async (id) => (await linhas('SELECT status FROM alunos WHERE id = ?', [id]))[0].status;
+  assert.strictEqual(await st('r-inativo'), 'ativo');
+  assert.strictEqual(await st('r-inad'), 'ativo');
+  assert.strictEqual(await st('r-tranc'), 'trancado');
+  assert.strictEqual(await st('r-outra'), 'inativo');
+});
+
+test('inativação feita depois do pagamento não é desfeita pelas próximas rodadas', async () => {
+  await db.execute({ sql: "UPDATE alunos SET status = 'inativo' WHERE id = 'r-inativo'" });
+  await job.rodar();
+  assert.strictEqual((await linhas("SELECT status FROM alunos WHERE id = 'r-inativo'"))[0].status, 'inativo');
 });
 
 test('rodar de novo não duplica nenhum lançamento (idempotente)', async () => {

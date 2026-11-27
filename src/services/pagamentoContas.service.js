@@ -12,6 +12,7 @@ const db = require('./../db/client');
 const mercadopago = require('./payment/mercadopago.service');
 const acessoTerminal = require('./acessoTerminal.service');
 const assinaturas = require('./assinaturas.service');
+const { sqlAtualizadoEm } = require('./alunoAtualizadoEm.service');
 
 /** Lista as contas em aberto (pendente/atrasado) de um aluno pelo CPF. */
 // `semCobrancaAutomaticaFutura` (portal): a conta que o cartão automático cobrará sozinho numa data futura não é "em
@@ -156,6 +157,7 @@ async function consultarStatusPagamento(pagamentoId, { permitirLiberarAcesso = t
   const hoje = new Date().toISOString().slice(0, 10);
 
   const itens = [];
+  let quitouAgora = false;
   for (const cobrancaId of cobrancaIds) {
     const cobrancaResult = await db.execute({ sql: 'SELECT * FROM cobrancas WHERE id = ?', args: [cobrancaId] });
     const cobranca = cobrancaResult.rows[0];
@@ -172,7 +174,11 @@ async function consultarStatusPagamento(pagamentoId, { permitirLiberarAcesso = t
       sql: `UPDATE cobrancas SET status = 'pago', metodo_pagamento = 'pix', pago_em = datetime('now') WHERE id = ?`,
       args: [cobranca.id],
     });
+    quitouAgora = true;
   }
+
+  // Quitou as contas em atraso: se o cadastro estava inativo/inadimplente e não sobrou nada em atraso, volta a ativo.
+  if (quitouAgora) await reativarAlunoSeEmDia(p.aluno_id).catch((err) => console.error('[pagamentoContas] não consegui reativar o aluno', p.aluno_id, err.message));
 
   const alunoResult = await db.execute({ sql: 'SELECT * FROM alunos WHERE id = ?', args: [p.aluno_id] });
   const aluno = alunoResult.rows[0];
@@ -198,6 +204,25 @@ async function consultarStatusPagamento(pagamentoId, { permitirLiberarAcesso = t
 }
 
 /**
+ * Depois de um pagamento confirmado: se o cadastro está 'inativo' ou 'inadimplente' e não resta nenhuma conta em
+ * atraso, volta para 'ativo' (e avisa o agente da catraca). 'trancado' NUNCA é alterado — é decisão da recepção.
+ * Só deve ser chamado no momento em que o pagamento quitou algo (não a cada consulta), para não desfazer uma
+ * inativação feita de propósito depois.
+ */
+async function reativarAlunoSeEmDia(alunoId) {
+  const r = await db.execute({ sql: 'SELECT status FROM alunos WHERE id = ?', args: [alunoId] });
+  const status = r.rows[0] && r.rows[0].status;
+  if (status !== 'inativo' && status !== 'inadimplente') return false;
+  if (await acessoTerminal.possuiCobrancaEmAtraso(alunoId)) return false;
+  const upd = await db.execute({
+    sql: `UPDATE alunos SET status = 'ativo'${sqlAtualizadoEm()} WHERE id = ? AND status IN ('inativo', 'inadimplente')`,
+    args: [alunoId],
+  });
+  if (upd.rowsAffected > 0) acessoTerminal.notificarAgenteAtualizacaoAluno(alunoId);
+  return upd.rowsAffected > 0;
+}
+
+/**
  * Garante que uma cobrança paga por Pix do Mercado Pago (pedido "ORD...") tenha o lançamento em
  * pagamentos_cobranca — é dele que o Financeiro tira "Valor pago" e "Data paga". O fluxo de matrícula/cadastro/
  * upgrade só marcava a cobrança como 'pago' e deixava o pagamento sem lançamento. Idempotente e atômico
@@ -215,4 +240,4 @@ async function garantirPagamentoPixLancado(cobranca) {
   return r.rowsAffected > 0;
 }
 
-module.exports = { consultarContasAbertas, criarPagamentoAgregado, consultarStatusPagamento, garantirPagamentoPixLancado };
+module.exports = { consultarContasAbertas, criarPagamentoAgregado, consultarStatusPagamento, garantirPagamentoPixLancado, reativarAlunoSeEmDia };

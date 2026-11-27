@@ -54,6 +54,60 @@ async function rodar() {
     }
   }
 
+  // 2026-11 — duas lacunas que deixavam um Pix aprovado no Mercado Pago sem constar no sistema:
+  //
+  // (1) pagamentos_totem já marcado 'pago', mas com a conta ainda em aberto. consultarStatusPagamento grava
+  //     'pago' ANTES de quitar as contas; se algo falhar no meio (queda do banco, requisição interrompida), a
+  //     linha ficava 'pago' e o filtro acima (status != 'pago') nunca mais voltava nela. Reprocessa as dos
+  //     últimos 7 dias cuja conta ainda esteja pendente/atrasada (a função é idempotente).
+  let recuperados = 0;
+  const marcadosPagos = await db.execute(`
+    SELECT id, cobranca_ids FROM pagamentos_totem
+    WHERE status = 'pago' AND provedor = 'mercadopago'
+      AND criado_em >= datetime('now', '-7 days')
+  `);
+  for (const row of marcadosPagos.rows) {
+    try {
+      const ids = JSON.parse(row.cobranca_ids || '[]');
+      if (!ids.length) continue;
+      const abertas = await db.execute({
+        sql: `SELECT COUNT(*) AS n FROM cobrancas WHERE id IN (${ids.map(() => '?').join(', ')}) AND status IN ('pendente', 'atrasado')`,
+        args: ids,
+      });
+      if (Number(abertas.rows[0].n) === 0) continue;
+      const resultado = await pagamentoContas.consultarStatusPagamento(row.id, { permitirLiberarAcesso: false });
+      if (resultado.pago) recuperados += 1;
+    } catch (err) {
+      console.error(`[reconciliarPagamentosPix] erro ao recuperar pagamento ${row.id}:`, err.message);
+    }
+  }
+
+  // (2) Pix de matrícula/cadastro/upgrade (tabela cobrancas, pedido "ORD...") — antes só o polling da tela
+  //     confirmava; saiu da tela antes da confirmação e ficava pendente para sempre. Reaproveita a mesma função
+  //     idempotente do portal (consulta o pedido, marca como paga, lança o pagamento e ativa a matrícula).
+  let cadastrosConfirmados = 0;
+  try {
+    const confirmar = require('../routes/portal.routes').confirmarPagamentoEAtivarMatricula;
+    const cobrancasPix = await db.execute(`
+      SELECT id FROM cobrancas
+      WHERE status = 'pendente' AND provedor = 'mercadopago' AND provedor_referencia LIKE 'ORD%'
+        AND criado_em >= datetime('now', '-${JANELA_HORAS} hours')
+    `);
+    for (const row of cobrancasPix.rows) {
+      try {
+        const resultado = await confirmar(row.id);
+        if (resultado.pago) cadastrosConfirmados += 1;
+      } catch (err) {
+        console.error(`[reconciliarPagamentosPix] erro ao reconsultar cobrança ${row.id}:`, err.message);
+      }
+    }
+  } catch (err) {
+    console.error('[reconciliarPagamentosPix] erro na reconciliação de cobranças Pix:', err.message);
+  }
+  if (recuperados > 0 || cadastrosConfirmados > 0) {
+    console.log(`[reconciliarPagamentosPix] ${new Date().toISOString()} — recuperados: ${recuperados} pagamento(s) de contas que ficaram marcados pagos sem quitar a conta; ${cadastrosConfirmados} Pix de matrícula/cadastro confirmado(s).`);
+  }
+
   if (confirmados > 0) {
     console.log(`[reconciliarPagamentosPix] ${new Date().toISOString()} — ${confirmados} pagamento(s) Pix confirmado(s) que o polling ao vivo tinha perdido (de ${pendentes.rows.length} verificado(s)).`);
   }

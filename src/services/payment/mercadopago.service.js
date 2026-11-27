@@ -139,7 +139,7 @@ async function consultarOrder(orderId) {
   const resp = await fetch(`${BASE_URL}/v1/orders/${orderId}`, {
     headers: { Authorization: `Bearer ${getToken()}` },
   });
-  if (!resp.ok) throw new Error('Erro ao consultar order no Mercado Pago');
+  if (!resp.ok) throw new Error(`Erro ao consultar order no Mercado Pago (HTTP ${resp.status})`);
   return resp.json();
 }
 

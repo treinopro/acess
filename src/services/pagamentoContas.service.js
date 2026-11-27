@@ -144,6 +144,9 @@ async function consultarStatusPagamento(pagamentoId, { permitirLiberarAcesso = t
       }
     } catch (err) {
       // Falha pontual na consulta não interrompe o polling — quem chama tenta de novo.
+      // 2026-11: mas deixa rastro no log: se o token do Mercado Pago deste servidor não é o que criou o pedido
+      // (HTTP 404/401), o pagamento aprovado nunca seria confirmado e ninguém saberia por quê.
+      console.error(`[pagamentoContas] não consegui consultar o pedido Pix ${p.provedor_referencia} (pagamento ${p.id}):`, err.message);
     }
   }
 
@@ -194,4 +197,22 @@ async function consultarStatusPagamento(pagamentoId, { permitirLiberarAcesso = t
   };
 }
 
-module.exports = { consultarContasAbertas, criarPagamentoAgregado, consultarStatusPagamento };
+/**
+ * Garante que uma cobrança paga por Pix do Mercado Pago (pedido "ORD...") tenha o lançamento em
+ * pagamentos_cobranca — é dele que o Financeiro tira "Valor pago" e "Data paga". O fluxo de matrícula/cadastro/
+ * upgrade só marcava a cobrança como 'pago' e deixava o pagamento sem lançamento. Idempotente e atômico
+ * (INSERT ... WHERE NOT EXISTS): pode ser chamado a cada poll sem duplicar.
+ */
+async function garantirPagamentoPixLancado(cobranca) {
+  if (!cobranca || cobranca.provedor !== 'mercadopago' || !String(cobranca.provedor_referencia || '').startsWith('ORD')) return false;
+  const data = String(cobranca.pago_em || '').slice(0, 10) || new Date().toISOString().slice(0, 10);
+  const r = await db.execute({
+    sql: `INSERT INTO pagamentos_cobranca (id, cobranca_id, data, valor_centavos, tipo, conta_corrente)
+          SELECT ?, ?, ?, ?, 'pix', NULL
+          WHERE NOT EXISTS (SELECT 1 FROM pagamentos_cobranca WHERE cobranca_id = ?)`,
+    args: [uuid(), cobranca.id, data, cobranca.valor_centavos, cobranca.id],
+  });
+  return r.rowsAffected > 0;
+}
+
+module.exports = { consultarContasAbertas, criarPagamentoAgregado, consultarStatusPagamento, garantirPagamentoPixLancado };

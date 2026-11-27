@@ -1001,6 +1001,9 @@ async function confirmarPagamentoEAtivarMatricula(cobrancaId) {
 
   if (c.status !== 'pago') return { pago: false };
 
+  // Lança o pagamento (Valor pago/Data paga no Financeiro) — antes só a cobrança era marcada como 'pago'.
+  await pagamentoContas.garantirPagamentoPixLancado(c).catch((err) => console.error('[portal] não lancei o pagamento Pix da cobrança', c.id, err.message));
+
   if (c.matricula_id) {
     const ativou = await db.execute({ sql: `UPDATE matriculas SET status = 'ativa' WHERE id = ? AND status = 'pendente'`, args: [c.matricula_id] });
     if (ativou.rowsAffected > 0) await substituirMatriculaAnterior(c.aluno_id, c.matricula_id);
@@ -1350,5 +1353,8 @@ router.post('/assinatura', limitadorSenhaPortal, async (req, res, next) => {
     next(err);
   }
 });
+
+// Usado também pelo job de reconciliação de Pix (ver src/jobs/reconciliarPagamentosPix.js).
+router.confirmarPagamentoEAtivarMatricula = confirmarPagamentoEAtivarMatricula;
 
 module.exports = router;

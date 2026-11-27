@@ -736,6 +736,9 @@ terminal.get('/auto-cadastro/status/:cobrancaId', autenticarTerminalOuCadastroPu
       return res.json({ pago: false });
     }
 
+    // Lança o pagamento (Valor pago/Data paga no Financeiro) — antes só a cobrança era marcada como 'pago'.
+    await pagamentoContas.garantirPagamentoPixLancado(c).catch((err) => console.error('[totem] não lancei o pagamento Pix da cobrança', c.id, err.message));
+
     let jaAtivadaAntes = false;
     if (c.matricula_id) {
       const upd = await db.execute({
